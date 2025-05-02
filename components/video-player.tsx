@@ -5,7 +5,7 @@ import type React from "react"
 import { useState, useEffect, useRef } from "react"
 import { getCurrentProgram, getUpcomingPrograms, calculateProgramProgress } from "@/lib/supabase"
 import type { Channel, Program } from "@/types"
-import { Clock, Calendar } from "lucide-react"
+import { Clock, Calendar, AlertCircle } from "lucide-react"
 
 interface VideoPlayerProps {
   channel: Channel
@@ -20,27 +20,23 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [videoError, setVideoError] = useState(false)
+  const [errorDetails, setErrorDetails] = useState<string | null>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const standbyVideoRef = useRef<HTMLVideoElement>(null)
   const refreshTimerRef = useRef<NodeJS.Timeout | null>(null)
 
   // Function to get the standby video URL for this channel
   const getStandbyVideoUrl = () => {
-    // Use the standby.mp4 from the channel's bucket
-    // Make sure to use the correct bucket name format
-    return `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/videos/channel${channel.id}/standby.mp4`
+    // Try different bucket path formats
+    return "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/standby_blacktruthtv-D7yZUERL2zhjE71Llxul69gbPLxGES.mp4"
   }
-
-  // Fallback standby video in case the channel-specific one fails
-  const fallbackStandbyUrl =
-    "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/standby_blacktruthtv-D7yZUERL2zhjE71Llxul69gbPLxGES.mp4"
 
   // Function to format the video URL with the bucket path
   const getVideoUrl = (mp4Url: string) => {
-    // Updated to use the correct bucket path format
-    // Log the constructed URL for debugging
-    const url = `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/videos/channel${channel.id}/${mp4Url}`
-    console.log("Video URL:", url)
+    // Try different bucket path formats
+    // Format 1: Direct channel bucket
+    const url = `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/channel${channel.id}/${mp4Url}`
+    console.log("Trying video URL:", url)
     return url
   }
 
@@ -57,6 +53,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       if (program) {
         setCurrentProgram(program)
         setVideoError(false)
+        setErrorDetails(null)
 
         // Calculate progress if it's a current program
         if (!isNext) {
@@ -83,26 +80,93 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     }
   }
 
-  // Handle standby video error (fall back to the generic standby)
+  // Handle standby video error
   const handleStandbyError = (e: React.SyntheticEvent<HTMLVideoElement, Event>) => {
-    console.error("Error loading channel standby video, switching to fallback", e)
-    if (standbyVideoRef.current) {
-      standbyVideoRef.current.src = fallbackStandbyUrl
-      standbyVideoRef.current.load()
-      standbyVideoRef.current.play().catch((err) => {
-        console.error("Error playing fallback standby video:", err)
-      })
-    }
+    console.error("Error loading standby video:", e)
+    // Try to extract more error details
+    const target = e.target as HTMLVideoElement
+    const errorMessage = `Error code: ${target.error?.code}, message: ${target.error?.message}`
+    console.error(errorMessage)
+
+    // No need to set video error state here as we're already in the standby view
   }
 
-  // Handle video error
+  // Handle video error with improved error reporting
   const handleVideoError = (e: React.SyntheticEvent<HTMLVideoElement, Event>) => {
-    console.error("Error loading video, switching to standby", e)
-    // Log the URL that failed
-    if (videoRef.current) {
-      console.error("Failed URL:", videoRef.current.src)
+    // Extract detailed error information
+    const target = e.target as HTMLVideoElement
+    let errorMessage = "Unknown error"
+
+    if (target.error) {
+      // Get the MediaError details
+      switch (target.error.code) {
+        case 1:
+          errorMessage = "The fetching process was aborted by the user"
+          break
+        case 2:
+          errorMessage = "Network error - video download failed"
+          break
+        case 3:
+          errorMessage = "Video decoding failed - format may be unsupported"
+          break
+        case 4:
+          errorMessage = "Video not found (404) or access denied"
+          break
+        default:
+          errorMessage = `Error code: ${target.error.code}`
+      }
+
+      if (target.error.message) {
+        errorMessage += ` - ${target.error.message}`
+      }
     }
+
+    // Log the detailed error
+    console.error("Error loading video:", errorMessage)
+    console.error("Failed URL:", target.src)
+
+    // Store error details for display
+    setErrorDetails(errorMessage)
     setVideoError(true)
+  }
+
+  // Function to test alternative video URLs
+  const tryAlternativeUrl = async (mp4Url: string) => {
+    if (!videoRef.current || !currentProgram) return
+
+    // Try alternative URL formats
+    const formats = [
+      // Format 1: videos/channel{id}
+      `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/videos/channel${channel.id}/${mp4Url}`,
+      // Format 2: channel{id} (no videos prefix)
+      `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/channel${channel.id}/${mp4Url}`,
+      // Format 3: videos (no channel subfolder)
+      `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/videos/${mp4Url}`,
+      // Format 4: channel{id} bucket with no subfolder
+      `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/channel${channel.id}/${mp4Url}`,
+    ]
+
+    // We'll try each format
+    for (const url of formats) {
+      try {
+        console.log("Testing alternative URL:", url)
+        // Check if the URL is accessible
+        const response = await fetch(url, { method: "HEAD" })
+        if (response.ok) {
+          console.log("Found working URL:", url)
+          videoRef.current.src = url
+          videoRef.current.load()
+          videoRef.current.play().catch((err) => {
+            console.error("Error playing video with alternative URL:", err)
+          })
+          return true
+        }
+      } catch (err) {
+        console.error("Error testing URL:", url, err)
+      }
+    }
+
+    return false
   }
 
   // Effect to handle initial setup and periodic refresh
@@ -147,7 +211,13 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     if (videoRef.current && currentProgram && !videoError) {
       videoRef.current.play().catch((error) => {
         console.error("Error playing video:", error)
-        setVideoError(true)
+        // Try alternative URLs before giving up
+        tryAlternativeUrl(currentProgram.mp4_url).then((success) => {
+          if (!success) {
+            setVideoError(true)
+            setErrorDetails(`Failed to play video: ${error.message || "Unknown error"}`)
+          }
+        })
       })
     }
   }, [currentProgram, videoError])
@@ -164,7 +234,6 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
           autoPlay
           loop
           onError={handleStandbyError}
-          crossOrigin="anonymous"
         />
 
         <div className="absolute top-4 left-4 bg-black/70 px-3 py-1 rounded-md">
@@ -177,6 +246,12 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
             {!currentProgram ? "No program currently scheduled" : "Content temporarily unavailable"}
           </p>
           {error && <p className="text-red-400 text-xs mt-2">{error}</p>}
+          {errorDetails && (
+            <div className="mt-2 p-2 bg-red-900/30 rounded-md flex items-start">
+              <AlertCircle className="h-4 w-4 text-red-400 mr-2 mt-0.5 flex-shrink-0" />
+              <p className="text-red-400 text-xs">{errorDetails}</p>
+            </div>
+          )}
           {isLoading && <p className="text-blue-400 text-xs mt-2">Loading program schedule...</p>}
         </div>
       </div>
@@ -192,7 +267,6 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         controls
         autoPlay
         onError={handleVideoError}
-        crossOrigin="anonymous"
       />
 
       <div className="absolute top-4 left-4 bg-black/70 px-3 py-1 rounded-md">
