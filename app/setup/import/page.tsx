@@ -17,6 +17,7 @@ export default function ImportPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [result, setResult] = useState<{ success: boolean; message: string } | null>(null)
   const [channels, setChannels] = useState<ChannelData[]>([])
+  const [setupStage, setSetupStage] = useState<string | null>(null)
 
   const fetchChannels = async () => {
     setIsLoading(true)
@@ -87,26 +88,39 @@ export default function ImportPage() {
         logo_url: `https://placehold.co/400x225?text=${encodeURIComponent(channel.name)}`,
       }))
 
-      // Clear existing channels first
-      const { error: deleteError } = await supabase.from("channels").delete().gt("id", "0")
+      // Step 1: First delete programs that reference channels
+      setSetupStage("Deleting existing programs...")
+      const { error: deleteProgramsError } = await supabase.from("programs").delete().gt("id", 0)
 
-      if (deleteError) {
-        throw new Error(`Error clearing existing channels: ${deleteError.message}`)
+      if (deleteProgramsError) {
+        console.warn("Error deleting programs:", deleteProgramsError)
+        // Continue anyway, might be first run
       }
 
-      // Insert channels
+      // Step 2: Now delete channels
+      setSetupStage("Deleting existing channels...")
+      const { error: deleteChannelsError } = await supabase.from("channels").delete().gt("id", "0")
+
+      if (deleteChannelsError) {
+        throw new Error(`Error clearing existing channels: ${deleteChannelsError.message}`)
+      }
+
+      // Step 3: Insert new channels
+      setSetupStage("Importing new channels...")
       const { error: insertError } = await supabase.from("channels").insert(channelsToImport)
 
       if (insertError) {
         throw new Error(`Error importing channels: ${insertError.message}`)
       }
 
+      setSetupStage(null)
       setResult({
         success: true,
         message: `Successfully imported ${channels.length} channels to Supabase.`,
       })
     } catch (error) {
       console.error("Error importing channels:", error)
+      setSetupStage(null)
       setResult({
         success: false,
         message: error instanceof Error ? error.message : "An unknown error occurred",
@@ -174,6 +188,15 @@ export default function ImportPage() {
               {isLoading ? "Importing..." : "Import Channels to Database"}
             </Button>
           </div>
+
+          {setupStage && (
+            <div className="mt-4 p-3 bg-blue-900/30 text-blue-400 rounded-md">
+              <div className="flex items-center">
+                <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-blue-400 mr-2"></div>
+                <p>{setupStage}</p>
+              </div>
+            </div>
+          )}
 
           {result && (
             <div
