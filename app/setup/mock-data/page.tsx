@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { supabase, updateRLSPolicies } from "@/lib/supabase"
+import { supabase, checkTablesExist, createTables } from "@/lib/supabase"
 import { Button } from "@/components/ui/button"
 import Link from "next/link"
 import { CheckCircle, XCircle, ArrowLeft } from "lucide-react"
@@ -91,33 +91,42 @@ const sampleVideos = [
 export default function MockDataPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [result, setResult] = useState<{ success: boolean; message: string } | null>(null)
+  const [setupStage, setSetupStage] = useState<string | null>(null)
 
   const addMockData = async () => {
     setIsLoading(true)
     setResult(null)
 
     try {
-      // First, update RLS policies to allow inserts
-      const { success: policySuccess, error: policyError } = await updateRLSPolicies()
+      // Step 1: Check if tables exist
+      setSetupStage("Checking if tables exist...")
+      const tablesExist = await checkTablesExist()
 
-      if (!policySuccess) {
-        throw new Error(`Error updating RLS policies: ${policyError}`)
+      // Step 2: Create tables if they don't exist
+      if (!tablesExist) {
+        setSetupStage("Creating database tables...")
+        const { success: createSuccess, error: createError } = await createTables()
+        if (!createSuccess) {
+          throw new Error(`Error creating tables: ${createError}`)
+        }
       }
 
-      // Clear existing data
-      const { error: clearChannelsError } = await supabase.from("channels").delete().gt("id", "0")
-      if (clearChannelsError) {
-        console.warn("Error clearing channels:", clearChannelsError)
-        // Continue anyway, might be first run
+      // Step 3: Clear existing data
+      setSetupStage("Clearing existing data...")
+      try {
+        await supabase.from("videos").delete().gt("id", 0)
+      } catch (error) {
+        console.warn("Error clearing videos, might be first run:", error)
       }
 
-      const { error: clearVideosError } = await supabase.from("videos").delete().gt("id", 0)
-      if (clearVideosError) {
-        console.warn("Error clearing videos:", clearVideosError)
-        // Continue anyway, might be first run
+      try {
+        await supabase.from("channels").delete().gt("id", "0")
+      } catch (error) {
+        console.warn("Error clearing channels, might be first run:", error)
       }
 
-      // Insert channels
+      // Step 4: Insert channels
+      setSetupStage("Adding sample channels...")
       const { data: channelsData, error: channelsError } = await supabase
         .from("channels")
         .insert(sampleChannels)
@@ -127,19 +136,22 @@ export default function MockDataPage() {
         throw new Error(`Error adding channels: ${channelsError.message}`)
       }
 
-      // Insert videos
+      // Step 5: Insert videos
+      setSetupStage("Adding sample videos...")
       const { error: videosError } = await supabase.from("videos").insert(sampleVideos)
 
       if (videosError) {
         throw new Error(`Error adding videos: ${videosError.message}`)
       }
 
+      setSetupStage(null)
       setResult({
         success: true,
         message: "Sample data added successfully! Added 5 channels and 5 videos.",
       })
     } catch (error) {
       console.error("Error adding mock data:", error)
+      setSetupStage(null)
       setResult({
         success: false,
         message: error instanceof Error ? error.message : "An unknown error occurred",
@@ -189,6 +201,15 @@ export default function MockDataPage() {
               {isLoading ? "Adding Data..." : "Add Sample Data"}
             </Button>
           </div>
+
+          {setupStage && (
+            <div className="mt-4 p-3 bg-blue-900/30 text-blue-400 rounded-md">
+              <div className="flex items-center">
+                <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-blue-400 mr-2"></div>
+                <p>{setupStage}</p>
+              </div>
+            </div>
+          )}
 
           {result && (
             <div
