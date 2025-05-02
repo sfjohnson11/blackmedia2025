@@ -1,28 +1,95 @@
+"use client"
+
+import type React from "react"
+
+import { useState, useEffect } from "react"
 import { supabase } from "@/lib/supabase"
 import type { Channel } from "@/types"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
-import { Search, Filter } from "lucide-react"
+import { Search, Filter, Loader2 } from "lucide-react"
 
-async function getChannels() {
-  try {
-    const { data, error } = await supabase.from("channels").select("*").order("name")
+export default function BrowsePage() {
+  const [channels, setChannels] = useState<Channel[]>([])
+  const [filteredChannels, setFilteredChannels] = useState<Channel[]>([])
+  const [searchTerm, setSearchTerm] = useState("")
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-    if (error) {
-      console.error("Error fetching channels:", error)
-      return []
+  // Fetch channels on component mount
+  useEffect(() => {
+    async function fetchChannels() {
+      try {
+        setIsLoading(true)
+        const { data, error } = await supabase.from("channels").select("*").order("name")
+
+        if (error) {
+          throw error
+        }
+
+        setChannels(data as Channel[])
+        setFilteredChannels(data as Channel[])
+      } catch (error) {
+        console.error("Error fetching channels:", error)
+        setError("Failed to load channels. Please try again later.")
+      } finally {
+        setIsLoading(false)
+      }
     }
 
-    return data as Channel[]
-  } catch (error) {
-    console.error("Error fetching channels:", error)
-    return []
+    fetchChannels()
+  }, [])
+
+  // Filter channels based on search term
+  useEffect(() => {
+    if (searchTerm.trim() === "") {
+      setFilteredChannels(channels)
+      return
+    }
+
+    const term = searchTerm.toLowerCase()
+    const filtered = channels.filter(
+      (channel) =>
+        channel.name.toLowerCase().includes(term) ||
+        (channel.description && channel.description.toLowerCase().includes(term)),
+    )
+
+    setFilteredChannels(filtered)
+  }, [searchTerm, channels])
+
+  // Handle search input change
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSearchTerm(e.target.value)
   }
-}
 
-export default async function BrowsePage() {
-  const channels = await getChannels()
+  // Loading state
+  if (isLoading) {
+    return (
+      <div className="pt-24 px-4 md:px-10 flex items-center justify-center min-h-[80vh]">
+        <div className="flex flex-col items-center">
+          <Loader2 className="h-12 w-12 text-red-600 animate-spin mb-4" />
+          <p className="text-xl">Loading channels...</p>
+        </div>
+      </div>
+    )
+  }
 
+  // Error state
+  if (error) {
+    return (
+      <div className="pt-24 px-4 md:px-10 flex items-center justify-center min-h-[80vh]">
+        <div className="bg-gray-800 p-6 rounded-lg max-w-md w-full text-center">
+          <h2 className="text-xl font-semibold mb-4">Error</h2>
+          <p className="mb-4">{error}</p>
+          <Button className="bg-red-600 hover:bg-red-700" onClick={() => window.location.reload()}>
+            Try Again
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
+  // No channels state
   if (channels.length === 0) {
     return (
       <div className="pt-24 px-4 md:px-10 flex items-center justify-center min-h-[80vh]">
@@ -48,8 +115,18 @@ export default async function BrowsePage() {
               type="text"
               placeholder="Search channels..."
               className="pl-10 pr-4 py-2 bg-gray-900 border border-gray-700 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent w-full md:w-64"
+              value={searchTerm}
+              onChange={handleSearchChange}
             />
             <Search className="absolute left-3 top-2.5 h-5 w-5 text-gray-400" />
+            {searchTerm && (
+              <button
+                className="absolute right-3 top-2.5 text-gray-400 hover:text-white"
+                onClick={() => setSearchTerm("")}
+              >
+                ×
+              </button>
+            )}
           </div>
 
           <Button variant="outline" className="flex items-center gap-2">
@@ -59,31 +136,41 @@ export default async function BrowsePage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
-        {channels.map((channel) => (
-          <Link key={channel.id} href={`/watch/${channel.id}`} className="block">
-            <div className="bg-gray-900 rounded-lg overflow-hidden transition-transform hover:scale-105 hover:shadow-xl">
-              <div className="aspect-video relative">
-                {channel.logo_url ? (
-                  <img
-                    src={channel.logo_url || "/placeholder.svg"}
-                    alt={channel.name}
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  <div className="w-full h-full bg-gray-800 flex items-center justify-center">
-                    <span className="text-2xl font-bold">{channel.name.charAt(0)}</span>
-                  </div>
-                )}
+      {filteredChannels.length === 0 ? (
+        <div className="bg-gray-800 p-6 rounded-lg text-center my-12">
+          <h2 className="text-xl font-semibold mb-2">No results found</h2>
+          <p className="text-gray-400">No channels match your search for "{searchTerm}"</p>
+          <Button variant="link" className="text-red-500 mt-2" onClick={() => setSearchTerm("")}>
+            Clear search
+          </Button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
+          {filteredChannels.map((channel) => (
+            <Link key={channel.id} href={`/watch/${channel.id}`} className="block">
+              <div className="bg-gray-900 rounded-lg overflow-hidden transition-transform hover:scale-105 hover:shadow-xl">
+                <div className="aspect-video relative">
+                  {channel.logo_url ? (
+                    <img
+                      src={channel.logo_url || "/placeholder.svg"}
+                      alt={channel.name}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-full h-full bg-gray-800 flex items-center justify-center">
+                      <span className="text-2xl font-bold">{channel.name.charAt(0)}</span>
+                    </div>
+                  )}
+                </div>
+                <div className="p-4">
+                  <h3 className="font-bold text-lg mb-1 truncate">{channel.name}</h3>
+                  {channel.description && <p className="text-gray-400 text-sm line-clamp-2">{channel.description}</p>}
+                </div>
               </div>
-              <div className="p-4">
-                <h3 className="font-bold text-lg mb-1 truncate">{channel.name}</h3>
-                {channel.description && <p className="text-gray-400 text-sm line-clamp-2">{channel.description}</p>}
-              </div>
-            </div>
-          </Link>
-        ))}
-      </div>
+            </Link>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
