@@ -4,7 +4,7 @@ import type React from "react"
 import { useState, useEffect, useRef } from "react"
 import { getCurrentProgram, getUpcomingPrograms, calculateProgramProgress } from "@/lib/supabase"
 import type { Channel, Program } from "@/types"
-import { Clock, Calendar, AlertCircle, RefreshCw } from "lucide-react"
+import { Clock, Calendar, AlertCircle, RefreshCw, Info } from "lucide-react"
 
 interface VideoPlayerProps {
   channel: Channel
@@ -22,6 +22,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const [errorDetails, setErrorDetails] = useState<string | null>(null)
   const [isRetrying, setIsRetrying] = useState(false)
   const [attemptedUrls, setAttemptedUrls] = useState<string[]>([])
+  const [showDebugInfo, setShowDebugInfo] = useState(false)
   const videoRef = useRef<HTMLVideoElement>(null)
   const standbyVideoRef = useRef<HTMLVideoElement>(null)
   const refreshTimerRef = useRef<NodeJS.Timeout | null>(null)
@@ -57,7 +58,9 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/videos/${fileName}`,
 
       // Format 6: Add .mp4 if missing
-      `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/channel${channel.id}/${fileName}${fileName.includes(".") ? "" : ".mp4"}`,
+      `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/channel${channel.id}/${fileName}${
+        fileName.includes(".") ? "" : ".mp4"
+      }`,
     ].filter(Boolean) as string[]
 
     // Use the current attempt to select a URL format
@@ -326,14 +329,31 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         />
 
         <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4">
-          <h3 className="text-lg font-bold mb-1">Standby</h3>
-          <p className="text-sm text-gray-300">
-            {!currentProgram ? "No program currently scheduled" : "Content temporarily unavailable"}
-          </p>
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-bold mb-1">
+              Channel {channel.id}: {channel.name}
+            </h3>
+            <button
+              onClick={() => setShowDebugInfo(!showDebugInfo)}
+              className="text-gray-400 hover:text-white"
+              aria-label="Toggle debug info"
+            >
+              <Info className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="bg-gray-800/50 p-3 rounded-md mb-3">
+            <p className="text-sm text-gray-300">
+              {!currentProgram
+                ? "No program currently scheduled for this channel."
+                : "Content temporarily unavailable. We're working on adding videos for this channel."}
+            </p>
+            <p className="text-xs text-gray-400 mt-1">Please check back later or try another channel.</p>
+          </div>
 
           {error && <p className="text-red-400 text-xs mt-2">{error}</p>}
 
-          {errorDetails && (
+          {showDebugInfo && errorDetails && (
             <div className="mt-2 p-2 bg-red-900/30 rounded-md flex items-start">
               <AlertCircle className="h-4 w-4 text-red-400 mr-2 mt-0.5 flex-shrink-0" />
               <p className="text-red-400 text-xs">{errorDetails}</p>
@@ -362,7 +382,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
             </button>
           )}
 
-          {attemptedUrls.length > 0 && (
+          {showDebugInfo && attemptedUrls.length > 0 && (
             <div className="mt-3 p-2 bg-gray-800/50 rounded-md">
               <p className="text-xs text-gray-400 mb-1">Attempted URLs:</p>
               <div className="text-xs text-gray-500 max-h-20 overflow-y-auto">
