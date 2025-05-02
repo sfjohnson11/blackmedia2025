@@ -8,6 +8,8 @@ import { DonationImpact } from "@/components/donation-impact"
 import { DonationHeader } from "@/components/donation-header"
 
 export default function DonatePage() {
+  const stripeUrl = "https://donate.stripe.com/8wM8xL9TreuzeIMcRM"
+
   return (
     <div className="pt-20 min-h-screen bg-gradient-to-b from-black to-gray-900">
       <DonationHeader />
@@ -40,13 +42,11 @@ export default function DonatePage() {
         </div>
 
         <div className="text-center mb-16">
-          <a
-            href="https://donate.stripe.com/8wM8xL9TreuzeIMcRM"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-block"
-          >
-            <Button className="bg-red-600 hover:bg-red-700 text-white px-8 py-6 text-xl rounded-lg flex items-center gap-3">
+          <a href={stripeUrl} target="_blank" rel="noopener noreferrer" className="inline-block">
+            <Button
+              size="lg"
+              className="bg-red-600 hover:bg-red-700 text-white px-8 py-6 text-xl rounded-lg flex items-center gap-3"
+            >
               <DollarSign className="h-6 w-6" />
               Donate Now
               <ArrowRight className="h-5 w-5 ml-2" />
@@ -55,7 +55,7 @@ export default function DonatePage() {
           <p className="mt-4 text-gray-400">Secure payments processed by Stripe</p>
         </div>
 
-        <DonationTiers stripeUrl="https://donate.stripe.com/8wM8xL9TreuzeIMcRM" />
+        <DonationTiers stripeUrl={stripeUrl} />
 
         <DonationImpact />
 

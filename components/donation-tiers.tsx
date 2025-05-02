@@ -19,7 +19,7 @@ export function DonationTiers({ stripeUrl }: DonationTiersProps) {
             <li>• Recognition on our website</li>
             <li>• Monthly newsletter</li>
           </ul>
-          <a href={`${stripeUrl}?amount=1000`} target="_blank" rel="noopener noreferrer">
+          <a href={`${stripeUrl}?amount=1000`} target="_blank" rel="noopener noreferrer" className="block w-full">
             <Button className="w-full bg-gray-700 hover:bg-gray-600">Donate $10</Button>
           </a>
         </div>
@@ -38,7 +38,7 @@ export function DonationTiers({ stripeUrl }: DonationTiersProps) {
             <li>• Quarterly virtual meetups</li>
             <li>• All Supporter benefits</li>
           </ul>
-          <a href={`${stripeUrl}?amount=2500`} target="_blank" rel="noopener noreferrer">
+          <a href={`${stripeUrl}?amount=2500`} target="_blank" rel="noopener noreferrer" className="block w-full">
             <Button className="w-full bg-red-600 hover:bg-red-700">Donate $25</Button>
           </a>
         </div>
@@ -54,7 +54,7 @@ export function DonationTiers({ stripeUrl }: DonationTiersProps) {
             <li>• Special recognition in credits</li>
             <li>• All Champion benefits</li>
           </ul>
-          <a href={`${stripeUrl}?amount=5000`} target="_blank" rel="noopener noreferrer">
+          <a href={`${stripeUrl}?amount=5000`} target="_blank" rel="noopener noreferrer" className="block w-full">
             <Button className="w-full bg-gray-700 hover:bg-gray-600">Donate $50</Button>
           </a>
         </div>
