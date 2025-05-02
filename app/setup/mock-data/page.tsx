@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { supabase } from "@/lib/supabase"
+import { supabase, updateRLSPolicies } from "@/lib/supabase"
 import { Button } from "@/components/ui/button"
 import Link from "next/link"
 import { CheckCircle, XCircle, ArrowLeft } from "lucide-react"
@@ -9,27 +9,37 @@ import { CheckCircle, XCircle, ArrowLeft } from "lucide-react"
 // Sample data for quick setup
 const sampleChannels = [
   {
+    id: "1",
     name: "News 24/7",
+    slug: "news-24-7",
     description: "Breaking news and current events",
     logo_url: "https://placehold.co/400x225?text=News+24/7",
   },
   {
+    id: "2",
     name: "Sports Channel",
+    slug: "sports-channel",
     description: "Live sports and commentary",
     logo_url: "https://placehold.co/400x225?text=Sports",
   },
   {
+    id: "3",
     name: "Movie Classics",
+    slug: "movie-classics",
     description: "Classic films from every era",
     logo_url: "https://placehold.co/400x225?text=Movies",
   },
   {
+    id: "4",
     name: "Kids Zone",
+    slug: "kids-zone",
     description: "Family-friendly entertainment",
     logo_url: "https://placehold.co/400x225?text=Kids",
   },
   {
+    id: "5",
     name: "Documentary World",
+    slug: "documentary-world",
     description: "Fascinating documentaries",
     logo_url: "https://placehold.co/400x225?text=Docs",
   },
@@ -42,7 +52,7 @@ const sampleVideos = [
     url: "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
     thumbnail_url: "https://placehold.co/640x360?text=News",
     duration: 120,
-    channel_index: 0,
+    channel_id: "1",
   },
   {
     title: "Sports Highlights",
@@ -50,7 +60,7 @@ const sampleVideos = [
     url: "https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
     thumbnail_url: "https://placehold.co/640x360?text=Sports",
     duration: 180,
-    channel_index: 1,
+    channel_id: "2",
   },
   {
     title: "Classic Movie",
@@ -58,7 +68,7 @@ const sampleVideos = [
     url: "https://storage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
     thumbnail_url: "https://placehold.co/640x360?text=Movie",
     duration: 240,
-    channel_index: 2,
+    channel_id: "3",
   },
   {
     title: "Kids Cartoon",
@@ -66,7 +76,7 @@ const sampleVideos = [
     url: "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4",
     thumbnail_url: "https://placehold.co/640x360?text=Cartoon",
     duration: 150,
-    channel_index: 3,
+    channel_id: "4",
   },
   {
     title: "Nature Documentary",
@@ -74,7 +84,7 @@ const sampleVideos = [
     url: "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4",
     thumbnail_url: "https://placehold.co/640x360?text=Nature",
     duration: 210,
-    channel_index: 4,
+    channel_id: "5",
   },
 ]
 
@@ -87,6 +97,26 @@ export default function MockDataPage() {
     setResult(null)
 
     try {
+      // First, update RLS policies to allow inserts
+      const { success: policySuccess, error: policyError } = await updateRLSPolicies()
+
+      if (!policySuccess) {
+        throw new Error(`Error updating RLS policies: ${policyError}`)
+      }
+
+      // Clear existing data
+      const { error: clearChannelsError } = await supabase.from("channels").delete().gt("id", "0")
+      if (clearChannelsError) {
+        console.warn("Error clearing channels:", clearChannelsError)
+        // Continue anyway, might be first run
+      }
+
+      const { error: clearVideosError } = await supabase.from("videos").delete().gt("id", 0)
+      if (clearVideosError) {
+        console.warn("Error clearing videos:", clearVideosError)
+        // Continue anyway, might be first run
+      }
+
       // Insert channels
       const { data: channelsData, error: channelsError } = await supabase
         .from("channels")
@@ -97,22 +127,8 @@ export default function MockDataPage() {
         throw new Error(`Error adding channels: ${channelsError.message}`)
       }
 
-      // Insert videos with proper channel_id references
-      const videosWithChannelIds = sampleVideos.map((video) => {
-        const channelId = channelsData[video.channel_index]?.id
-        if (!channelId) {
-          throw new Error(`Channel ID not found for index ${video.channel_index}`)
-        }
-
-        // Create a new object without channel_index
-        const { channel_index, ...videoData } = video
-        return {
-          ...videoData,
-          channel_id: channelId,
-        }
-      })
-
-      const { error: videosError } = await supabase.from("videos").insert(videosWithChannelIds)
+      // Insert videos
+      const { error: videosError } = await supabase.from("videos").insert(sampleVideos)
 
       if (videosError) {
         throw new Error(`Error adding videos: ${videosError.message}`)

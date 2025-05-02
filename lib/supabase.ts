@@ -6,10 +6,6 @@ const supabaseAnonKey =
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1zbGxxcG54d2J1Z3ZrcG5xdXd4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDYxNDM3MDcsImV4cCI6MjA2MTcxOTcwN30.GmBaiUunC9R9gZh0IH8fp2VsY55d3SC_dvRagrJoUzA"
 
-// Log the values to verify (remove in production)
-console.log("Supabase URL:", supabaseUrl)
-console.log("Using environment variables:", !!process.env.NEXT_PUBLIC_SUPABASE_URL)
-
 // Create the Supabase client
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
@@ -81,6 +77,7 @@ export async function createTables() {
   -- Create public access policies (only if they don't exist)
   DO $$
   BEGIN
+    -- SELECT policies
     BEGIN
       CREATE POLICY "Channels are viewable by everyone" 
       ON channels FOR SELECT USING (true);
@@ -100,6 +97,81 @@ export async function createTables() {
     BEGIN
       CREATE POLICY "Videos are viewable by everyone" 
       ON videos FOR SELECT USING (true);
+    EXCEPTION
+      WHEN duplicate_object THEN
+        NULL;
+    END;
+
+    -- INSERT policies
+    BEGIN
+      CREATE POLICY "Anyone can insert channels" 
+      ON channels FOR INSERT WITH CHECK (true);
+    EXCEPTION
+      WHEN duplicate_object THEN
+        NULL;
+    END;
+
+    BEGIN
+      CREATE POLICY "Anyone can insert programs" 
+      ON programs FOR INSERT WITH CHECK (true);
+    EXCEPTION
+      WHEN duplicate_object THEN
+        NULL;
+    END;
+
+    BEGIN
+      CREATE POLICY "Anyone can insert videos" 
+      ON videos FOR INSERT WITH CHECK (true);
+    EXCEPTION
+      WHEN duplicate_object THEN
+        NULL;
+    END;
+
+    -- UPDATE policies
+    BEGIN
+      CREATE POLICY "Anyone can update channels" 
+      ON channels FOR UPDATE USING (true);
+    EXCEPTION
+      WHEN duplicate_object THEN
+        NULL;
+    END;
+
+    BEGIN
+      CREATE POLICY "Anyone can update programs" 
+      ON programs FOR UPDATE USING (true);
+    EXCEPTION
+      WHEN duplicate_object THEN
+        NULL;
+    END;
+
+    BEGIN
+      CREATE POLICY "Anyone can update videos" 
+      ON videos FOR UPDATE USING (true);
+    EXCEPTION
+      WHEN duplicate_object THEN
+        NULL;
+    END;
+
+    -- DELETE policies
+    BEGIN
+      CREATE POLICY "Anyone can delete channels" 
+      ON channels FOR DELETE USING (true);
+    EXCEPTION
+      WHEN duplicate_object THEN
+        NULL;
+    END;
+
+    BEGIN
+      CREATE POLICY "Anyone can delete programs" 
+      ON programs FOR DELETE USING (true);
+    EXCEPTION
+      WHEN duplicate_object THEN
+        NULL;
+    END;
+
+    BEGIN
+      CREATE POLICY "Anyone can delete videos" 
+      ON videos FOR DELETE USING (true);
     EXCEPTION
       WHEN duplicate_object THEN
         NULL;
@@ -203,5 +275,101 @@ export function calculateProgramProgress(program: { start_time: string; duration
     progressPercent,
     secondsElapsed,
     isFinished: elapsedMs >= durationMs,
+  }
+}
+
+// Helper function to update RLS policies
+export async function updateRLSPolicies() {
+  const sql = `
+  -- Create public access policies (only if they don't exist)
+  DO $$
+  BEGIN
+    -- INSERT policies
+    BEGIN
+      CREATE POLICY "Anyone can insert channels" 
+      ON channels FOR INSERT WITH CHECK (true);
+    EXCEPTION
+      WHEN duplicate_object THEN
+        NULL;
+    END;
+
+    BEGIN
+      CREATE POLICY "Anyone can insert programs" 
+      ON programs FOR INSERT WITH CHECK (true);
+    EXCEPTION
+      WHEN duplicate_object THEN
+        NULL;
+    END;
+
+    BEGIN
+      CREATE POLICY "Anyone can insert videos" 
+      ON videos FOR INSERT WITH CHECK (true);
+    EXCEPTION
+      WHEN duplicate_object THEN
+        NULL;
+    END;
+
+    -- UPDATE policies
+    BEGIN
+      CREATE POLICY "Anyone can update channels" 
+      ON channels FOR UPDATE USING (true);
+    EXCEPTION
+      WHEN duplicate_object THEN
+        NULL;
+    END;
+
+    BEGIN
+      CREATE POLICY "Anyone can update programs" 
+      ON programs FOR UPDATE USING (true);
+    EXCEPTION
+      WHEN duplicate_object THEN
+        NULL;
+    END;
+
+    BEGIN
+      CREATE POLICY "Anyone can update videos" 
+      ON videos FOR UPDATE USING (true);
+    EXCEPTION
+      WHEN duplicate_object THEN
+        NULL;
+    END;
+
+    -- DELETE policies
+    BEGIN
+      CREATE POLICY "Anyone can delete channels" 
+      ON channels FOR DELETE USING (true);
+    EXCEPTION
+      WHEN duplicate_object THEN
+        NULL;
+    END;
+
+    BEGIN
+      CREATE POLICY "Anyone can delete programs" 
+      ON programs FOR DELETE USING (true);
+    EXCEPTION
+      WHEN duplicate_object THEN
+        NULL;
+    END;
+
+    BEGIN
+      CREATE POLICY "Anyone can delete videos" 
+      ON videos FOR DELETE USING (true);
+    EXCEPTION
+      WHEN duplicate_object THEN
+        NULL;
+    END;
+  END $$;
+  `
+
+  try {
+    const { error } = await supabase.rpc("exec_sql", { sql })
+    if (error) throw error
+    return { success: true, error: null }
+  } catch (error) {
+    console.error("Error updating RLS policies:", error)
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+    }
   }
 }
