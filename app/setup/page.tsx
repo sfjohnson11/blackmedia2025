@@ -15,10 +15,12 @@ export default function SetupPage() {
                 <Code className="h-8 w-8 text-blue-500 mr-3" />
                 <h2 className="text-xl font-semibold">SQL Setup</h2>
               </div>
-              <p className="text-gray-400 mb-4">Create the SQL function needed for automatic table creation.</p>
-              <Button variant="outline" className="w-full">
-                Setup SQL Function
-              </Button>
+              <p className="text-gray-400 mb-6">Create the SQL function needed for automatic table creation.</p>
+              <div className="mt-auto">
+                <Button variant="outline" className="w-full">
+                  Setup SQL Function
+                </Button>
+              </div>
             </div>
           </Link>
 
@@ -28,10 +30,12 @@ export default function SetupPage() {
                 <Upload className="h-8 w-8 text-purple-500 mr-3" />
                 <h2 className="text-xl font-semibold">Import Channels</h2>
               </div>
-              <p className="text-gray-400 mb-4">Import your Black Truth TV channels from the CSV file.</p>
-              <Button variant="outline" className="w-full">
-                Import Channels
-              </Button>
+              <p className="text-gray-400 mb-6">Import your Black Truth TV channels from the CSV file.</p>
+              <div className="mt-auto">
+                <Button variant="outline" className="w-full">
+                  Import Channels
+                </Button>
+              </div>
             </div>
           </Link>
 
@@ -41,10 +45,12 @@ export default function SetupPage() {
                 <Calendar className="h-8 w-8 text-red-500 mr-3" />
                 <h2 className="text-xl font-semibold">Import Programs</h2>
               </div>
-              <p className="text-gray-400 mb-4">Import your program schedule from the CSV file.</p>
-              <Button variant="outline" className="w-full">
-                Import Program Schedule
-              </Button>
+              <p className="text-gray-400 mb-6">Import your program schedule from the CSV file.</p>
+              <div className="mt-auto">
+                <Button variant="outline" className="w-full">
+                  Import Programs
+                </Button>
+              </div>
             </div>
           </Link>
         </div>
