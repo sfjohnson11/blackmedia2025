@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { supabase, checkTablesExist, createTables } from "@/lib/supabase"
+import { supabase, checkTablesExist, createTables, enableRLS } from "@/lib/supabase"
 import { Button } from "@/components/ui/button"
 import Link from "next/link"
 import { CheckCircle, XCircle, ArrowLeft } from "lucide-react"
@@ -102,13 +102,11 @@ export default function MockDataPage() {
       setSetupStage("Checking if tables exist...")
       const tablesExist = await checkTablesExist()
 
-      // Step 2: Create tables if they don't exist
-      if (!tablesExist) {
-        setSetupStage("Creating database tables...")
-        const { success: createSuccess, error: createError } = await createTables()
-        if (!createSuccess) {
-          throw new Error(`Error creating tables: ${createError}`)
-        }
+      // Step 2: Create tables with RLS disabled
+      setSetupStage("Creating database tables with RLS disabled...")
+      const { success: createSuccess, error: createError } = await createTables()
+      if (!createSuccess) {
+        throw new Error(`Error creating tables: ${createError}`)
       }
 
       // Step 3: Clear existing data
@@ -142,6 +140,13 @@ export default function MockDataPage() {
 
       if (videosError) {
         throw new Error(`Error adding videos: ${videosError.message}`)
+      }
+
+      // Step 6: Enable RLS with policies
+      setSetupStage("Enabling RLS with policies...")
+      const { success: rlsSuccess, error: rlsError } = await enableRLS()
+      if (!rlsSuccess) {
+        throw new Error(`Error enabling RLS: ${rlsError}`)
       }
 
       setSetupStage(null)

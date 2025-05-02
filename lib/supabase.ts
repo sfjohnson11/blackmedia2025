@@ -69,6 +69,28 @@ export async function createTables() {
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
   );
 
+  -- Disable RLS initially
+  ALTER TABLE channels DISABLE ROW LEVEL SECURITY;
+  ALTER TABLE programs DISABLE ROW LEVEL SECURITY;
+  ALTER TABLE videos DISABLE ROW LEVEL SECURITY;
+  `
+
+  try {
+    const { error } = await supabase.rpc("exec_sql", { sql })
+    if (error) throw error
+    return { success: true, error: null }
+  } catch (error) {
+    console.error("Error creating tables:", error)
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+    }
+  }
+}
+
+// Helper function to enable RLS and set policies
+export async function enableRLS() {
+  const sql = `
   -- Enable RLS
   ALTER TABLE channels ENABLE ROW LEVEL SECURITY;
   ALTER TABLE programs ENABLE ROW LEVEL SECURITY;
@@ -184,7 +206,7 @@ export async function createTables() {
     if (error) throw error
     return { success: true, error: null }
   } catch (error) {
-    console.error("Error creating tables:", error)
+    console.error("Error enabling RLS:", error)
     return {
       success: false,
       error: error instanceof Error ? error.message : "Unknown error",
@@ -275,101 +297,5 @@ export function calculateProgramProgress(program: { start_time: string; duration
     progressPercent,
     secondsElapsed,
     isFinished: elapsedMs >= durationMs,
-  }
-}
-
-// Helper function to update RLS policies
-export async function updateRLSPolicies() {
-  const sql = `
-  -- Create public access policies (only if they don't exist)
-  DO $$
-  BEGIN
-    -- INSERT policies
-    BEGIN
-      CREATE POLICY "Anyone can insert channels" 
-      ON channels FOR INSERT WITH CHECK (true);
-    EXCEPTION
-      WHEN duplicate_object THEN
-        NULL;
-    END;
-
-    BEGIN
-      CREATE POLICY "Anyone can insert programs" 
-      ON programs FOR INSERT WITH CHECK (true);
-    EXCEPTION
-      WHEN duplicate_object THEN
-        NULL;
-    END;
-
-    BEGIN
-      CREATE POLICY "Anyone can insert videos" 
-      ON videos FOR INSERT WITH CHECK (true);
-    EXCEPTION
-      WHEN duplicate_object THEN
-        NULL;
-    END;
-
-    -- UPDATE policies
-    BEGIN
-      CREATE POLICY "Anyone can update channels" 
-      ON channels FOR UPDATE USING (true);
-    EXCEPTION
-      WHEN duplicate_object THEN
-        NULL;
-    END;
-
-    BEGIN
-      CREATE POLICY "Anyone can update programs" 
-      ON programs FOR UPDATE USING (true);
-    EXCEPTION
-      WHEN duplicate_object THEN
-        NULL;
-    END;
-
-    BEGIN
-      CREATE POLICY "Anyone can update videos" 
-      ON videos FOR UPDATE USING (true);
-    EXCEPTION
-      WHEN duplicate_object THEN
-        NULL;
-    END;
-
-    -- DELETE policies
-    BEGIN
-      CREATE POLICY "Anyone can delete channels" 
-      ON channels FOR DELETE USING (true);
-    EXCEPTION
-      WHEN duplicate_object THEN
-        NULL;
-    END;
-
-    BEGIN
-      CREATE POLICY "Anyone can delete programs" 
-      ON programs FOR DELETE USING (true);
-    EXCEPTION
-      WHEN duplicate_object THEN
-        NULL;
-    END;
-
-    BEGIN
-      CREATE POLICY "Anyone can delete videos" 
-      ON videos FOR DELETE USING (true);
-    EXCEPTION
-      WHEN duplicate_object THEN
-        NULL;
-    END;
-  END $$;
-  `
-
-  try {
-    const { error } = await supabase.rpc("exec_sql", { sql })
-    if (error) throw error
-    return { success: true, error: null }
-  } catch (error) {
-    console.error("Error updating RLS policies:", error)
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
-    }
   }
 }
