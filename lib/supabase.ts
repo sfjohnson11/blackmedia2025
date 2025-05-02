@@ -1,9 +1,14 @@
 import { createClient } from "@supabase/supabase-js"
 
-// Use hardcoded values since we know they're correct
-const supabaseUrl = "https://msllqpnxwbugvkpnquwx.supabase.co"
+// Use environment variables with fallback to hardcoded values
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://msllqpnxwbugvkpnquwx.supabase.co"
 const supabaseAnonKey =
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1zbGxxcG54d2J1Z3ZrcG5xdXd4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDYxNDM3MDcsImV4cCI6MjA2MTcxOTcwN30.GmBaiUunC9R9gZh0IH8fp2VsY55d3SC_dvRagrJoUzA"
+
+// Log the values to verify (remove in production)
+console.log("Supabase URL:", supabaseUrl)
+console.log("Using environment variables:", !!process.env.NEXT_PUBLIC_SUPABASE_URL)
 
 // Create the Supabase client
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
