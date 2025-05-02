@@ -21,24 +21,58 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const [showStandby, setShowStandby] = useState(!initialProgram)
   const [errorDetails, setErrorDetails] = useState<string | null>(null)
   const [isRetrying, setIsRetrying] = useState(false)
+  const [attemptedUrls, setAttemptedUrls] = useState<string[]>([])
   const videoRef = useRef<HTMLVideoElement>(null)
   const standbyVideoRef = useRef<HTMLVideoElement>(null)
   const refreshTimerRef = useRef<NodeJS.Timeout | null>(null)
   const errorTimerRef = useRef<NodeJS.Timeout | null>(null)
   const standbyContainerRef = useRef<HTMLDivElement>(null)
   const mainContainerRef = useRef<HTMLDivElement>(null)
+  const loadAttemptRef = useRef(0)
 
   // Standby video URL - using a reliable source
   const standbyVideoUrl =
     "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/standby_blacktruthtv-D7yZUERL2zhjE71Llxul69gbPLxGES.mp4"
 
-  // Function to get video URL
+  // Function to get video URL - try different formats
   const getVideoUrl = (mp4Url: string) => {
-    // Try different formats based on what we've seen in your storage
+    // If we've already tried this URL format, try a different one
     const fileName = mp4Url.split("/").pop() || mp4Url
 
-    // This is the most likely format based on your setup
-    return `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/channel${channel.id}/${fileName}`
+    // Generate URL formats based on attempt number
+    const urlFormats = [
+      // Format 1: Direct from mp4_url if it's a full URL
+      mp4Url.startsWith("http") ? mp4Url : null,
+
+      // Format 2: channel{id}/{filename}
+      `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/channel${channel.id}/${fileName}`,
+
+      // Format 3: channel{id}/{original_path}
+      `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/channel${channel.id}/${mp4Url}`,
+
+      // Format 4: videos/channel{id}/{filename}
+      `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/videos/channel${channel.id}/${fileName}`,
+
+      // Format 5: videos/{filename}
+      `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/videos/${fileName}`,
+
+      // Format 6: Add .mp4 if missing
+      `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/channel${channel.id}/${fileName}${fileName.includes(".") ? "" : ".mp4"}`,
+    ].filter(Boolean) as string[]
+
+    // Use the current attempt to select a URL format
+    const attemptIndex = loadAttemptRef.current % urlFormats.length
+    const url = urlFormats[attemptIndex]
+
+    // Log which format we're trying
+    console.log(`Trying URL format ${attemptIndex + 1}/${urlFormats.length}: ${url}`)
+
+    // Add to attempted URLs for debugging
+    if (!attemptedUrls.includes(url)) {
+      setAttemptedUrls((prev) => [...prev, url])
+    }
+
+    return url
   }
 
   // Function to refresh the current program
@@ -55,9 +89,9 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         // Only update if the program has changed to avoid unnecessary re-renders
         if (!currentProgram || program.id !== currentProgram.id) {
           setCurrentProgram(program)
-
-          // Don't immediately hide standby - let the video load first
-          // We'll handle this in the video's onLoadedData event
+          // Reset attempted URLs and load attempt counter
+          setAttemptedUrls([])
+          loadAttemptRef.current = 0
         }
 
         // Calculate progress if it's a current program
@@ -140,12 +174,24 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     // Store error details for display
     setErrorDetails(errorMessage)
 
-    // Don't immediately show standby - use a timer to prevent flickering
-    if (!errorTimerRef.current) {
-      errorTimerRef.current = setTimeout(() => {
+    // Try the next URL format automatically
+    loadAttemptRef.current += 1
+
+    // If we have a current program, try the next URL format
+    if (currentProgram && videoRef.current) {
+      console.log(`Automatically trying next URL format (attempt ${loadAttemptRef.current})`)
+      const nextUrl = getVideoUrl(currentProgram.mp4_url)
+      videoRef.current.src = nextUrl
+      videoRef.current.load()
+
+      // Only show standby after we've tried all formats
+      if (loadAttemptRef.current >= 6) {
+        console.log("All URL formats failed, showing standby")
         setShowStandby(true)
-        errorTimerRef.current = null
-      }, 2000) // Wait 2 seconds before showing standby
+      }
+    } else {
+      // If no program, show standby
+      setShowStandby(true)
     }
   }
 
@@ -155,6 +201,9 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
     setIsRetrying(true)
     setErrorDetails(null)
+    // Reset the load attempt counter to try all formats again
+    loadAttemptRef.current = 0
+    setAttemptedUrls([])
 
     try {
       // Try to load the video again
@@ -179,6 +228,17 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     // Initial refresh if no program provided
     if (!currentProgram) {
       refreshCurrentProgram()
+    } else {
+      // If we have an initial program, try to load it
+      if (videoRef.current) {
+        // Reset counters
+        loadAttemptRef.current = 0
+        setAttemptedUrls([])
+
+        // Set the video source
+        videoRef.current.src = getVideoUrl(currentProgram.mp4_url)
+        videoRef.current.load()
+      }
     }
 
     // Set up periodic refresh (every minute)
@@ -217,6 +277,10 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   // Effect to handle video playback when program changes
   useEffect(() => {
     if (videoRef.current && currentProgram) {
+      // Reset counters
+      loadAttemptRef.current = 0
+      setAttemptedUrls([])
+
       // Set the video source
       videoRef.current.src = getVideoUrl(currentProgram.mp4_url)
       videoRef.current.load()
@@ -296,6 +360,19 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
                 </>
               )}
             </button>
+          )}
+
+          {attemptedUrls.length > 0 && (
+            <div className="mt-3 p-2 bg-gray-800/50 rounded-md">
+              <p className="text-xs text-gray-400 mb-1">Attempted URLs:</p>
+              <div className="text-xs text-gray-500 max-h-20 overflow-y-auto">
+                {attemptedUrls.map((url, index) => (
+                  <div key={index} className="truncate text-xs">
+                    {index + 1}. {url}
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
         </div>
       </div>
