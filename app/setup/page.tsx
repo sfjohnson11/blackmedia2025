@@ -17,7 +17,7 @@ export default function SetupPage() {
               </div>
               <p className="text-gray-400 mb-6">Create the SQL function needed for automatic table creation.</p>
               <div className="mt-auto">
-                <Button variant="outline" className="w-full">
+                <Button variant="outline" className="w-full btn-outline">
                   Setup SQL Function
                 </Button>
               </div>
@@ -32,7 +32,7 @@ export default function SetupPage() {
               </div>
               <p className="text-gray-400 mb-6">Import your Black Truth TV channels from the CSV file.</p>
               <div className="mt-auto">
-                <Button variant="outline" className="w-full">
+                <Button variant="outline" className="w-full btn-outline">
                   Import Channels
                 </Button>
               </div>
@@ -47,7 +47,7 @@ export default function SetupPage() {
               </div>
               <p className="text-gray-400 mb-6">Import your program schedule from the CSV file.</p>
               <div className="mt-auto">
-                <Button variant="outline" className="w-full">
+                <Button variant="outline" className="w-full btn-outline">
                   Import Programs
                 </Button>
               </div>
@@ -72,7 +72,7 @@ export default function SetupPage() {
 
           <div className="flex justify-center mt-6">
             <Link href="/">
-              <Button className="bg-red-600 hover:bg-red-700">Return to Home</Button>
+              <Button className="btn-primary">Return to Home</Button>
             </Link>
           </div>
         </div>
