@@ -15,19 +15,17 @@ export interface Program {
   duration?: number
 }
 
-export interface Video {
-  id: number
-  title: string
-  description?: string
-  url: string
-  thumbnail_url?: string
-  channel_id: string
-  duration: number
-  created_at: string
-}
-
 export interface CurrentlyPlaying {
   channelId: string
   programId: number
   progress: number
+}
+
+export interface Video {
+  id: number
+  channel_id: string
+  title: string
+  mp4_url: string
+  start_time: string
+  duration: number
 }

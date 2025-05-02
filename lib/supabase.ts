@@ -57,22 +57,9 @@ export async function createTables() {
     duration INTEGER DEFAULT 3600
   );
 
-  -- Create videos table if it doesn't exist (legacy, can be used for non-scheduled content)
-  CREATE TABLE IF NOT EXISTS videos (
-    id SERIAL PRIMARY KEY,
-    title TEXT NOT NULL,
-    description TEXT,
-    url TEXT NOT NULL,
-    thumbnail_url TEXT,
-    channel_id TEXT REFERENCES channels(id),
-    duration INTEGER NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-  );
-
   -- Disable RLS initially
   ALTER TABLE channels DISABLE ROW LEVEL SECURITY;
   ALTER TABLE programs DISABLE ROW LEVEL SECURITY;
-  ALTER TABLE videos DISABLE ROW LEVEL SECURITY;
   `
 
   try {
@@ -94,7 +81,6 @@ export async function enableRLS() {
   -- Enable RLS
   ALTER TABLE channels ENABLE ROW LEVEL SECURITY;
   ALTER TABLE programs ENABLE ROW LEVEL SECURITY;
-  ALTER TABLE videos ENABLE ROW LEVEL SECURITY;
 
   -- Create public access policies (only if they don't exist)
   DO $$
@@ -111,14 +97,6 @@ export async function enableRLS() {
     BEGIN
       CREATE POLICY "Programs are viewable by everyone" 
       ON programs FOR SELECT USING (true);
-    EXCEPTION
-      WHEN duplicate_object THEN
-        NULL;
-    END;
-
-    BEGIN
-      CREATE POLICY "Videos are viewable by everyone" 
-      ON videos FOR SELECT USING (true);
     EXCEPTION
       WHEN duplicate_object THEN
         NULL;
@@ -141,14 +119,6 @@ export async function enableRLS() {
         NULL;
     END;
 
-    BEGIN
-      CREATE POLICY "Anyone can insert videos" 
-      ON videos FOR INSERT WITH CHECK (true);
-    EXCEPTION
-      WHEN duplicate_object THEN
-        NULL;
-    END;
-
     -- UPDATE policies
     BEGIN
       CREATE POLICY "Anyone can update channels" 
@@ -166,14 +136,6 @@ export async function enableRLS() {
         NULL;
     END;
 
-    BEGIN
-      CREATE POLICY "Anyone can update videos" 
-      ON videos FOR UPDATE USING (true);
-    EXCEPTION
-      WHEN duplicate_object THEN
-        NULL;
-    END;
-
     -- DELETE policies
     BEGIN
       CREATE POLICY "Anyone can delete channels" 
@@ -186,14 +148,6 @@ export async function enableRLS() {
     BEGIN
       CREATE POLICY "Anyone can delete programs" 
       ON programs FOR DELETE USING (true);
-    EXCEPTION
-      WHEN duplicate_object THEN
-        NULL;
-    END;
-
-    BEGIN
-      CREATE POLICY "Anyone can delete videos" 
-      ON videos FOR DELETE USING (true);
     EXCEPTION
       WHEN duplicate_object THEN
         NULL;
@@ -298,4 +252,9 @@ export function calculateProgramProgress(program: { start_time: string; duration
     secondsElapsed,
     isFinished: elapsedMs >= durationMs,
   }
+}
+
+// Helper function to get video URL from bucket
+export function getVideoUrl(channelId: string, mp4Url: string) {
+  return `${supabaseUrl}/storage/v1/object/public/channel${channelId}/${mp4Url}`
 }
