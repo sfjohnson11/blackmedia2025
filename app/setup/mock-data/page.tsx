@@ -1,0 +1,200 @@
+"use client"
+
+import { useState } from "react"
+import { supabase } from "@/lib/supabase"
+import { Button } from "@/components/ui/button"
+import Link from "next/link"
+import { CheckCircle, XCircle, ArrowLeft } from "lucide-react"
+
+// Sample data for quick setup
+const sampleChannels = [
+  {
+    name: "News 24/7",
+    description: "Breaking news and current events",
+    logo_url: "https://placehold.co/400x225?text=News+24/7",
+  },
+  {
+    name: "Sports Channel",
+    description: "Live sports and commentary",
+    logo_url: "https://placehold.co/400x225?text=Sports",
+  },
+  {
+    name: "Movie Classics",
+    description: "Classic films from every era",
+    logo_url: "https://placehold.co/400x225?text=Movies",
+  },
+  {
+    name: "Kids Zone",
+    description: "Family-friendly entertainment",
+    logo_url: "https://placehold.co/400x225?text=Kids",
+  },
+  {
+    name: "Documentary World",
+    description: "Fascinating documentaries",
+    logo_url: "https://placehold.co/400x225?text=Docs",
+  },
+]
+
+const sampleVideos = [
+  {
+    title: "Sample News Report",
+    description: "Breaking news coverage",
+    url: "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
+    thumbnail_url: "https://placehold.co/640x360?text=News",
+    duration: 120,
+    channel_index: 0,
+  },
+  {
+    title: "Sports Highlights",
+    description: "Weekly sports roundup",
+    url: "https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+    thumbnail_url: "https://placehold.co/640x360?text=Sports",
+    duration: 180,
+    channel_index: 1,
+  },
+  {
+    title: "Classic Movie",
+    description: "A timeless classic film",
+    url: "https://storage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
+    thumbnail_url: "https://placehold.co/640x360?text=Movie",
+    duration: 240,
+    channel_index: 2,
+  },
+  {
+    title: "Kids Cartoon",
+    description: "Fun animation for children",
+    url: "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4",
+    thumbnail_url: "https://placehold.co/640x360?text=Cartoon",
+    duration: 150,
+    channel_index: 3,
+  },
+  {
+    title: "Nature Documentary",
+    description: "Exploring wildlife",
+    url: "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4",
+    thumbnail_url: "https://placehold.co/640x360?text=Nature",
+    duration: 210,
+    channel_index: 4,
+  },
+]
+
+export default function MockDataPage() {
+  const [isLoading, setIsLoading] = useState(false)
+  const [result, setResult] = useState<{ success: boolean; message: string } | null>(null)
+
+  const addMockData = async () => {
+    setIsLoading(true)
+    setResult(null)
+
+    try {
+      // Insert channels
+      const { data: channelsData, error: channelsError } = await supabase
+        .from("channels")
+        .insert(sampleChannels)
+        .select()
+
+      if (channelsError) {
+        throw new Error(`Error adding channels: ${channelsError.message}`)
+      }
+
+      // Insert videos with proper channel_id references
+      const videosWithChannelIds = sampleVideos.map((video) => {
+        const channelId = channelsData[video.channel_index]?.id
+        if (!channelId) {
+          throw new Error(`Channel ID not found for index ${video.channel_index}`)
+        }
+
+        // Create a new object without channel_index
+        const { channel_index, ...videoData } = video
+        return {
+          ...videoData,
+          channel_id: channelId,
+        }
+      })
+
+      const { error: videosError } = await supabase.from("videos").insert(videosWithChannelIds)
+
+      if (videosError) {
+        throw new Error(`Error adding videos: ${videosError.message}`)
+      }
+
+      setResult({
+        success: true,
+        message: "Sample data added successfully! Added 5 channels and 5 videos.",
+      })
+    } catch (error) {
+      console.error("Error adding mock data:", error)
+      setResult({
+        success: false,
+        message: error instanceof Error ? error.message : "An unknown error occurred",
+      })
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  return (
+    <div className="pt-24 px-4 md:px-10 flex flex-col items-center justify-center min-h-[80vh]">
+      <div className="bg-gray-800 p-6 rounded-lg max-w-2xl w-full">
+        <div className="flex items-center mb-6">
+          <Link href="/setup" className="mr-4">
+            <Button variant="ghost" size="sm">
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Back
+            </Button>
+          </Link>
+          <h1 className="text-2xl font-bold">Add Sample Data</h1>
+        </div>
+
+        <div className="mb-6">
+          <p className="mb-4">
+            Quickly populate your Black Truth TV app with sample data for testing. This will add 5 channels and 5 videos
+            to your database.
+          </p>
+
+          <div className="bg-gray-900 p-4 rounded mb-6">
+            <h3 className="font-semibold mb-2">Sample Channels:</h3>
+            <ul className="list-disc pl-5 mb-4">
+              {sampleChannels.map((channel, index) => (
+                <li key={index}>{channel.name}</li>
+              ))}
+            </ul>
+
+            <h3 className="font-semibold mb-2">Sample Videos:</h3>
+            <ul className="list-disc pl-5">
+              {sampleVideos.map((video, index) => (
+                <li key={index}>{video.title}</li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="flex justify-center">
+            <Button onClick={addMockData} disabled={isLoading} className="bg-red-600 hover:bg-red-700 w-full max-w-xs">
+              {isLoading ? "Adding Data..." : "Add Sample Data"}
+            </Button>
+          </div>
+
+          {result && (
+            <div
+              className={`mt-6 p-4 rounded-md ${
+                result.success ? "bg-green-900/30 text-green-400" : "bg-red-900/30 text-red-400"
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                {result.success ? <CheckCircle className="h-5 w-5" /> : <XCircle className="h-5 w-5" />}
+                <p>{result.message}</p>
+              </div>
+              {result.success && (
+                <div className="mt-4 text-center">
+                  <Link href="/">
+                    <Button className="bg-green-600 hover:bg-green-700">Go to Home Page</Button>
+                  </Link>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}

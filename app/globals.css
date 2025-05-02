@@ -1,0 +1,32 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --foreground-rgb: 255, 255, 255;
+  --background-start-rgb: 0, 0, 0;
+  --background-end-rgb: 0, 0, 0;
+}
+
+body {
+  color: rgb(var(--foreground-rgb));
+  background: linear-gradient(to bottom, transparent, rgb(var(--background-end-rgb))) rgb(var(--background-start-rgb));
+}
+
+@layer components {
+  .netflix-card {
+    @apply relative overflow-hidden rounded-md transition-transform duration-300 ease-in-out;
+  }
+
+  .netflix-card:hover {
+    @apply transform scale-105 z-10;
+  }
+
+  .netflix-row {
+    @apply py-6;
+  }
+
+  .netflix-title {
+    @apply text-xl font-bold mb-4 pl-4;
+  }
+}
