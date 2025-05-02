@@ -1,171 +1,9 @@
 "use client"
-
-import { useState } from "react"
-import { supabase, checkTablesExist, createTables, enableRLS } from "@/lib/supabase"
 import { Button } from "@/components/ui/button"
 import Link from "next/link"
-import { CheckCircle, XCircle, ArrowLeft } from "lucide-react"
-
-// Sample data for quick setup
-const sampleChannels = [
-  {
-    id: "1",
-    name: "News 24/7",
-    slug: "news-24-7",
-    description: "Breaking news and current events",
-    logo_url: "https://placehold.co/400x225?text=News+24/7",
-  },
-  {
-    id: "2",
-    name: "Sports Channel",
-    slug: "sports-channel",
-    description: "Live sports and commentary",
-    logo_url: "https://placehold.co/400x225?text=Sports",
-  },
-  {
-    id: "3",
-    name: "Movie Classics",
-    slug: "movie-classics",
-    description: "Classic films from every era",
-    logo_url: "https://placehold.co/400x225?text=Movies",
-  },
-  {
-    id: "4",
-    name: "Kids Zone",
-    slug: "kids-zone",
-    description: "Family-friendly entertainment",
-    logo_url: "https://placehold.co/400x225?text=Kids",
-  },
-  {
-    id: "5",
-    name: "Documentary World",
-    slug: "documentary-world",
-    description: "Fascinating documentaries",
-    logo_url: "https://placehold.co/400x225?text=Docs",
-  },
-]
-
-const sampleVideos = [
-  {
-    title: "Sample News Report",
-    description: "Breaking news coverage",
-    url: "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
-    thumbnail_url: "https://placehold.co/640x360?text=News",
-    duration: 120,
-    channel_id: "1",
-  },
-  {
-    title: "Sports Highlights",
-    description: "Weekly sports roundup",
-    url: "https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-    thumbnail_url: "https://placehold.co/640x360?text=Sports",
-    duration: 180,
-    channel_id: "2",
-  },
-  {
-    title: "Classic Movie",
-    description: "A timeless classic film",
-    url: "https://storage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
-    thumbnail_url: "https://placehold.co/640x360?text=Movie",
-    duration: 240,
-    channel_id: "3",
-  },
-  {
-    title: "Kids Cartoon",
-    description: "Fun animation for children",
-    url: "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4",
-    thumbnail_url: "https://placehold.co/640x360?text=Cartoon",
-    duration: 150,
-    channel_id: "4",
-  },
-  {
-    title: "Nature Documentary",
-    description: "Exploring wildlife",
-    url: "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4",
-    thumbnail_url: "https://placehold.co/640x360?text=Nature",
-    duration: 210,
-    channel_id: "5",
-  },
-]
+import { ArrowLeft, Info } from "lucide-react"
 
 export default function MockDataPage() {
-  const [isLoading, setIsLoading] = useState(false)
-  const [result, setResult] = useState<{ success: boolean; message: string } | null>(null)
-  const [setupStage, setSetupStage] = useState<string | null>(null)
-
-  const addMockData = async () => {
-    setIsLoading(true)
-    setResult(null)
-
-    try {
-      // Step 1: Check if tables exist
-      setSetupStage("Checking if tables exist...")
-      const tablesExist = await checkTablesExist()
-
-      // Step 2: Create tables with RLS disabled
-      setSetupStage("Creating database tables with RLS disabled...")
-      const { success: createSuccess, error: createError } = await createTables()
-      if (!createSuccess) {
-        throw new Error(`Error creating tables: ${createError}`)
-      }
-
-      // Step 3: Clear existing data
-      setSetupStage("Clearing existing data...")
-      try {
-        await supabase.from("videos").delete().gt("id", 0)
-      } catch (error) {
-        console.warn("Error clearing videos, might be first run:", error)
-      }
-
-      try {
-        await supabase.from("channels").delete().gt("id", "0")
-      } catch (error) {
-        console.warn("Error clearing channels, might be first run:", error)
-      }
-
-      // Step 4: Insert channels
-      setSetupStage("Adding sample channels...")
-      const { data: channelsData, error: channelsError } = await supabase
-        .from("channels")
-        .insert(sampleChannels)
-        .select()
-
-      if (channelsError) {
-        throw new Error(`Error adding channels: ${channelsError.message}`)
-      }
-
-      // Step 5: Insert videos
-      setSetupStage("Adding sample videos...")
-      const { error: videosError } = await supabase.from("videos").insert(sampleVideos)
-
-      if (videosError) {
-        throw new Error(`Error adding videos: ${videosError.message}`)
-      }
-
-      // Step 6: Enable RLS with policies
-      setSetupStage("Enabling RLS with policies...")
-      const { success: rlsSuccess, error: rlsError } = await enableRLS()
-      if (!rlsSuccess) {
-        throw new Error(`Error enabling RLS: ${rlsError}`)
-      }
-
-      setSetupStage(null)
-      setResult({
-        success: true,
-        message: "Sample data added successfully! Added 5 channels and 5 videos.",
-      })
-    } catch (error) {
-      console.error("Error adding mock data:", error)
-      setSetupStage(null)
-      setResult({
-        success: false,
-        message: error instanceof Error ? error.message : "An unknown error occurred",
-      })
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
   return (
     <div className="pt-24 px-4 md:px-10 flex flex-col items-center justify-center min-h-[80vh]">
       <div className="bg-gray-800 p-6 rounded-lg max-w-2xl w-full">
@@ -176,65 +14,49 @@ export default function MockDataPage() {
               Back
             </Button>
           </Link>
-          <h1 className="text-2xl font-bold">Add Sample Data</h1>
+          <h1 className="text-2xl font-bold">Setup Information</h1>
         </div>
 
         <div className="mb-6">
-          <p className="mb-4">
-            Quickly populate your Black Truth TV app with sample data for testing. This will add 5 channels and 5 videos
-            to your database.
-          </p>
-
-          <div className="bg-gray-900 p-4 rounded mb-6">
-            <h3 className="font-semibold mb-2">Sample Channels:</h3>
-            <ul className="list-disc pl-5 mb-4">
-              {sampleChannels.map((channel, index) => (
-                <li key={index}>{channel.name}</li>
-              ))}
-            </ul>
-
-            <h3 className="font-semibold mb-2">Sample Videos:</h3>
-            <ul className="list-disc pl-5">
-              {sampleVideos.map((video, index) => (
-                <li key={index}>{video.title}</li>
-              ))}
-            </ul>
+          <div className="bg-blue-900/30 p-4 rounded-md mb-6 flex">
+            <Info className="h-5 w-5 text-blue-400 mr-3 flex-shrink-0 mt-0.5" />
+            <div>
+              <h3 className="font-semibold text-blue-400 mb-2">Mock Data Setup Disabled</h3>
+              <p className="text-gray-300">
+                The automatic mock data setup has been disabled to prevent database conflicts. Please use the import
+                functionality instead to add your channels and programs.
+              </p>
+            </div>
           </div>
 
-          <div className="flex justify-center">
-            <Button onClick={addMockData} disabled={isLoading} className="bg-red-600 hover:bg-red-700 w-full max-w-xs">
-              {isLoading ? "Adding Data..." : "Add Sample Data"}
-            </Button>
+          <h2 className="text-xl font-semibold mb-4">Setup Instructions</h2>
+          <ol className="list-decimal pl-5 space-y-3 text-gray-300 mb-6">
+            <li>
+              Start with <strong>SQL Setup</strong> to create the necessary SQL function.
+            </li>
+            <li>Create database tables from the home page.</li>
+            <li>
+              Import your channels using <strong>Import Channels</strong>.
+            </li>
+            <li>
+              Import your program schedule using <strong>Import Programs</strong>.
+            </li>
+          </ol>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-8">
+            <Link href="/setup/import" className="block">
+              <Button className="w-full bg-red-600 hover:bg-red-700">Import Channels</Button>
+            </Link>
+            <Link href="/setup/import-programs" className="block">
+              <Button className="w-full bg-blue-600 hover:bg-blue-700">Import Programs</Button>
+            </Link>
           </div>
 
-          {setupStage && (
-            <div className="mt-4 p-3 bg-blue-900/30 text-blue-400 rounded-md">
-              <div className="flex items-center">
-                <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-blue-400 mr-2"></div>
-                <p>{setupStage}</p>
-              </div>
-            </div>
-          )}
-
-          {result && (
-            <div
-              className={`mt-6 p-4 rounded-md ${
-                result.success ? "bg-green-900/30 text-green-400" : "bg-red-900/30 text-red-400"
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                {result.success ? <CheckCircle className="h-5 w-5" /> : <XCircle className="h-5 w-5" />}
-                <p>{result.message}</p>
-              </div>
-              {result.success && (
-                <div className="mt-4 text-center">
-                  <Link href="/">
-                    <Button className="bg-green-600 hover:bg-green-700">Go to Home Page</Button>
-                  </Link>
-                </div>
-              )}
-            </div>
-          )}
+          <div className="flex justify-center mt-6">
+            <Link href="/">
+              <Button variant="outline">Return to Home</Button>
+            </Link>
+          </div>
         </div>
       </div>
     </div>
