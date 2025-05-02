@@ -1,4 +1,4 @@
-import Image from "next/image"
+import Link from "next/link"
 import { Play, Info } from "lucide-react"
 import type { Channel } from "@/types"
 import { Button } from "@/components/ui/button"
@@ -13,13 +13,7 @@ export function FeaturedChannel({ channel }: FeaturedChannelProps) {
       {/* Background image */}
       <div className="absolute inset-0">
         {channel.logo_url ? (
-          <Image
-            src={channel.logo_url || "/placeholder.svg"}
-            alt={channel.name}
-            fill
-            className="object-cover"
-            priority
-          />
+          <img src={channel.logo_url || "/placeholder.svg"} alt={channel.name} className="object-cover w-full h-full" />
         ) : (
           <div className="w-full h-full bg-gradient-to-b from-gray-900 to-black" />
         )}
@@ -33,14 +27,18 @@ export function FeaturedChannel({ channel }: FeaturedChannelProps) {
         <p className="text-lg max-w-2xl mb-6">{channel.description || `Watch ${channel.name} 24/7 streaming.`}</p>
 
         <div className="flex space-x-4">
-          <Button className="bg-white text-black hover:bg-gray-200 flex items-center gap-2 px-6 py-2 rounded">
-            <Play className="h-5 w-5" />
-            <span>Play</span>
-          </Button>
-          <Button variant="outline" className="flex items-center gap-2 px-6 py-2 rounded">
-            <Info className="h-5 w-5" />
-            <span>More Info</span>
-          </Button>
+          <Link href={`/watch/${channel.id}`}>
+            <Button className="bg-white text-black hover:bg-gray-200 flex items-center gap-2 px-6 py-2 rounded">
+              <Play className="h-5 w-5" />
+              <span>Play</span>
+            </Button>
+          </Link>
+          <Link href={`/browse`}>
+            <Button variant="outline" className="flex items-center gap-2 px-6 py-2 rounded">
+              <Info className="h-5 w-5" />
+              <span>More Info</span>
+            </Button>
+          </Link>
         </div>
       </div>
     </div>

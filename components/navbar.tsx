@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react"
 import Link from "next/link"
-import { Search, Bell, User, Settings } from "lucide-react"
+import { Search, Bell, User } from "lucide-react"
 
 export function Navbar() {
   const [isScrolled, setIsScrolled] = useState(false)
@@ -43,9 +43,6 @@ export function Navbar() {
         </div>
 
         <div className="flex items-center space-x-4">
-          <Link href="/setup" className="text-white hover:text-gray-300">
-            <Settings className="h-5 w-5" />
-          </Link>
           <button className="text-white">
             <Search className="h-5 w-5" />
           </button>

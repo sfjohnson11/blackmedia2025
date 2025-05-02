@@ -1,5 +1,4 @@
 import Link from "next/link"
-import Image from "next/image"
 import type { Channel } from "@/types"
 
 interface ChannelCardProps {
@@ -11,11 +10,10 @@ export function ChannelCard({ channel }: ChannelCardProps) {
     <Link href={`/watch/${channel.id}`} className="netflix-card min-w-[200px] h-[120px]">
       <div className="relative w-full h-full">
         {channel.logo_url ? (
-          <Image
+          <img
             src={channel.logo_url || "/placeholder.svg"}
             alt={channel.name}
-            fill
-            className="object-cover rounded-md"
+            className="object-cover rounded-md w-full h-full"
           />
         ) : (
           <div className="w-full h-full bg-gray-800 rounded-md flex items-center justify-center">
