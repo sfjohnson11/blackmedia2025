@@ -28,13 +28,13 @@ export function FeaturedChannel({ channel }: FeaturedChannelProps) {
 
         <div className="flex space-x-4">
           <Link href={`/watch/${channel.id}`}>
-            <Button className="bg-white text-black hover:bg-gray-200 flex items-center gap-2 px-6 py-2 rounded">
+            <Button className="netflix-btn-white flex items-center gap-2 px-6 py-2 rounded">
               <Play className="h-5 w-5" />
               <span>Play</span>
             </Button>
           </Link>
           <Link href={`/browse`}>
-            <Button variant="outline" className="flex items-center gap-2 px-6 py-2 rounded">
+            <Button variant="outline" className="netflix-btn-outline flex items-center gap-2 px-6 py-2 rounded">
               <Info className="h-5 w-5" />
               <span>More Info</span>
             </Button>

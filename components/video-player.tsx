@@ -1,9 +1,8 @@
 "use client"
 
 import type React from "react"
-
 import { useState, useEffect, useRef } from "react"
-import { getCurrentProgram, getUpcomingPrograms, calculateProgramProgress, listFiles } from "@/lib/supabase"
+import { getCurrentProgram, getUpcomingPrograms, calculateProgramProgress } from "@/lib/supabase"
 import type { Channel, Program } from "@/types"
 import { Clock, Calendar, AlertCircle, RefreshCw } from "lucide-react"
 
@@ -19,23 +18,27 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const [progress, setProgress] = useState(0)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [videoError, setVideoError] = useState(false)
+  const [showStandby, setShowStandby] = useState(!initialProgram)
   const [errorDetails, setErrorDetails] = useState<string | null>(null)
   const [isRetrying, setIsRetrying] = useState(false)
-  const [bucketFiles, setBucketFiles] = useState<string[]>([])
   const videoRef = useRef<HTMLVideoElement>(null)
   const standbyVideoRef = useRef<HTMLVideoElement>(null)
   const refreshTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const errorTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const standbyContainerRef = useRef<HTMLDivElement>(null)
+  const mainContainerRef = useRef<HTMLDivElement>(null)
 
-  // Function to get the standby video URL
-  const getStandbyVideoUrl = () => {
-    return "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/standby_blacktruthtv-D7yZUERL2zhjE71Llxul69gbPLxGES.mp4"
-  }
+  // Standby video URL - using a reliable source
+  const standbyVideoUrl =
+    "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/standby_blacktruthtv-D7yZUERL2zhjE71Llxul69gbPLxGES.mp4"
 
-  // Function to format the video URL with the bucket path
+  // Function to get video URL
   const getVideoUrl = (mp4Url: string) => {
-    // Default URL format
-    return `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/channel${channel.id}/${mp4Url}`
+    // Try different formats based on what we've seen in your storage
+    const fileName = mp4Url.split("/").pop() || mp4Url
+
+    // This is the most likely format based on your setup
+    return `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/channel${channel.id}/${fileName}`
   }
 
   // Function to refresh the current program
@@ -49,9 +52,13 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       }
 
       if (program) {
-        setCurrentProgram(program)
-        setVideoError(false)
-        setErrorDetails(null)
+        // Only update if the program has changed to avoid unnecessary re-renders
+        if (!currentProgram || program.id !== currentProgram.id) {
+          setCurrentProgram(program)
+
+          // Don't immediately hide standby - let the video load first
+          // We'll handle this in the video's onLoadedData event
+        }
 
         // Calculate progress if it's a current program
         if (!isNext) {
@@ -62,6 +69,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         }
       } else {
         setCurrentProgram(null)
+        setShowStandby(true)
         setProgress(0)
       }
 
@@ -78,37 +86,21 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     }
   }
 
-  // Function to list files in the channel bucket
-  const fetchBucketFiles = async () => {
-    try {
-      // Try different bucket names
-      const bucketNames = [`channel${channel.id}`, `videos`, `video`, `media`, `content`, `assets`]
+  // Handle video loaded successfully
+  const handleVideoLoaded = () => {
+    console.log("Main video loaded successfully")
 
-      for (const bucket of bucketNames) {
-        console.log(`Checking bucket: ${bucket}`)
-        const files = await listFiles(bucket)
-        if (files && files.length > 0) {
-          console.log(`Found files in bucket ${bucket}:`, files)
-          setBucketFiles(files.map((f) => f.name))
-          return { bucket, files }
-        }
-      }
-
-      console.log("No files found in any of the checked buckets")
-      return { bucket: null, files: [] }
-    } catch (err) {
-      console.error("Error fetching bucket files:", err)
-      return { bucket: null, files: [] }
+    // Clear any error timers
+    if (errorTimerRef.current) {
+      clearTimeout(errorTimerRef.current)
+      errorTimerRef.current = null
     }
-  }
 
-  // Handle standby video error
-  const handleStandbyError = (e: React.SyntheticEvent<HTMLVideoElement, Event>) => {
-    console.error("Error loading standby video:", e)
-    // Try to extract more error details
-    const target = e.target as HTMLVideoElement
-    const errorMessage = `Error code: ${target.error?.code}, message: ${target.error?.message}`
-    console.error(errorMessage)
+    // Hide standby with a slight delay to ensure smooth transition
+    setTimeout(() => {
+      setShowStandby(false)
+      setErrorDetails(null)
+    }, 500)
   }
 
   // Handle video error with improved error reporting
@@ -147,85 +139,13 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
     // Store error details for display
     setErrorDetails(errorMessage)
-    setVideoError(true)
 
-    // Fetch bucket files to help with debugging
-    fetchBucketFiles()
-  }
-
-  // Function to try alternative URL formats
-  const tryAlternativeUrl = async (mp4Url: string) => {
-    if (!videoRef.current || !currentProgram) return false
-
-    setIsRetrying(true)
-    console.log("Trying alternative URLs for:", mp4Url)
-
-    try {
-      // First, check if the filename contains a path
-      const fileName = mp4Url.split("/").pop() || mp4Url
-
-      // Try alternative URL formats
-      const formats = [
-        // Format 1: channel{id}/{filename}
-        `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/channel${channel.id}/${fileName}`,
-
-        // Format 2: videos/{filename}
-        `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/videos/${fileName}`,
-
-        // Format 3: videos/channel{id}/{filename}
-        `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/videos/channel${channel.id}/${fileName}`,
-
-        // Format 4: media/{filename}
-        `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/media/${fileName}`,
-
-        // Format 5: content/{filename}
-        `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/content/${fileName}`,
-
-        // Format 6: assets/{filename}
-        `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/assets/${fileName}`,
-
-        // Format 7: channel{id} with original path
-        `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/channel${channel.id}/${mp4Url}`,
-
-        // Format 8: Try with MP4 extension if not present
-        `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/channel${channel.id}/${fileName}${fileName.includes(".") ? "" : ".mp4"}`,
-
-        // Format 9: Try with direct URL if it's a full URL
-        mp4Url.startsWith("http") ? mp4Url : `https://${mp4Url}`,
-      ]
-
-      // We'll try each format
-      for (const url of formats) {
-        try {
-          console.log("Testing URL:", url)
-
-          // Try to fetch the video
-          const response = await fetch(url, { method: "HEAD" })
-
-          if (response.ok) {
-            console.log("Found working URL:", url)
-            videoRef.current.src = url
-            videoRef.current.load()
-            await videoRef.current.play()
-            setVideoError(false)
-            setErrorDetails(null)
-            setIsRetrying(false)
-            return true
-          }
-        } catch (err) {
-          console.error("Error testing URL:", url, err)
-        }
-      }
-
-      // If we get here, none of the URLs worked
-      console.error("All URL formats failed")
-      setErrorDetails(`Could not find video file. Tried multiple formats for: ${fileName}`)
-      return false
-    } catch (err) {
-      console.error("Error in tryAlternativeUrl:", err)
-      return false
-    } finally {
-      setIsRetrying(false)
+    // Don't immediately show standby - use a timer to prevent flickering
+    if (!errorTimerRef.current) {
+      errorTimerRef.current = setTimeout(() => {
+        setShowStandby(true)
+        errorTimerRef.current = null
+      }, 2000) // Wait 2 seconds before showing standby
     }
   }
 
@@ -234,31 +154,20 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     if (!currentProgram) return
 
     setIsRetrying(true)
-    setVideoError(false)
     setErrorDetails(null)
 
     try {
-      // First try the original URL
+      // Try to load the video again
       if (videoRef.current) {
-        videoRef.current.src = getVideoUrl(currentProgram.mp4_url)
+        // Get a fresh URL with a cache-busting parameter
+        const freshUrl = `${getVideoUrl(currentProgram.mp4_url)}?t=${Date.now()}`
+        videoRef.current.src = freshUrl
         videoRef.current.load()
-        try {
-          await videoRef.current.play()
-          setIsRetrying(false)
-          return
-        } catch (err) {
-          console.error("Error playing original URL, trying alternatives:", err)
-        }
-      }
 
-      // If that fails, try alternative URLs
-      const success = await tryAlternativeUrl(currentProgram.mp4_url)
-      if (!success) {
-        setVideoError(true)
+        // The onLoadedData event will handle hiding the standby if successful
       }
     } catch (err) {
       console.error("Error in retry:", err)
-      setVideoError(true)
       setErrorDetails(`Retry failed: ${err instanceof Error ? err.message : String(err)}`)
     } finally {
       setIsRetrying(false)
@@ -272,9 +181,6 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       refreshCurrentProgram()
     }
 
-    // Fetch bucket files for debugging
-    fetchBucketFiles()
-
     // Set up periodic refresh (every minute)
     refreshTimerRef.current = setInterval(() => {
       refreshCurrentProgram()
@@ -283,6 +189,9 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     return () => {
       if (refreshTimerRef.current) {
         clearInterval(refreshTimerRef.current)
+      }
+      if (errorTimerRef.current) {
+        clearTimeout(errorTimerRef.current)
       }
     }
   }, [channel.id])
@@ -305,39 +214,52 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     return () => clearInterval(progressTimer)
   }, [currentProgram])
 
-  // Effect to handle video playback
+  // Effect to handle video playback when program changes
   useEffect(() => {
-    if (videoRef.current && currentProgram && !videoError && !isRetrying) {
-      videoRef.current.play().catch((error) => {
-        console.error("Error playing video:", error)
-        // Try alternative URLs before giving up
-        tryAlternativeUrl(currentProgram.mp4_url).then((success) => {
-          if (!success) {
-            setVideoError(true)
-            setErrorDetails(`Failed to play video: ${error.message || "Unknown error"}`)
-          }
-        })
-      })
-    }
-  }, [currentProgram, videoError, isRetrying])
+    if (videoRef.current && currentProgram) {
+      // Set the video source
+      videoRef.current.src = getVideoUrl(currentProgram.mp4_url)
+      videoRef.current.load()
 
-  // If no program or video error, show standby video
-  if (!currentProgram || videoError) {
-    return (
-      <div className="w-full aspect-video bg-black relative">
+      // Play will be handled by the onLoadedData event
+    }
+  }, [currentProgram])
+
+  // Render both videos but control visibility with CSS
+  return (
+    <div className="w-full aspect-video bg-black relative">
+      {/* Main video container - always rendered but may be hidden */}
+      <div
+        ref={mainContainerRef}
+        className={`absolute inset-0 transition-opacity duration-500 ${showStandby ? "opacity-0" : "opacity-100"}`}
+        style={{ zIndex: showStandby ? 1 : 2 }}
+      >
+        <video
+          ref={videoRef}
+          className="w-full h-full"
+          controls
+          autoPlay
+          onError={handleVideoError}
+          onLoadedData={handleVideoLoaded}
+          playsInline
+        />
+      </div>
+
+      {/* Standby video container - always rendered but may be hidden */}
+      <div
+        ref={standbyContainerRef}
+        className={`absolute inset-0 transition-opacity duration-500 ${showStandby ? "opacity-100" : "opacity-0"}`}
+        style={{ zIndex: showStandby ? 2 : 1 }}
+      >
         <video
           ref={standbyVideoRef}
-          src={getStandbyVideoUrl()}
+          src={standbyVideoUrl}
           className="w-full h-full"
           controls
           autoPlay
           loop
-          onError={handleStandbyError}
+          playsInline
         />
-
-        <div className="absolute top-4 left-4 bg-black/70 px-3 py-1 rounded-md">
-          <span className="text-sm font-medium">{channel.name}</span>
-        </div>
 
         <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4">
           <h3 className="text-lg font-bold mb-1">Standby</h3>
@@ -375,71 +297,49 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
               )}
             </button>
           )}
+        </div>
+      </div>
 
-          {bucketFiles.length > 0 && (
-            <div className="mt-3 p-2 bg-gray-800/50 rounded-md">
-              <p className="text-xs text-gray-400 mb-1">Available files in bucket:</p>
-              <div className="text-xs text-gray-500 max-h-20 overflow-y-auto">
-                {bucketFiles.map((file, index) => (
-                  <div key={index} className="truncate">
-                    {file}
+      {/* Channel name overlay - always visible */}
+      <div className="absolute top-4 left-4 bg-black/70 px-3 py-1 rounded-md z-10">
+        <span className="text-sm font-medium">{channel.name}</span>
+      </div>
+
+      {/* Program info overlay - only visible when showing main video */}
+      {currentProgram && !showStandby && (
+        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4 z-10 pointer-events-none">
+          <h3 className="text-lg font-bold mb-1">{currentProgram.title}</h3>
+          <div className="flex items-center text-sm text-gray-300 mb-2">
+            <Clock className="h-3 w-3 mr-1" />
+            <span>
+              {new Date(currentProgram.start_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            </span>
+          </div>
+
+          <div className="w-full bg-gray-700 rounded-full h-1 mb-4">
+            <div className="bg-red-600 h-1 rounded-full" style={{ width: `${progress}%` }}></div>
+          </div>
+
+          {upcomingPrograms.length > 0 && (
+            <div className="hidden md:block">
+              <h4 className="text-sm font-semibold mb-2 flex items-center">
+                <Calendar className="h-3 w-3 mr-1" />
+                Coming Up Next
+              </h4>
+              <div className="flex space-x-4 overflow-x-auto pb-2">
+                {upcomingPrograms.slice(0, 3).map((program, index) => (
+                  <div key={index} className="min-w-[200px] bg-black/50 p-2 rounded">
+                    <p className="font-medium text-sm">{program.title}</p>
+                    <p className="text-xs text-gray-400">
+                      {new Date(program.start_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    </p>
                   </div>
                 ))}
               </div>
             </div>
           )}
         </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="w-full aspect-video bg-black relative">
-      <video
-        ref={videoRef}
-        src={getVideoUrl(currentProgram.mp4_url)}
-        className="w-full h-full"
-        controls
-        autoPlay
-        onError={handleVideoError}
-      />
-
-      <div className="absolute top-4 left-4 bg-black/70 px-3 py-1 rounded-md">
-        <span className="text-sm font-medium">{channel.name}</span>
-      </div>
-
-      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4">
-        <h3 className="text-lg font-bold mb-1">{currentProgram.title}</h3>
-        <div className="flex items-center text-sm text-gray-300 mb-2">
-          <Clock className="h-3 w-3 mr-1" />
-          <span>
-            {new Date(currentProgram.start_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-          </span>
-        </div>
-
-        <div className="w-full bg-gray-700 rounded-full h-1 mb-4">
-          <div className="bg-red-600 h-1 rounded-full" style={{ width: `${progress}%` }}></div>
-        </div>
-
-        {upcomingPrograms.length > 0 && (
-          <div className="hidden md:block">
-            <h4 className="text-sm font-semibold mb-2 flex items-center">
-              <Calendar className="h-3 w-3 mr-1" />
-              Coming Up Next
-            </h4>
-            <div className="flex space-x-4 overflow-x-auto pb-2">
-              {upcomingPrograms.slice(0, 3).map((program, index) => (
-                <div key={index} className="min-w-[200px] bg-black/50 p-2 rounded">
-                  <p className="font-medium text-sm">{program.title}</p>
-                  <p className="text-xs text-gray-400">
-                    {new Date(program.start_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
+      )}
     </div>
   )
 }

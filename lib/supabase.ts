@@ -257,7 +257,7 @@ export function calculateProgramProgress(program: { start_time: string; duration
 // Helper function to get video URL from bucket
 export function getVideoUrl(channelId: string, mp4Url: string) {
   // Updated to use the correct bucket path format
-  return `${supabaseUrl}/storage/v1/object/public/channel${channelId}/${mp4Url}`
+  return `${supabaseUrl}/storage/v1/object/public/videos/channel${channelId}/${mp4Url}`
 }
 
 // Helper function to check if a file exists in storage
@@ -287,10 +287,7 @@ export async function listBuckets() {
 export async function listFiles(bucket: string) {
   try {
     const { data, error } = await supabase.storage.from(bucket).list()
-    if (error) {
-      console.error(`Error listing files in bucket ${bucket}:`, error)
-      return []
-    }
+    if (error) throw error
     return data
   } catch (e) {
     console.error(`Error listing files in bucket ${bucket}:`, e)

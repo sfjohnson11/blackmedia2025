@@ -8,9 +8,10 @@
   --background-end-rgb: 0, 0, 0;
 
   /* Custom button colors */
-  --primary-button: 220, 38, 38; /* Softer red */
-  --primary-button-hover: 185, 28, 28; /* Darker red on hover */
-  --outline-button-hover: 55, 65, 81; /* Softer gray on hover */
+  --primary-button: 185, 28, 28; /* Darker red */
+  --primary-button-hover: 153, 27, 27; /* Even darker red on hover */
+  --outline-button: 31, 41, 55; /* Dark gray for outline buttons */
+  --outline-button-hover: 55, 65, 81; /* Lighter gray on hover */
 }
 
 body {
@@ -46,21 +47,29 @@ body {
     scrollbar-width: none; /* Firefox */
   }
 
-  /* Custom button styles with better contrast */
+  /* Button styles with better contrast */
   .btn-primary {
-    @apply bg-opacity-90 hover:bg-opacity-100 transition-all duration-200;
-    background-color: rgb(var(--primary-button));
-  }
-
-  .btn-primary:hover {
-    background-color: rgb(var(--primary-button-hover));
+    @apply bg-red-700 text-white hover:bg-red-800 transition-all duration-200;
   }
 
   .btn-outline {
-    @apply border border-gray-600 bg-gray-900 bg-opacity-50 hover:bg-opacity-80 text-gray-200 transition-all duration-200;
+    @apply bg-gray-800 text-white border border-gray-600 hover:bg-gray-700 transition-all duration-200;
   }
 
-  .btn-outline:hover {
-    background-color: rgb(var(--outline-button-hover));
+  /* Netflix-style buttons */
+  .netflix-btn-primary {
+    @apply bg-red-700 text-white hover:bg-red-800;
+  }
+
+  .netflix-btn-secondary {
+    @apply bg-gray-800 text-white hover:bg-gray-700;
+  }
+
+  .netflix-btn-outline {
+    @apply bg-gray-800 text-white border border-gray-600 hover:bg-gray-700;
+  }
+
+  .netflix-btn-white {
+    @apply bg-white text-gray-900 hover:bg-gray-200;
   }
 }
