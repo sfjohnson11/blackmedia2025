@@ -1,5 +1,7 @@
 "use client"
 
+import type React from "react"
+
 import { useState, useEffect, useRef } from "react"
 import { getCurrentProgram, getUpcomingPrograms, calculateProgramProgress } from "@/lib/supabase"
 import type { Channel, Program } from "@/types"
@@ -25,7 +27,8 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   // Function to get the standby video URL for this channel
   const getStandbyVideoUrl = () => {
     // Use the standby.mp4 from the channel's bucket
-    return `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/channel${channel.id}/standby.mp4`
+    // Make sure to use the correct bucket name format
+    return `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/videos/channel${channel.id}/standby.mp4`
   }
 
   // Fallback standby video in case the channel-specific one fails
@@ -34,8 +37,11 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
   // Function to format the video URL with the bucket path
   const getVideoUrl = (mp4Url: string) => {
-    // Using channel1, channel2, etc. as bucket names
-    return `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/channel${channel.id}/${mp4Url}`
+    // Updated to use the correct bucket path format
+    // Log the constructed URL for debugging
+    const url = `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/videos/channel${channel.id}/${mp4Url}`
+    console.log("Video URL:", url)
+    return url
   }
 
   // Function to refresh the current program
@@ -78,8 +84,8 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   }
 
   // Handle standby video error (fall back to the generic standby)
-  const handleStandbyError = () => {
-    console.error("Error loading channel standby video, switching to fallback")
+  const handleStandbyError = (e: React.SyntheticEvent<HTMLVideoElement, Event>) => {
+    console.error("Error loading channel standby video, switching to fallback", e)
     if (standbyVideoRef.current) {
       standbyVideoRef.current.src = fallbackStandbyUrl
       standbyVideoRef.current.load()
@@ -90,8 +96,12 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   }
 
   // Handle video error
-  const handleVideoError = () => {
-    console.error("Error loading video, switching to standby")
+  const handleVideoError = (e: React.SyntheticEvent<HTMLVideoElement, Event>) => {
+    console.error("Error loading video, switching to standby", e)
+    // Log the URL that failed
+    if (videoRef.current) {
+      console.error("Failed URL:", videoRef.current.src)
+    }
     setVideoError(true)
   }
 
@@ -154,6 +164,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
           autoPlay
           loop
           onError={handleStandbyError}
+          crossOrigin="anonymous"
         />
 
         <div className="absolute top-4 left-4 bg-black/70 px-3 py-1 rounded-md">
@@ -181,6 +192,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         controls
         autoPlay
         onError={handleVideoError}
+        crossOrigin="anonymous"
       />
 
       <div className="absolute top-4 left-4 bg-black/70 px-3 py-1 rounded-md">
