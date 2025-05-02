@@ -19,10 +19,17 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const [error, setError] = useState<string | null>(null)
   const [videoError, setVideoError] = useState(false)
   const videoRef = useRef<HTMLVideoElement>(null)
+  const standbyVideoRef = useRef<HTMLVideoElement>(null)
   const refreshTimerRef = useRef<NodeJS.Timeout | null>(null)
 
-  // Standby video URL
-  const standbyVideoUrl =
+  // Function to get the standby video URL for this channel
+  const getStandbyVideoUrl = () => {
+    // Use the standby.mp4 from the channel's bucket
+    return `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/channel${channel.id}/standby.mp4`
+  }
+
+  // Fallback standby video in case the channel-specific one fails
+  const fallbackStandbyUrl =
     "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/standby_blacktruthtv-D7yZUERL2zhjE71Llxul69gbPLxGES.mp4"
 
   // Function to format the video URL with the bucket path
@@ -67,6 +74,18 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       setError("Failed to load program")
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  // Handle standby video error (fall back to the generic standby)
+  const handleStandbyError = () => {
+    console.error("Error loading channel standby video, switching to fallback")
+    if (standbyVideoRef.current) {
+      standbyVideoRef.current.src = fallbackStandbyUrl
+      standbyVideoRef.current.load()
+      standbyVideoRef.current.play().catch((err) => {
+        console.error("Error playing fallback standby video:", err)
+      })
     }
   }
 
@@ -115,7 +134,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
   // Effect to handle video playback
   useEffect(() => {
-    if (videoRef.current) {
+    if (videoRef.current && currentProgram && !videoError) {
       videoRef.current.play().catch((error) => {
         console.error("Error playing video:", error)
         setVideoError(true)
@@ -123,11 +142,19 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     }
   }, [currentProgram, videoError])
 
-  // If no program and no error, show standby video
+  // If no program or video error, show standby video
   if (!currentProgram || videoError) {
     return (
       <div className="w-full aspect-video bg-black relative">
-        <video src={standbyVideoUrl} className="w-full h-full" controls autoPlay loop />
+        <video
+          ref={standbyVideoRef}
+          src={getStandbyVideoUrl()}
+          className="w-full h-full"
+          controls
+          autoPlay
+          loop
+          onError={handleStandbyError}
+        />
 
         <div className="absolute top-4 left-4 bg-black/70 px-3 py-1 rounded-md">
           <span className="text-sm font-medium">{channel.name}</span>
