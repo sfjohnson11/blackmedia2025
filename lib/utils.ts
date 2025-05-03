@@ -22,3 +22,19 @@ export function cleanChannelName(name: string): string {
 
   return cleaned
 }
+
+// Add a new function to clean channel descriptions
+export function cleanChannelDescription(description: string | undefined): string {
+  if (!description) return ""
+
+  // Remove quotation marks at the beginning and end
+  let cleaned = description.trim()
+
+  // Remove leading quotation marks
+  cleaned = cleaned.replace(/^["']+/, "")
+
+  // Remove trailing quotation marks
+  cleaned = cleaned.replace(/["']+$/, "")
+
+  return cleaned
+}

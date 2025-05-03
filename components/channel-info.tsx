@@ -1,5 +1,5 @@
 import type { Channel, Program } from "@/types"
-import { cleanChannelName } from "@/lib/utils"
+import { cleanChannelName, cleanChannelDescription } from "@/lib/utils"
 import { isLiveChannel } from "@/lib/supabase"
 
 interface ChannelInfoProps {
@@ -21,7 +21,7 @@ export function ChannelInfo({ channel, currentProgram }: ChannelInfoProps) {
           </span>
         )}
       </h1>
-      {channel.description && <p className="text-gray-300 mb-4">{channel.description}</p>}
+      {channel.description && <p className="text-gray-300 mb-4">{cleanChannelDescription(channel.description)}</p>}
 
       {currentProgram && (
         <div className="bg-gray-800 p-4 rounded-lg mb-4">

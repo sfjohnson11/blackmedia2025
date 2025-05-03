@@ -2,7 +2,7 @@ import Link from "next/link"
 import { Play, Info } from "lucide-react"
 import type { Channel } from "@/types"
 import { Button } from "@/components/ui/button"
-import { cleanChannelName } from "@/lib/utils"
+import { cleanChannelName, cleanChannelDescription } from "@/lib/utils"
 
 interface FeaturedChannelProps {
   channel: Channel
@@ -27,7 +27,9 @@ export function FeaturedChannel({ channel }: FeaturedChannelProps) {
       {/* Content */}
       <div className="relative h-full flex flex-col justify-end pb-20 px-4 md:px-10">
         <h1 className="text-4xl md:text-6xl font-bold mb-4">{cleanedName}</h1>
-        <p className="text-lg max-w-2xl mb-6">{channel.description || `Watch ${cleanedName} 24/7 streaming.`}</p>
+        <p className="text-lg max-w-2xl mb-6">
+          {channel.description ? cleanChannelDescription(channel.description) : `Watch ${cleanedName} 24/7 streaming.`}
+        </p>
 
         <div className="flex space-x-4">
           <Link href={`/watch/${channel.id}`}>
