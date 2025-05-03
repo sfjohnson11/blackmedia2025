@@ -352,27 +352,66 @@ export async function getDirectDownloadUrl(mp4Url: string, channelId: string): P
     }
   }
 
-  // Try to find a working URL using the findWorkingVideoUrl function
-  const workingUrl = await findWorkingVideoUrl(mp4Url, channelId)
-  if (workingUrl) {
-    return workingUrl
+  // Extract just the filename without path if it contains slashes
+  const baseFileName = mp4Url.split("/").pop() || mp4Url
+
+  // Try to get a public URL first (this works if RLS allows public access)
+  try {
+    // List of possible bucket names to try
+    const possibleBuckets = [
+      "videos",
+      `channel${channelId}`,
+      `ch${channelId}`,
+      "media",
+      "content",
+      `channel-${channelId}`,
+      "assets",
+      "public",
+      "storage",
+    ]
+
+    // Try each bucket with the public URL method
+    for (const bucket of possibleBuckets) {
+      try {
+        console.log(`Trying public URL from bucket ${bucket} for file ${baseFileName}`)
+        const { data } = supabase.storage.from(bucket).getPublicUrl(baseFileName)
+
+        if (data?.publicUrl) {
+          // Check if the URL actually works (RLS might block it)
+          const exists = await checkUrlExists(data.publicUrl)
+          if (exists) {
+            console.log(`✅ Public URL works: ${data.publicUrl}`)
+            return data.publicUrl
+          } else {
+            console.log(`❌ Public URL doesn't work (likely RLS blocking): ${data.publicUrl}`)
+          }
+        }
+      } catch (e) {
+        console.log(`Error getting public URL from bucket ${bucket}:`, e)
+      }
+    }
+  } catch (e) {
+    console.error("Error getting public URLs:", e)
   }
 
-  // If we couldn't find a working URL, try to create a signed URL
+  // If public URLs don't work, try signed URLs (these work even with RLS if anon key has proper permissions)
   try {
-    // Extract just the filename without path if it contains slashes
-    const baseFileName = mp4Url.split("/").pop() || mp4Url
-
-    // Try different bucket patterns
-    const bucketPatterns = ["videos", `channel${channelId}`, `ch${channelId}`, "media", "content", "assets"]
+    const bucketPatterns = ["videos", `channel${channelId}`, `ch${channelId}`, "media", "content", "assets", "public"]
 
     for (const bucket of bucketPatterns) {
       try {
-        console.log(`Trying to create signed URL in bucket ${bucket} for file ${baseFileName}`)
+        console.log(`Trying signed URL in bucket ${bucket} for file ${baseFileName}`)
         const { data, error } = await supabase.storage.from(bucket).createSignedUrl(baseFileName, 60 * 60) // 1 hour expiry
+
         if (!error && data?.signedUrl) {
-          console.log(`Created signed URL in bucket ${bucket}: ${data.signedUrl}`)
-          return data.signedUrl
+          // Check if the signed URL works
+          const exists = await checkUrlExists(data.signedUrl)
+          if (exists) {
+            console.log(`✅ Signed URL works: ${data.signedUrl}`)
+            return data.signedUrl
+          } else {
+            console.log(`❌ Signed URL doesn't work: ${data.signedUrl}`)
+          }
         } else if (error) {
           console.log(`Error creating signed URL in bucket ${bucket}:`, error)
         }
@@ -381,43 +420,90 @@ export async function getDirectDownloadUrl(mp4Url: string, channelId: string): P
       }
     }
   } catch (e) {
-    console.error("Error creating signed URL:", e)
+    console.error("Error creating signed URLs:", e)
   }
 
-  // If all else fails, try to construct a direct URL to the Supabase storage
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ""
-  if (supabaseUrl) {
-    // Extract just the filename without path if it contains slashes
-    const baseFileName = mp4Url.split("/").pop() || mp4Url
+  // As a last resort, try to construct direct URLs with the download endpoint
+  // This sometimes works even when RLS is enabled
+  try {
+    const bucketPatterns = ["videos", `channel${channelId}`, `ch${channelId}`, "media", "content", "assets", "public"]
 
-    // Try a few common URL patterns
-    const directUrls = [
-      `${supabaseUrl}/storage/v1/object/public/videos/${baseFileName}`,
-      `${supabaseUrl}/storage/v1/object/public/channel${channelId}/${baseFileName}`,
-      `${supabaseUrl}/storage/v1/object/public/videos/channel${channelId}/${baseFileName}`,
-    ]
+    for (const bucket of bucketPatterns) {
+      const downloadUrl = `${supabaseUrl}/storage/v1/object/download/public/${bucket}/${baseFileName}`
+      console.log(`Trying download URL: ${downloadUrl}`)
 
-    for (const url of directUrls) {
       try {
-        console.log(`Trying direct URL: ${url}`)
-        const exists = await checkUrlExists(url)
+        const exists = await checkUrlExists(downloadUrl)
         if (exists) {
-          console.log(`Direct URL works: ${url}`)
-          return url
+          console.log(`✅ Download URL works: ${downloadUrl}`)
+          return downloadUrl
+        } else {
+          console.log(`❌ Download URL doesn't work: ${downloadUrl}`)
         }
       } catch (error) {
-        console.log(`Error checking direct URL: ${url}`, error)
+        console.log(`Error checking download URL: ${downloadUrl}`, error)
       }
     }
+  } catch (e) {
+    console.error("Error trying download URLs:", e)
   }
 
-  // As an absolute last resort, if mp4Url looks like it might be a URL, return it
+  // If all else fails, return the original URL as a last resort
   if (mp4Url.match(/^https?:\/\//i) || mp4Url.includes(".mp4") || mp4Url.includes(".m3u8")) {
     console.log(`Returning original URL as last resort: ${mp4Url}`)
     return mp4Url
   }
 
-  // If all else fails, return null
   console.log(`❌ All URL resolution methods failed for ${mp4Url}`)
   return null
+}
+
+// Add a new function to help diagnose RLS issues
+export async function checkRLSStatus(bucketName: string): Promise<{
+  enabled: boolean
+  hasPublicPolicy: boolean
+  canAccess: boolean
+}> {
+  try {
+    // Try to list files in the bucket
+    const { data: files, error: listError } = await supabase.storage.from(bucketName).list()
+
+    if (listError) {
+      console.error(`Error listing files in bucket ${bucketName}:`, listError)
+      return {
+        enabled: true, // Assuming RLS is enabled if we get an error
+        hasPublicPolicy: false,
+        canAccess: false,
+      }
+    }
+
+    // If we can list files, check if we can get a public URL for the first file
+    if (files && files.length > 0) {
+      const firstFile = files[0]
+      const { data } = supabase.storage.from(bucketName).getPublicUrl(firstFile.name)
+
+      if (data?.publicUrl) {
+        // Check if the URL actually works
+        const exists = await checkUrlExists(data.publicUrl)
+        return {
+          enabled: !exists, // If URL doesn't work, RLS is likely enabled
+          hasPublicPolicy: exists,
+          canAccess: exists,
+        }
+      }
+    }
+
+    return {
+      enabled: false,
+      hasPublicPolicy: true,
+      canAccess: true,
+    }
+  } catch (e) {
+    console.error(`Error checking RLS status for bucket ${bucketName}:`, e)
+    return {
+      enabled: true,
+      hasPublicPolicy: false,
+      canAccess: false,
+    }
+  }
 }
