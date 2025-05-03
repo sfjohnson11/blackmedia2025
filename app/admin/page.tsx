@@ -205,6 +205,18 @@ export default function AdminDashboard() {
           </Link>
         </div>
       </div>
+      <Link href="/admin/clear-cache">
+        <div className="bg-gray-800 rounded-lg p-6 hover:bg-gray-700 transition-colors h-full">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-xl font-bold">Clear Cache</h3>
+            <Trash2 className="h-6 w-6 text-red-500" />
+          </div>
+          <p className="text-gray-300 mb-4">
+            Clear browser cache and local storage to fix issues with data not updating properly.
+          </p>
+          <div className="text-sm text-gray-400">Use when news items or other data isn't refreshing</div>
+        </div>
+      </Link>
     </div>
   )
 }

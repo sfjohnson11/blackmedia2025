@@ -13,9 +13,20 @@ export function BreakingNews({ isAdmin = false }: BreakingNewsProps) {
   const [isLoaded, setIsLoaded] = useState(false)
 
   useEffect(() => {
-    // Load news items on client side
-    setNewsItems(getNewsItems())
-    setIsLoaded(true)
+    // Load news items on client side and set up refresh interval
+    const loadNews = () => {
+      const items = getNewsItems()
+      setNewsItems(items)
+      setIsLoaded(true)
+    }
+
+    // Load initially
+    loadNews()
+
+    // Set up refresh interval (every 30 seconds)
+    const refreshInterval = setInterval(loadNews, 30000)
+
+    return () => clearInterval(refreshInterval)
   }, [])
 
   const handleUpdateNews = (updatedNews: string[]) => {

@@ -21,9 +21,13 @@ export default function AdminNewsPage() {
 
   const handleAddItem = () => {
     if (newItem.trim()) {
-      setNewsItems([...newsItems, newItem.trim()])
+      const updatedItems = [...newsItems, newItem.trim()]
+      setNewsItems(updatedItems)
+      // Save immediately to ensure it's stored
+      saveNewsItems(updatedItems)
       setNewItem("")
-      setIsSaved(false)
+      setIsSaved(true)
+      setTimeout(() => setIsSaved(false), 3000)
     }
   }
 
@@ -42,7 +46,10 @@ export default function AdminNewsPage() {
   const handleSaveAll = () => {
     saveNewsItems(newsItems)
     setIsSaved(true)
-    setTimeout(() => setIsSaved(false), 3000)
+    // Add a small delay before reloading to ensure storage is updated
+    setTimeout(() => {
+      window.location.reload()
+    }, 1000)
   }
 
   if (!isLoaded) {
