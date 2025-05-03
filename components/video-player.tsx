@@ -2,7 +2,13 @@
 
 import type React from "react"
 import { useState, useEffect, useRef } from "react"
-import { getCurrentProgram, getUpcomingPrograms, calculateProgramProgress } from "@/lib/supabase"
+import {
+  getCurrentProgram,
+  getUpcomingPrograms,
+  calculateProgramProgress,
+  isLiveChannel,
+  getLiveStreamUrl,
+} from "@/lib/supabase"
 import type { Channel, Program } from "@/types"
 import { Clock, Calendar, RefreshCw, Info, Play } from "lucide-react"
 import { cleanChannelName } from "@/lib/utils"
@@ -330,6 +336,24 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       setAttemptedUrls([])
       setErrorDetails(null)
 
+      // Check if this is a live channel
+      if (isLiveChannel(channel.id)) {
+        const liveStreamUrl = getLiveStreamUrl(channel.id)
+        if (liveStreamUrl && videoRef.current) {
+          console.log(`Loading live stream for channel ${channel.id}: ${liveStreamUrl}`)
+          videoRef.current.src = liveStreamUrl
+          videoRef.current.load()
+          setShowStandby(false)
+          // Exit early since we're using a live stream
+          return
+        } else {
+          console.error("Live channel configured but no stream URL available")
+          setErrorDetails("Live stream configuration error")
+          setShowStandby(true)
+          return
+        }
+      }
+
       const loadVideo = async () => {
         // Try to find a working URL
         for (let i = 0; i < 7; i++) {
@@ -357,7 +381,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
       loadVideo()
     }
-  }, [currentProgram])
+  }, [currentProgram, channel.id])
 
   // Render both videos but control visibility with CSS
   return (
@@ -559,8 +583,14 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       </div>
 
       {/* Channel name overlay - always visible */}
-      <div className="absolute top-4 left-4 bg-black/70 px-3 py-1 rounded-md z-10">
+      <div className="absolute top-4 left-4 bg-black/70 px-3 py-1 rounded-md z-10 flex items-center">
         <span className="text-sm font-medium">{cleanedName}</span>
+        {isLiveChannel(channel.id) && (
+          <span className="ml-2 bg-red-600 text-white text-xs px-1.5 py-0.5 rounded-sm flex items-center">
+            <span className="w-2 h-2 bg-white rounded-full mr-1 animate-pulse"></span>
+            LIVE
+          </span>
+        )}
       </div>
 
       {/* Program info overlay - only visible when showing main video */}

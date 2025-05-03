@@ -4,7 +4,7 @@ import { useState, useEffect } from "react"
 import Link from "next/link"
 import { supabase } from "@/lib/supabase"
 import { Button } from "@/components/ui/button"
-import { Settings, Upload, Database, ImageIcon, Users, Calendar, RefreshCw } from "lucide-react"
+import { Settings, Upload, Database, ImageIcon, Users, Calendar, RefreshCw, Lock } from "lucide-react"
 
 export default function AdminDashboard() {
   const [stats, setStats] = useState({
@@ -52,6 +52,7 @@ export default function AdminDashboard() {
         { name: "Import Channels", href: "/setup/import", icon: <Upload className="h-4 w-4" /> },
         { name: "Update Channel Images", href: "/setup/upload-channel-image", icon: <ImageIcon className="h-4 w-4" /> },
         { name: "Browse Channels", href: "/channels", icon: <Users className="h-4 w-4" /> },
+        { name: "Channel Passwords", href: "/admin/channel-passwords", icon: <Lock className="h-4 w-4" /> },
       ],
     },
     {

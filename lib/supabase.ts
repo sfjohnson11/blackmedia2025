@@ -170,6 +170,22 @@ export async function enableRLS() {
 
 // Helper function to get the current program for a channel
 export async function getCurrentProgram(channelId: string) {
+  // If this is a live channel, return a special program object
+  if (isLiveChannel(channelId)) {
+    return {
+      program: {
+        id: 999999, // Use a special ID for live programs
+        channel_id: channelId,
+        title: "LIVE: Broadcasting Now",
+        mp4_url: "", // This will be replaced with the live stream URL
+        start_time: new Date().toISOString(), // Current time
+        duration: 86400, // 24 hours in seconds (for progress calculation)
+      },
+      isNext: false,
+      isLive: true,
+    }
+  }
+
   const now = new Date().toISOString()
 
   try {
@@ -457,4 +473,28 @@ export async function listFiles(bucket: string) {
     console.error(`Error listing files in bucket ${bucket}:`, e)
     return []
   }
+}
+
+// Helper function to check if a channel is a live channel
+export function isLiveChannel(channelId: string): boolean {
+  // Currently only channel 21 is configured as a live channel
+  return channelId === "21"
+}
+
+// Helper function to get live stream URL for a channel
+export function getLiveStreamUrl(channelId: string): string | null {
+  if (channelId === "21") {
+    // This would be the URL to your live stream from your desktop
+    // Different streaming methods use different URL formats:
+    // - For RTMP: rtmp://your-streaming-server/live/streamkey
+    // - For HLS: https://your-streaming-server/live/streamkey/index.m3u8
+    // - For WebRTC: specific connection details
+
+    // For example, if using an HLS stream:
+    return "https://your-streaming-server/live/channel21/index.m3u8"
+
+    // Replace the above URL with your actual streaming endpoint
+  }
+
+  return null
 }

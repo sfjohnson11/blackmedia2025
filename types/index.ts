@@ -4,6 +4,7 @@ export interface Channel {
   slug: string
   description: string
   logo_url?: string
+  password_protected?: boolean
 }
 
 export interface Program {
@@ -28,4 +29,11 @@ export interface Video {
   mp4_url: string
   start_time: string
   duration: number
+}
+
+// New interface for channel access
+export interface ChannelAccess {
+  channelId: string
+  hasAccess: boolean
+  timestamp: number
 }
