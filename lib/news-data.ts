@@ -4,7 +4,7 @@ const NEWS_STORAGE_KEY = "blacktruth_news_items"
 // Default news items if none are stored
 const DEFAULT_NEWS = [
   "Welcome to Black Truth TV - Your source for 24/7 streaming across 29 channels",
-  "Channels 22-29 are password protected - Contact admin for access",
+  "Channels 23-29 are password protected - Contact admin for access",
   "All content on Black Truth TV is provided under Fair Use for educational purposes",
   "New content added daily - Check back regularly for updates",
   "Support our mission by visiting the Donate page",
