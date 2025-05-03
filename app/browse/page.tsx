@@ -22,14 +22,21 @@ export default function BrowsePage() {
     async function fetchChannels() {
       try {
         setIsLoading(true)
-        const { data, error } = await supabase.from("channels").select("*").order("name")
+        const { data, error } = await supabase.from("channels").select("*")
 
         if (error) {
           throw error
         }
 
-        setChannels(data as Channel[])
-        setFilteredChannels(data as Channel[])
+        // Sort channels numerically by ID
+        const sortedData = (data as Channel[]).sort((a, b) => {
+          const aNum = Number.parseInt(a.id, 10)
+          const bNum = Number.parseInt(b.id, 10)
+          return aNum - bNum
+        })
+
+        setChannels(sortedData)
+        setFilteredChannels(sortedData)
       } catch (error) {
         console.error("Error fetching channels:", error)
         setError("Failed to load channels. Please try again later.")

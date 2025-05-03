@@ -5,14 +5,19 @@ import Link from "next/link"
 
 async function getChannels() {
   try {
-    const { data, error } = await supabase.from("channels").select("*").order("id")
+    const { data, error } = await supabase.from("channels").select("*")
 
     if (error) {
       console.error("Error fetching channels:", error)
       return []
     }
 
-    return data as Channel[]
+    // Sort channels numerically by ID
+    return (data as Channel[]).sort((a, b) => {
+      const aNum = Number.parseInt(a.id, 10)
+      const bNum = Number.parseInt(b.id, 10)
+      return aNum - bNum
+    })
   } catch (error) {
     console.error("Error fetching channels:", error)
     return []
