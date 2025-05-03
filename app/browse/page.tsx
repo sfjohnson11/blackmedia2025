@@ -8,6 +8,7 @@ import type { Channel } from "@/types"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Search, Filter, Loader2 } from "lucide-react"
+import { ChannelGrid } from "@/components/channel-grid"
 
 export default function BrowsePage() {
   const [channels, setChannels] = useState<Channel[]>([])
@@ -145,31 +146,7 @@ export default function BrowsePage() {
           </Button>
         </div>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
-          {filteredChannels.map((channel) => (
-            <Link key={channel.id} href={`/watch/${channel.id}`} className="block">
-              <div className="bg-gray-900 rounded-lg overflow-hidden transition-transform hover:scale-105 hover:shadow-xl">
-                <div className="aspect-video relative">
-                  {channel.logo_url ? (
-                    <img
-                      src={channel.logo_url || "/placeholder.svg"}
-                      alt={channel.name}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <div className="w-full h-full bg-gray-800 flex items-center justify-center">
-                      <span className="text-2xl font-bold">{channel.name.charAt(0)}</span>
-                    </div>
-                  )}
-                </div>
-                <div className="p-4">
-                  <h3 className="font-bold text-lg mb-1 truncate">{channel.name}</h3>
-                  {channel.description && <p className="text-gray-400 text-sm line-clamp-2">{channel.description}</p>}
-                </div>
-              </div>
-            </Link>
-          ))}
-        </div>
+        <ChannelGrid channels={filteredChannels} />
       )}
     </div>
   )

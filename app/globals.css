@@ -25,7 +25,7 @@ body {
   }
 
   .netflix-card:hover {
-    @apply transform scale-105 z-10;
+    @apply transform scale-105 z-10 shadow-lg shadow-black/50;
   }
 
   .netflix-row {
@@ -71,5 +71,18 @@ body {
 
   .netflix-btn-white {
     @apply bg-white text-gray-900 hover:bg-gray-200;
+  }
+
+  /* Channel card improvements */
+  .channel-card {
+    @apply bg-gray-800 rounded-lg overflow-hidden border border-gray-700 hover:border-red-500 transition-all duration-300;
+  }
+
+  .channel-title {
+    @apply font-bold text-white truncate;
+  }
+
+  .channel-id {
+    @apply text-xs text-gray-400 mt-1;
   }
 }

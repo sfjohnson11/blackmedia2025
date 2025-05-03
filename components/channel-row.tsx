@@ -8,9 +8,11 @@ interface ChannelRowProps {
 export function ChannelRow({ channels }: ChannelRowProps) {
   return (
     <div className="netflix-row">
-      <div className="flex space-x-4 overflow-x-scroll scrollbar-hide pb-4">
+      <div className="flex space-x-5 overflow-x-scroll scrollbar-hide pb-6 pt-2">
         {channels.map((channel) => (
-          <ChannelCard key={channel.id} channel={channel} />
+          <div key={channel.id} className="min-w-[220px] flex-shrink-0">
+            <ChannelCard channel={channel} />
+          </div>
         ))}
       </div>
     </div>
