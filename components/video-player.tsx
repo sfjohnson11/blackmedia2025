@@ -15,6 +15,8 @@ interface VideoPlayerProps {
 }
 
 export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initialUpcoming }: VideoPlayerProps) {
+  // Get the Supabase URL from environment or fall back to default
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://msllqpnxwbugvkpnquwx.supabase.co"
   const [currentProgram, setCurrentProgram] = useState<Program | null>(initialProgram)
   const [upcomingPrograms, setUpcomingPrograms] = useState<Program[]>(initialUpcoming)
   const [progress, setProgress] = useState(0)
@@ -40,41 +42,32 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const standbyVideoUrl =
     "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/standby_blacktruthtv-D7yZUERL2zhjE71Llxul69gbPLxGES.mp4"
 
-  // Function to get video URL - try different formats with more variations
+  // Function to get video URL - focusing exclusively on Supabase URL patterns
   const getVideoUrl = (mp4Url: string) => {
-    // If we've already tried this URL format, try a different one
+    // Extract the filename from the URL
     const fileName = mp4Url.split("/").pop() || mp4Url
 
-    // Generate URL formats based on attempt number - expanded with more possibilities
+    // Generate URL formats based on Supabase storage patterns
     const urlFormats = [
-      // Format 1: Direct from mp4_url if it's a full URL
-      mp4Url.startsWith("http") ? mp4Url : null,
+      // Format 1: Direct URL if already a complete Supabase URL
+      mp4Url.includes("supabase.co/storage") ? mp4Url : null,
 
-      // Format 2: channel{id}/{filename}
-      `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/channel${channel.id}/${fileName}`,
+      // Format 2: channel{id}/{filename} - standard bucket pattern
+      `${supabaseUrl}/storage/v1/object/public/channel${channel.id}/${fileName}`,
 
-      // Format 3: videos/channel{id}/{filename}
-      `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/videos/channel${channel.id}/${fileName}`,
+      // Format 3: videos/channel{id}/{filename} - nested path pattern
+      `${supabaseUrl}/storage/v1/object/public/videos/channel${channel.id}/${fileName}`,
 
-      // Format 4: Try with lowercase "channel" prefix
-      `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/videos/channel-${channel.id}/${fileName}`,
+      // Format 4: Root bucket with filename only
+      `${supabaseUrl}/storage/v1/object/public/videos/${fileName}`,
 
-      // Format 5: Try without channel prefix in path
-      `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/videos/${fileName}`,
-
-      // Format 6: Try with the channel ID as the bucket name
-      `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/${channel.id}/${fileName}`,
-
-      // Format 7: Try with "ch" prefix
-      `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/ch${channel.id}/${fileName}`,
+      // Format 5: Using channel ID as bucket
+      `${supabaseUrl}/storage/v1/object/public/${channel.id}/${fileName}`,
     ].filter(Boolean) as string[]
 
     // Use the current attempt to select a URL format
     const attemptIndex = loadAttemptRef.current % urlFormats.length
     const url = urlFormats[attemptIndex]
-
-    // Log which format we're trying
-    console.log(`Trying URL format ${attemptIndex + 1}/${urlFormats.length}: ${url}`)
 
     // Add to attempted URLs for debugging
     if (!attemptedUrls.includes(url)) {
@@ -84,13 +77,20 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     return url
   }
 
-  // Function to check if a URL exists before trying to play it
+  // Function to check if a Supabase URL exists before trying to play it
   const checkUrlExists = async (url: string): Promise<boolean> => {
     try {
-      const response = await fetch(url, { method: "HEAD" })
+      // Add cache-busting parameter to avoid cached responses
+      const checkUrl = `${url}?${Date.now()}`
+      const response = await fetch(checkUrl, {
+        method: "HEAD",
+        headers: {
+          "Cache-Control": "no-cache",
+        },
+      })
       return response.ok
     } catch (error) {
-      console.error("Error checking URL:", error)
+      console.error("Error checking Supabase URL:", error)
       return false
     }
   }
@@ -420,10 +420,10 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
           <Info className="h-4 w-4" />
         </button>
 
-        {/* Debug info panel - expanded with more helpful information */}
+        {/* Debug info panel - Focused on Supabase URL troubleshooting */}
         {showDebugInfo && (
           <div className="absolute bottom-4 left-4 right-4 bg-black/80 p-4 rounded-lg z-10 text-xs">
-            <h4 className="font-bold mb-2">Debug Information:</h4>
+            <h4 className="font-bold mb-2">Supabase Video Debug:</h4>
             {errorDetails && (
               <div className="mb-2">
                 <span className="text-red-400">Error: </span>
@@ -434,6 +434,11 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
             <div className="mb-2">
               <span className="text-blue-400">Channel ID: </span>
               <span>{channel.id}</span>
+            </div>
+
+            <div className="mb-2">
+              <span className="text-blue-400">Supabase URL: </span>
+              <span>{supabaseUrl}</span>
             </div>
 
             {currentProgram && (
@@ -451,23 +456,45 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
             {attemptedUrls.length > 0 && (
               <div>
-                <span className="text-blue-400">Attempted URLs:</span>
+                <span className="text-blue-400">Attempted Supabase URLs:</span>
                 <ul className="ml-4 mt-1">
                   {attemptedUrls.map((url, index) => (
                     <li key={index} className="truncate">
                       {index + 1}. {url}
+                      <button onClick={() => window.open(url, "_blank")} className="ml-2 text-blue-400 hover:underline">
+                        Test
+                      </button>
                     </li>
                   ))}
                 </ul>
               </div>
             )}
 
-            <div className="mt-2 pt-2 border-t border-gray-700">
+            <div className="mt-2 pt-2 border-t border-gray-700 flex gap-2">
               <button
                 onClick={retryPlayback}
                 className="bg-blue-600 hover:bg-blue-700 text-white text-xs px-2 py-1 rounded"
               >
-                Retry All URL Formats
+                Retry All Formats
+              </button>
+              <button
+                onClick={() =>
+                  navigator.clipboard.writeText(
+                    JSON.stringify(
+                      {
+                        channel: channel.id,
+                        program: currentProgram?.id,
+                        url: currentProgram?.mp4_url,
+                        attempts: attemptedUrls,
+                      },
+                      null,
+                      2,
+                    ),
+                  )
+                }
+                className="bg-gray-600 hover:bg-gray-700 text-white text-xs px-2 py-1 rounded"
+              >
+                Copy Debug Info
               </button>
             </div>
           </div>

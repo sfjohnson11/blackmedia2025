@@ -262,46 +262,95 @@ export function getVideoUrl(channelId: string, mp4Url: string) {
 
 // Helper function to get video URL with multiple fallback options
 export async function getWorkingVideoUrl(channelId: string, mp4Url: string): Promise<string | null> {
-  // Generate different possible URL formats
+  // Extract the filename from the URL path
   const fileName = mp4Url.split("/").pop() || mp4Url
 
+  // Generate different possible Supabase URL formats
   const possibleUrls = [
-    // Format 1: Direct from mp4_url if it's a full URL
-    mp4Url.startsWith("http") ? mp4Url : null,
+    // Format 1: Direct URL if already a Supabase URL
+    mp4Url.includes("supabase.co/storage") ? mp4Url : null,
 
-    // Format 2: channel{id}/{filename}
+    // Format 2: Standard bucket pattern: channel{id}/{filename}
     `${supabaseUrl}/storage/v1/object/public/channel${channelId}/${fileName}`,
 
-    // Format 3: videos/channel{id}/{filename}
+    // Format 3: Nested path pattern: videos/channel{id}/{filename}
     `${supabaseUrl}/storage/v1/object/public/videos/channel${channelId}/${fileName}`,
 
-    // Format 4: Try with lowercase "channel" prefix
-    `${supabaseUrl}/storage/v1/object/public/videos/channel-${channelId}/${fileName}`,
-
-    // Format 5: Try without channel prefix in path
+    // Format 4: Root bucket with filename only
     `${supabaseUrl}/storage/v1/object/public/videos/${fileName}`,
 
-    // Format 6: Try with the channel ID as the bucket name
+    // Format 5: Using channel ID as bucket name
     `${supabaseUrl}/storage/v1/object/public/${channelId}/${fileName}`,
-
-    // Format 7: Try with "ch" prefix
-    `${supabaseUrl}/storage/v1/object/public/ch${channelId}/${fileName}`,
   ].filter(Boolean) as string[]
 
-  // Try each URL to see if it exists
-  for (const url of possibleUrls) {
-    try {
-      const response = await fetch(url, { method: "HEAD" })
-      if (response.ok) {
-        return url
+  // Check all URLs in parallel for faster response
+  const results = await Promise.allSettled(
+    possibleUrls.map(async (url) => {
+      try {
+        // Add cache-busting query parameter
+        const response = await fetch(`${url}?t=${Date.now()}`, {
+          method: "HEAD",
+          headers: {
+            "Cache-Control": "no-cache",
+          },
+        })
+        return { url, exists: response.ok }
+      } catch (e) {
+        return { url, exists: false }
       }
-    } catch (e) {
-      console.error(`Error checking URL ${url}:`, e)
+    }),
+  )
+
+  // Find the first URL that worked
+  for (const result of results) {
+    if (result.status === "fulfilled" && result.value.exists) {
+      return result.value.url
     }
   }
 
   // If none of the URLs work, return null
   return null
+}
+
+// Helper function to test all possible video URL formats for a given channel and filename
+export async function testAllVideoFormats(
+  channelId: string,
+  fileName: string,
+): Promise<Array<{ url: string; works: boolean }>> {
+  // Generate different possible Supabase URL formats
+  const possibleUrls = [
+    // Format 1: Standard bucket pattern: channel{id}/{filename}
+    `${supabaseUrl}/storage/v1/object/public/channel${channelId}/${fileName}`,
+
+    // Format 2: Nested path pattern: videos/channel{id}/{filename}
+    `${supabaseUrl}/storage/v1/object/public/videos/channel${channelId}/${fileName}`,
+
+    // Format 3: Root bucket with filename only
+    `${supabaseUrl}/storage/v1/object/public/videos/${fileName}`,
+
+    // Format 4: Using channel ID as bucket name
+    `${supabaseUrl}/storage/v1/object/public/${channelId}/${fileName}`,
+
+    // Format 5: Using 'ch' prefix
+    `${supabaseUrl}/storage/v1/object/public/ch${channelId}/${fileName}`,
+  ]
+
+  // Check all URLs and return results
+  const results = await Promise.all(
+    possibleUrls.map(async (url) => {
+      try {
+        const response = await fetch(`${url}?t=${Date.now()}`, {
+          method: "HEAD",
+          headers: { "Cache-Control": "no-cache" },
+        })
+        return { url, works: response.ok }
+      } catch (e) {
+        return { url, works: false }
+      }
+    }),
+  )
+
+  return results
 }
 
 // Helper function to check if a file exists in storage
