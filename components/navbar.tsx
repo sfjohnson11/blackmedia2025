@@ -106,7 +106,7 @@ export function Navbar() {
 
       {/* Search overlay */}
       {searchOpen && (
-        <div className="absolute top-full left-0 right-0 bg-black border-t border-gray-800 p-4">
+        <div className="absolute top-full left-0 right-0 bg-black border-t border-gray-800 p-4 z-40">
           <div className="max-w-3xl mx-auto relative">
             <input
               type="text"

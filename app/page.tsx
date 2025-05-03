@@ -53,7 +53,7 @@ export default async function Home() {
   // If no channels, show a simple message with link to setup
   if (channels.length === 0) {
     return (
-      <div className="pt-24 px-4 md:px-10 flex items-center justify-center min-h-[80vh]">
+      <div className="pt-4 px-4 md:px-10 flex items-center justify-center min-h-[80vh]">
         <div className="bg-gray-800 p-6 rounded-lg max-w-md w-full text-center">
           <h2 className="text-xl font-semibold mb-4">Welcome to Black Truth TV</h2>
           <p className="mb-4">No channels found. Please complete the setup to get started.</p>
@@ -84,7 +84,7 @@ export default async function Home() {
   )
 
   return (
-    <div className="pt-16">
+    <div>
       {/* Featured Channel Hero */}
       <FeaturedChannel channel={featuredChannel} />
 

@@ -22,7 +22,11 @@ export default function RootLayout({
     <html lang="en">
       <body className={`${inter.className} bg-black text-white min-h-screen flex flex-col`}>
         <Navbar />
-        <BreakingNews />
+        <div className="mt-16">
+          {" "}
+          {/* Add margin-top to push content below fixed navbar */}
+          <BreakingNews />
+        </div>
         <main className="flex-grow">{children}</main>
         <Footer />
       </body>

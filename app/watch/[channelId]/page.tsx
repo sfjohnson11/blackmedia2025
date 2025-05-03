@@ -81,7 +81,7 @@ export default function WatchPage({ params }: WatchPageProps) {
 
   if (loading) {
     return (
-      <div className="pt-24 px-4 md:px-10 flex items-center justify-center min-h-[80vh]">
+      <div className="pt-4 px-4 md:px-10 flex items-center justify-center min-h-[80vh]">
         <div className="flex flex-col items-center">
           <Loader2 className="h-12 w-12 text-red-600 animate-spin mb-4" />
           <p className="text-xl">Loading channel...</p>
@@ -92,7 +92,7 @@ export default function WatchPage({ params }: WatchPageProps) {
 
   if (error || !channel) {
     return (
-      <div className="pt-24 px-4 md:px-10 flex items-center justify-center min-h-[80vh]">
+      <div className="pt-4 px-4 md:px-10 flex items-center justify-center min-h-[80vh]">
         <div className="bg-gray-800 p-6 rounded-lg max-w-md w-full text-center">
           <h2 className="text-xl font-semibold mb-4">Channel Not Found</h2>
           <p className="mb-4">
@@ -107,7 +107,7 @@ export default function WatchPage({ params }: WatchPageProps) {
   }
 
   return (
-    <div className="pt-16">
+    <div>
       {hasAccess ? (
         <>
           <VideoPlayer channel={channel} initialProgram={currentProgram} upcomingPrograms={upcomingPrograms} />

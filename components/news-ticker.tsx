@@ -72,7 +72,7 @@ export function NewsTicker({
   if (news.length === 0) return null
 
   return (
-    <div className={`w-full ${backgroundColor} relative overflow-hidden`}>
+    <div className={`w-full ${backgroundColor} relative overflow-hidden shadow-md`}>
       {/* Main ticker */}
       <div className="flex items-center py-3 px-4">
         <div className="flex-shrink-0 mr-4">

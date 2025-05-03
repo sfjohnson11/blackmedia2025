@@ -27,11 +27,13 @@ export function BreakingNews({ isAdmin = false }: BreakingNewsProps) {
   if (!isLoaded) return null
 
   return (
-    <NewsTicker
-      news={newsItems}
-      isAdmin={isAdmin}
-      onUpdateNews={handleUpdateNews}
-      speed={15} // Time in seconds each news item is displayed
-    />
+    <div className="w-full z-20 relative">
+      <NewsTicker
+        news={newsItems}
+        isAdmin={isAdmin}
+        onUpdateNews={handleUpdateNews}
+        speed={15} // Time in seconds each news item is displayed
+      />
+    </div>
   )
 }
