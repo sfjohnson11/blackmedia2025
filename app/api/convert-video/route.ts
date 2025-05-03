@@ -2,11 +2,6 @@ import { type NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
 import { convertVideoToHLS } from "@/lib/video-processing"
 
-// Initialize Supabase client with admin rights for server operations
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ""
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || ""
-const supabase = createClient(supabaseUrl, supabaseServiceKey)
-
 export async function POST(request: NextRequest) {
   try {
     const { channelId, videoId, fileName } = await request.json()
@@ -20,6 +15,22 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       )
     }
+
+    // Initialize Supabase client only when the function is called
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+
+    if (!supabaseUrl || !supabaseAnonKey) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "Supabase configuration is missing",
+        },
+        { status: 500 },
+      )
+    }
+
+    const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
     // Get the file URL from Supabase
     const { data: fileData } = supabase.storage.from(`channel${channelId}`).getPublicUrl(fileName)
