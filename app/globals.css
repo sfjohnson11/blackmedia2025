@@ -85,4 +85,56 @@ body {
   .channel-id {
     @apply text-xs text-gray-400 mt-1;
   }
+
+  /* Carousel animations */
+  .carousel-slide-in {
+    animation: slideIn 0.5s ease-out forwards;
+  }
+
+  .carousel-slide-out {
+    animation: slideOut 0.5s ease-in forwards;
+  }
+
+  @keyframes slideIn {
+    from {
+      transform: translateX(100%);
+      opacity: 0;
+    }
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
+  }
+
+  @keyframes slideOut {
+    from {
+      transform: translateX(0);
+      opacity: 1;
+    }
+    to {
+      transform: translateX(-100%);
+      opacity: 0;
+    }
+  }
+}
+
+/* Smooth scrolling for the entire page */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Enhanced hover effects for channel cards in carousels */
+.netflix-row .netflix-card {
+  transition: all 0.3s ease;
+}
+
+.netflix-row:hover .netflix-card:not(:hover) {
+  transform: scale(0.95);
+  filter: brightness(0.7);
+}
+
+.netflix-row .netflix-card:hover {
+  transform: scale(1.1);
+  z-index: 20;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
 }

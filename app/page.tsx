@@ -1,6 +1,6 @@
 import { supabase } from "@/lib/supabase"
 import type { Channel, Program } from "@/types"
-import { ChannelRow } from "@/components/channel-row"
+import { ChannelCarousel } from "@/components/channel-carousel"
 import { FeaturedChannel } from "@/components/featured-channel"
 import Link from "next/link"
 
@@ -70,7 +70,7 @@ export default async function Home() {
   const featuredChannel = channels[randomIndex]
 
   // Group channels by category (for this example, we'll just create arbitrary groups)
-  const popularChannels = channels.slice(0, 5)
+  const popularChannels = channels.slice(0, 10)
   const newsChannels = channels.filter(
     (c) => c.name.toLowerCase().includes("news") || c.description?.toLowerCase().includes("news"),
   )
@@ -90,34 +90,32 @@ export default async function Home() {
 
       {/* Channel Rows */}
       <section className="px-4 md:px-10 pb-10 -mt-16 relative z-10">
-        {/* Popular Channels */}
-        <div className="netflix-row">
-          <h2 className="netflix-title">Popular Channels</h2>
-          <ChannelRow channels={popularChannels} />
-        </div>
+        {/* Popular Channels - with auto-scroll enabled */}
+        <ChannelCarousel
+          title="Popular Channels"
+          channels={popularChannels}
+          autoScroll={true}
+          autoScrollInterval={6000}
+        />
 
         {/* News Channels - only show if we have some */}
         {newsChannels.length > 0 && (
-          <div className="netflix-row">
-            <h2 className="netflix-title">News</h2>
-            <ChannelRow channels={newsChannels} />
-          </div>
+          <ChannelCarousel title="News" channels={newsChannels} autoScroll={true} autoScrollInterval={8000} />
         )}
 
         {/* Entertainment Channels - only show if we have some */}
         {entertainmentChannels.length > 0 && (
-          <div className="netflix-row">
-            <h2 className="netflix-title">Entertainment</h2>
-            <ChannelRow channels={entertainmentChannels} />
-          </div>
+          <ChannelCarousel
+            title="Entertainment"
+            channels={entertainmentChannels}
+            autoScroll={true}
+            autoScrollInterval={7000}
+          />
         )}
 
         {/* More Channels */}
         {remainingChannels.length > 0 && (
-          <div className="netflix-row">
-            <h2 className="netflix-title">More Channels</h2>
-            <ChannelRow channels={remainingChannels.slice(0, 5)} />
-          </div>
+          <ChannelCarousel title="More Channels" channels={remainingChannels} autoScroll={false} />
         )}
 
         {/* All Channels Link */}
