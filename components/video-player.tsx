@@ -303,6 +303,8 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     const target = e.target as HTMLVideoElement
     let errorMessage = "Unknown error"
 
+    console.log(`Video error for channel ${channel.id}, currentProgram:`, currentProgram)
+
     if (target.error) {
       // Get the MediaError details
       switch (target.error.code) {
@@ -487,6 +489,22 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
       setCurrentProgram(program)
       setUpcomingPrograms(programs)
+
+      // Add this check to immediately show standby if no program exists
+      if (!program) {
+        console.log(`No program found for channel ${channel.id}, showing standby video immediately`)
+        setShowStandby(true)
+
+        // Make sure standby video is playing
+        if (standbyVideoRef.current) {
+          standbyVideoRef.current.play().catch((e) => {
+            console.error("Failed to play standby video:", e)
+          })
+        }
+
+        setIsLoading(false)
+        return // Exit early
+      }
 
       // If this is Channel 21 (live), try to use the live stream first
       if (isLiveChannel(channel.id)) {
@@ -759,6 +777,16 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     if (!currentProgram) {
       console.log(`No initial program for channel ${channel.id}, refreshing...`)
       refreshCurrentProgram()
+
+      // Ensure standby is visible while we check for programs
+      setShowStandby(true)
+
+      // Make sure standby video is playing
+      if (standbyVideoRef.current) {
+        standbyVideoRef.current.play().catch((e) => {
+          console.error("Failed to play standby video:", e)
+        })
+      }
     } else {
       // If we have an initial program, try to load it
       if (videoRef.current) {

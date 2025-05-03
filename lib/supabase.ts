@@ -46,6 +46,7 @@ export async function createTables() {
 
 export async function getCurrentProgram(channelId: string): Promise<{ program: any }> {
   const now = new Date().toISOString()
+  console.log(`Fetching current program for channel ${channelId} at ${now}`)
 
   try {
     const { data: program, error } = await supabase
@@ -64,10 +65,11 @@ export async function getCurrentProgram(channelId: string): Promise<{ program: a
         return { program: null }
       }
 
-      console.error("Error fetching current program:", error)
+      console.error(`Error fetching current program for channel ${channelId}:`, error)
       return { program: null }
     }
 
+    console.log(`Found current program for channel ${channelId}:`, program?.title || "Unknown title")
     return { program }
   } catch (e) {
     console.error(`Error in getCurrentProgram for channel ${channelId}:`, e)
@@ -212,4 +214,24 @@ export async function testAllVideoFormats(
   }
 
   return results
+}
+
+// Add this new function
+export async function checkChannelHasPrograms(channelId: string): Promise<boolean> {
+  try {
+    const { count, error } = await supabase
+      .from("programs")
+      .select("*", { count: "exact", head: true })
+      .eq("channel_id", channelId)
+
+    if (error) {
+      console.error(`Error checking programs for channel ${channelId}:`, error)
+      return false
+    }
+
+    return count > 0
+  } catch (e) {
+    console.error(`Error in checkChannelHasPrograms for channel ${channelId}:`, e)
+    return false
+  }
 }
