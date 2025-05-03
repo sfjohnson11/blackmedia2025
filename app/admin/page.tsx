@@ -16,7 +16,10 @@ import {
   Radio,
   Clock,
   FileVideo,
+  Trash2,
+  Code,
 } from "lucide-react"
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 
 export default function AdminDashboard() {
   const [stats, setStats] = useState({
@@ -78,6 +81,7 @@ export default function AdminDashboard() {
         { name: "View Schedule", href: "/browse", icon: <Calendar className="h-4 w-4" /> },
         { name: "Video Processor", href: "/admin/video-processor", icon: <FileVideo className="h-4 w-4" /> },
         { name: "Refresh Programs", href: "/admin/refresh-programs", icon: <RefreshCw className="h-4 w-4" /> },
+        { name: "Reset Programs", href: "/admin/reset-programs", icon: <Trash2 className="h-4 w-4" /> },
       ],
     },
     {
@@ -87,6 +91,7 @@ export default function AdminDashboard() {
       links: [
         { name: "SQL Setup", href: "/setup/sql-setup", icon: <Database className="h-4 w-4" /> },
         { name: "Debug Storage", href: "/debug", icon: <RefreshCw className="h-4 w-4" /> },
+        { name: "SQL Query Tool", href: "/admin/sql-query", icon: <Code className="h-4 w-4" /> },
       ],
     },
   ]
@@ -138,16 +143,65 @@ export default function AdminDashboard() {
             </div>
           </div>
         ))}
-        <div className="bg-gray-800 p-6 rounded-lg shadow-md">
-          <h3 className="text-xl font-semibold mb-4 flex items-center">
-            <RefreshCw className="mr-2 h-5 w-5 text-blue-400" />
-            Refresh Program Data
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Video Processor</CardTitle>
+            <CardDescription>Process and fix video URLs</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-gray-400 mb-4">
+              Check and fix video URLs, test playback, and manage program data.
+            </p>
+          </CardContent>
+          <CardFooter>
+            <Link href="/admin/video-processor" className="w-full">
+              <Button className="w-full">Open Video Processor</Button>
+            </Link>
+          </CardFooter>
+        </Card>
+
+        <Card className="bg-red-900/10 border-red-900/30">
+          <CardHeader>
+            <CardTitle className="text-red-400">Reset Programs</CardTitle>
+            <CardDescription>Delete all programs and start fresh</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-gray-400 mb-4">
+              Completely reset program data to fix issues with old or duplicate programs.
+            </p>
+          </CardContent>
+          <CardFooter>
+            <Link href="/admin/reset-programs" className="w-full">
+              <Button className="w-full bg-red-600 hover:bg-red-700">Reset Programs</Button>
+            </Link>
+          </CardFooter>
+        </Card>
+
+        <div className="bg-red-900/20 p-6 rounded-lg shadow-md border border-red-900/30">
+          <h3 className="text-xl font-semibold mb-4 flex items-center text-red-400">
+            <Trash2 className="mr-2 h-5 w-5" />
+            Reset Program Data
           </h3>
           <p className="text-gray-300 mb-4">
-            Clear cached data and refresh program information when you've made schedule changes.
+            Completely delete program data from the database and start fresh. Use this when you need to remove old
+            programs.
           </p>
-          <Link href="/admin/refresh-programs">
-            <Button className="w-full bg-blue-600 hover:bg-blue-700">Open Refresh Tool</Button>
+          <Link href="/admin/reset-programs">
+            <Button className="w-full bg-red-600 hover:bg-red-700">Reset Programs</Button>
+          </Link>
+        </div>
+
+        <div className="bg-blue-900/20 p-6 rounded-lg shadow-md border border-blue-900/30">
+          <h3 className="text-xl font-semibold mb-4 flex items-center text-blue-400">
+            <Code className="mr-2 h-5 w-5" />
+            SQL Query Tool
+          </h3>
+          <p className="text-gray-300 mb-4">
+            Execute SQL queries directly against your database for advanced troubleshooting and data management.
+          </p>
+          <Link href="/admin/sql-query">
+            <Button className="w-full bg-blue-600 hover:bg-blue-700">Open SQL Tool</Button>
           </Link>
         </div>
       </div>
