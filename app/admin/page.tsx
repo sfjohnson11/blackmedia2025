@@ -138,6 +138,18 @@ export default function AdminDashboard() {
             </div>
           </div>
         ))}
+        <div className="bg-gray-800 p-6 rounded-lg shadow-md">
+          <h3 className="text-xl font-semibold mb-4 flex items-center">
+            <RefreshCw className="mr-2 h-5 w-5 text-blue-400" />
+            Refresh Program Data
+          </h3>
+          <p className="text-gray-300 mb-4">
+            Clear cached data and refresh program information when you've made schedule changes.
+          </p>
+          <Link href="/admin/refresh-programs">
+            <Button className="w-full bg-blue-600 hover:bg-blue-700">Open Refresh Tool</Button>
+          </Link>
+        </div>
       </div>
     </div>
   )
