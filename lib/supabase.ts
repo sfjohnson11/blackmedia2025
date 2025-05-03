@@ -121,10 +121,12 @@ export const getLiveStreamUrl = (channelId: string): string | null => {
   return null
 }
 
+// Update the checkUrlExists function to be more reliable
 export async function checkUrlExists(url: string): Promise<boolean> {
   try {
     // Add a cache-busting parameter to avoid cached responses
     const checkUrl = `${url}?t=${Date.now()}`
+    console.log(`Checking if URL exists: ${checkUrl}`)
 
     // Try with a timeout to avoid hanging requests
     const controller = new AbortController()
@@ -144,7 +146,8 @@ export async function checkUrlExists(url: string): Promise<boolean> {
     // Log the response status for debugging
     console.log(`URL check for ${url}: status ${response.status}`)
 
-    return response.ok
+    // Consider 200-299 as success
+    return response.status >= 200 && response.status < 300
   } catch (error) {
     if (error.name === "AbortError") {
       console.error("URL check timed out:", url)
@@ -187,9 +190,27 @@ export function getPublicUrl(bucketName: string, filePath: string): string {
   return data.publicUrl
 }
 
-// New function to find a working video URL by trying multiple bucket patterns
+// Update the findWorkingVideoUrl function to be more comprehensive and add better logging
 export async function findWorkingVideoUrl(fileName: string, channelId: string): Promise<string | null> {
   console.log(`Finding working URL for file: ${fileName}, channel: ${channelId}`)
+
+  // If fileName is already a full URL, try it directly first
+  if (fileName.startsWith("http")) {
+    try {
+      const exists = await checkUrlExists(fileName)
+      if (exists) {
+        console.log(`Direct URL works: ${fileName}`)
+        return fileName
+      } else {
+        console.log(`Direct URL failed: ${fileName}`)
+      }
+    } catch (error) {
+      console.error(`Error checking direct URL: ${fileName}`, error)
+    }
+  }
+
+  // Extract just the filename without path if it contains slashes
+  const baseFileName = fileName.split("/").pop() || fileName
 
   // List of possible bucket names to try
   const possibleBuckets = [
@@ -199,35 +220,42 @@ export async function findWorkingVideoUrl(fileName: string, channelId: string): 
     "media",
     "content",
     `channel-${channelId}`,
+    "assets",
+    "public",
+    "storage",
   ]
 
   // List of possible file paths within each bucket
   const possiblePaths = [
-    fileName,
-    `${fileName}`,
-    `channel${channelId}/${fileName}`,
-    `ch${channelId}/${fileName}`,
-    `channel-${channelId}/${fileName}`,
+    baseFileName,
+    `${baseFileName}`,
+    `channel${channelId}/${baseFileName}`,
+    `ch${channelId}/${baseFileName}`,
+    `channel-${channelId}/${baseFileName}`,
+    `${channelId}/${baseFileName}`,
+    fileName, // Try the original string as a path too
   ]
+
+  console.log(`Trying ${possibleBuckets.length} buckets with ${possiblePaths.length} path patterns each`)
 
   // Try each combination of bucket and path
   for (const bucket of possibleBuckets) {
     try {
-      // First check if the bucket exists
-      const buckets = await listBuckets()
-      if (!buckets.some((b) => b.name === bucket)) {
-        console.log(`Bucket ${bucket} does not exist, skipping`)
-        continue
-      }
+      console.log(`Checking bucket: ${bucket}`)
 
-      // Then try each path in this bucket
+      // Try each path in this bucket
       for (const path of possiblePaths) {
         try {
+          console.log(`Trying path: ${path} in bucket ${bucket}`)
           const url = getPublicUrl(bucket, path)
+          console.log(`Generated URL: ${url}`)
+
           const exists = await checkUrlExists(url)
           if (exists) {
-            console.log(`Found working URL: ${url}`)
+            console.log(`✅ Found working URL: ${url}`)
             return url
+          } else {
+            console.log(`❌ URL doesn't exist: ${url}`)
           }
         } catch (error) {
           console.log(`Error checking path ${path} in bucket ${bucket}:`, error)
@@ -240,6 +268,13 @@ export async function findWorkingVideoUrl(fileName: string, channelId: string): 
 
   // If we get here, we couldn't find a working URL
   console.log(`Could not find working URL for ${fileName}`)
+
+  // As a last resort, if the fileName looks like a URL, return it anyway
+  if (fileName.match(/^https?:\/\//i)) {
+    console.log(`Returning original URL as fallback: ${fileName}`)
+    return fileName
+  }
+
   return null
 }
 
@@ -298,42 +333,91 @@ export async function checkChannelHasPrograms(channelId: string): Promise<boolea
   }
 }
 
-// New function to get direct download URL for a file
+// Update the getDirectDownloadUrl function to handle more cases
 export async function getDirectDownloadUrl(mp4Url: string, channelId: string): Promise<string | null> {
-  // If it's already a full URL, try to use it directly
+  console.log(`Getting direct download URL for: ${mp4Url}, channel: ${channelId}`)
+
+  // If it's already a full URL, try to use it directly first
   if (mp4Url.startsWith("http")) {
-    return mp4Url
+    try {
+      const exists = await checkUrlExists(mp4Url)
+      if (exists) {
+        console.log(`Direct URL exists and works: ${mp4Url}`)
+        return mp4Url
+      } else {
+        console.log(`Direct URL exists but doesn't work: ${mp4Url}`)
+      }
+    } catch (error) {
+      console.error(`Error checking direct URL: ${mp4Url}`, error)
+    }
   }
 
-  // Extract the filename
-  const fileName = mp4Url.split("/").pop() || mp4Url
-
-  // Try to find a working URL using the new function
-  const workingUrl = await findWorkingVideoUrl(fileName, channelId)
+  // Try to find a working URL using the findWorkingVideoUrl function
+  const workingUrl = await findWorkingVideoUrl(mp4Url, channelId)
   if (workingUrl) {
     return workingUrl
   }
 
   // If we couldn't find a working URL, try to create a signed URL
   try {
+    // Extract just the filename without path if it contains slashes
+    const baseFileName = mp4Url.split("/").pop() || mp4Url
+
     // Try different bucket patterns
-    const bucketPatterns = ["videos", `channel${channelId}`, `ch${channelId}`]
+    const bucketPatterns = ["videos", `channel${channelId}`, `ch${channelId}`, "media", "content", "assets"]
 
     for (const bucket of bucketPatterns) {
       try {
-        const { data, error } = await supabase.storage.from(bucket).createSignedUrl(fileName, 60 * 60) // 1 hour expiry
+        console.log(`Trying to create signed URL in bucket ${bucket} for file ${baseFileName}`)
+        const { data, error } = await supabase.storage.from(bucket).createSignedUrl(baseFileName, 60 * 60) // 1 hour expiry
         if (!error && data?.signedUrl) {
           console.log(`Created signed URL in bucket ${bucket}: ${data.signedUrl}`)
           return data.signedUrl
+        } else if (error) {
+          console.log(`Error creating signed URL in bucket ${bucket}:`, error)
         }
       } catch (e) {
-        console.log(`Error creating signed URL in bucket ${bucket}:`, e)
+        console.log(`Exception creating signed URL in bucket ${bucket}:`, e)
       }
     }
   } catch (e) {
     console.error("Error creating signed URL:", e)
   }
 
+  // If all else fails, try to construct a direct URL to the Supabase storage
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ""
+  if (supabaseUrl) {
+    // Extract just the filename without path if it contains slashes
+    const baseFileName = mp4Url.split("/").pop() || mp4Url
+
+    // Try a few common URL patterns
+    const directUrls = [
+      `${supabaseUrl}/storage/v1/object/public/videos/${baseFileName}`,
+      `${supabaseUrl}/storage/v1/object/public/channel${channelId}/${baseFileName}`,
+      `${supabaseUrl}/storage/v1/object/public/videos/channel${channelId}/${baseFileName}`,
+    ]
+
+    for (const url of directUrls) {
+      try {
+        console.log(`Trying direct URL: ${url}`)
+        const exists = await checkUrlExists(url)
+        if (exists) {
+          console.log(`Direct URL works: ${url}`)
+          return url
+        }
+      } catch (error) {
+        console.log(`Error checking direct URL: ${url}`, error)
+      }
+    }
+  }
+
+  // As an absolute last resort, if mp4Url looks like it might be a URL, return it
+  if (mp4Url.match(/^https?:\/\//i) || mp4Url.includes(".mp4") || mp4Url.includes(".m3u8")) {
+    console.log(`Returning original URL as last resort: ${mp4Url}`)
+    return mp4Url
+  }
+
   // If all else fails, return null
+  console.log(`❌ All URL resolution methods failed for ${mp4Url}`)
   return null
 }

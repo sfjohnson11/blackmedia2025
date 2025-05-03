@@ -171,6 +171,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     }
   }
 
+  // Update the refreshCurrentProgram function to handle errors better and provide fallbacks
   const refreshCurrentProgram = async () => {
     setIsLoading(true)
     setError(null)
@@ -216,6 +217,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         setAttemptedUrls([])
 
         try {
+          // First, try to get a direct URL
           const url = await getDirectDownloadUrl(program.mp4_url, channel.id)
 
           if (url) {
@@ -230,8 +232,43 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
             videoRef.current.load()
             setShowStandby(false)
           } else {
-            console.error("Could not find a working URL")
-            setErrorDetails("Could not find a working URL for this video")
+            // If we couldn't get a direct URL, try using the raw mp4_url as a fallback
+            console.log(`No direct URL found, trying raw mp4_url as fallback: ${program.mp4_url}`)
+
+            // Check if mp4_url is a valid URL or path
+            if (program.mp4_url && (program.mp4_url.startsWith("http") || program.mp4_url.includes("/"))) {
+              setDirectUrl(program.mp4_url)
+              setAttemptedUrls([program.mp4_url])
+
+              // Add cache-busting parameter if it's a URL
+              const urlWithCacheBust = program.mp4_url.startsWith("http")
+                ? `${program.mp4_url}?t=${Date.now()}`
+                : program.mp4_url
+
+              videoRef.current.src = urlWithCacheBust
+              videoRef.current.load()
+              setShowStandby(false)
+            } else {
+              console.error("Could not find a working URL and mp4_url is not usable")
+              setErrorDetails("Could not find a working URL for this video")
+              setShowStandby(true)
+
+              if (standbyVideoRef.current) {
+                standbyVideoRef.current.play().catch((e) => {
+                  console.error("Failed to play standby video:", e)
+                })
+              }
+            }
+          }
+        } catch (err) {
+          console.error("Error getting direct URL:", err)
+
+          // Try using the raw mp4_url as a last resort
+          if (program.mp4_url && videoRef.current) {
+            console.log(`Error getting direct URL, trying raw mp4_url as last resort: ${program.mp4_url}`)
+            videoRef.current.src = program.mp4_url
+            videoRef.current.load()
+          } else {
             setShowStandby(true)
 
             if (standbyVideoRef.current) {
@@ -239,15 +276,6 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
                 console.error("Failed to play standby video:", e)
               })
             }
-          }
-        } catch (err) {
-          console.error("Error getting direct URL:", err)
-          setShowStandby(true)
-
-          if (standbyVideoRef.current) {
-            standbyVideoRef.current.play().catch((e) => {
-              console.error("Failed to play standby video:", e)
-            })
           }
         }
       }
@@ -271,6 +299,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     setShowStandby(false)
   }
 
+  // Update the loadInitialProgram logic in the useEffect
   // Effect to handle initial setup and periodic refresh
   useEffect(() => {
     // Initial setup
@@ -285,6 +314,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
           setAttemptedUrls([])
 
           try {
+            // First try to get a direct URL
             const url = await getDirectDownloadUrl(currentProgram.mp4_url, channel.id)
 
             if (url) {
@@ -299,8 +329,43 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
               videoRef.current.load()
               setShowStandby(false)
             } else {
-              console.error("Could not find a working URL for initial program")
-              setErrorDetails("Could not find a working URL for this video")
+              // If we couldn't get a direct URL, try using the raw mp4_url as a fallback
+              console.log(`No direct URL found for initial program, trying raw mp4_url: ${currentProgram.mp4_url}`)
+
+              // Check if mp4_url is a valid URL or path
+              if (
+                currentProgram.mp4_url &&
+                (currentProgram.mp4_url.startsWith("http") || currentProgram.mp4_url.includes("/"))
+              ) {
+                setDirectUrl(currentProgram.mp4_url)
+                setAttemptedUrls([currentProgram.mp4_url])
+
+                videoRef.current.src = currentProgram.mp4_url
+                videoRef.current.load()
+                setShowStandby(false)
+              } else {
+                console.error("Could not find a working URL for initial program and mp4_url is not usable")
+                setErrorDetails("Could not find a working URL for this video")
+                setShowStandby(true)
+
+                if (standbyVideoRef.current) {
+                  standbyVideoRef.current.play().catch((e) => {
+                    console.error("Failed to play standby video:", e)
+                  })
+                }
+              }
+            }
+          } catch (err) {
+            console.error("Error getting direct URL for initial program:", err)
+
+            // Try using the raw mp4_url as a last resort
+            if (currentProgram.mp4_url && videoRef.current) {
+              console.log(
+                `Error getting direct URL for initial program, trying raw mp4_url as last resort: ${currentProgram.mp4_url}`,
+              )
+              videoRef.current.src = currentProgram.mp4_url
+              videoRef.current.load()
+            } else {
               setShowStandby(true)
 
               if (standbyVideoRef.current) {
@@ -308,15 +373,6 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
                   console.error("Failed to play standby video:", e)
                 })
               }
-            }
-          } catch (err) {
-            console.error("Error getting direct URL for initial program:", err)
-            setShowStandby(true)
-
-            if (standbyVideoRef.current) {
-              standbyVideoRef.current.play().catch((e) => {
-                console.error("Failed to play standby video:", e)
-              })
             }
           }
         }
@@ -520,9 +576,9 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
           <Info className="h-4 w-4" />
         </button>
 
-        {/* Debug info panel - Focused on Supabase URL troubleshooting */}
+        {/* Update the debug info panel to show more details */}
         {showDebugInfo && (
-          <div className="absolute bottom-4 left-4 right-4 bg-black/80 p-4 rounded-lg z-10 text-xs">
+          <div className="absolute bottom-4 left-4 right-4 bg-black/80 p-4 rounded-lg z-10 text-xs overflow-auto max-h-[50vh]">
             <h4 className="font-bold mb-2">Video Debug Info:</h4>
             {errorDetails && (
               <div className="mb-2">
@@ -543,13 +599,25 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
                   {currentProgram.title} (ID: {currentProgram.id})
                 </span>
                 <div className="ml-4 mt-1">
-                  <span className="text-blue-400">MP4 URL: </span>
-                  <span>{currentProgram.mp4_url}</span>
+                  <span className="text-blue-400">MP4 URL from DB: </span>
+                  <span className="break-all">{currentProgram.mp4_url}</span>
+                  <button
+                    onClick={() => window.open(currentProgram.mp4_url, "_blank")}
+                    className="ml-2 text-blue-400 hover:underline"
+                  >
+                    Test
+                  </button>
                 </div>
                 {directUrl && (
                   <div className="ml-4 mt-1">
                     <span className="text-green-400">Direct URL: </span>
-                    <span>{directUrl}</span>
+                    <span className="break-all">{directUrl}</span>
+                    <button
+                      onClick={() => window.open(directUrl, "_blank")}
+                      className="ml-2 text-green-400 hover:underline"
+                    >
+                      Test
+                    </button>
                   </div>
                 )}
               </div>
@@ -560,7 +628,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
                 <span className="text-blue-400">Attempted URLs:</span>
                 <ul className="ml-4 mt-1">
                   {attemptedUrls.map((url, index) => (
-                    <li key={index} className="truncate">
+                    <li key={index} className="break-all">
                       {index + 1}. {url}
                       <button onClick={() => window.open(url, "_blank")} className="ml-2 text-blue-400 hover:underline">
                         Test
@@ -571,12 +639,18 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
               </div>
             )}
 
-            <div className="mt-2 pt-2 border-t border-gray-700 flex gap-2">
+            <div className="mt-2 pt-2 border-t border-gray-700 flex gap-2 flex-wrap">
               <button
                 onClick={retryPlayback}
                 className="bg-blue-600 hover:bg-blue-700 text-white text-xs px-2 py-1 rounded"
               >
                 Retry Playback
+              </button>
+              <button
+                onClick={() => refreshCurrentProgram()}
+                className="bg-green-600 hover:bg-green-700 text-white text-xs px-2 py-1 rounded"
+              >
+                Refresh Program
               </button>
               <button
                 onClick={() =>
