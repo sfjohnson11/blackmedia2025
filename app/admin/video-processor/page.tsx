@@ -6,6 +6,8 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Loader2, CheckCircle, AlertCircle, RefreshCw, Play, FileVideo, Database } from "lucide-react"
 import { createClient } from "@supabase/supabase-js"
+import Link from "next/link"
+import { ArrowLeft } from "lucide-react"
 
 // Initialize Supabase client
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ""
@@ -203,6 +205,14 @@ export default function VideoProcessorPage() {
 
   return (
     <div className="container mx-auto px-4 py-8">
+      <div className="flex items-center mb-6">
+        <Link href="/admin">
+          <Button variant="outline" size="sm" className="mr-4">
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Return to Admin
+          </Button>
+        </Link>
+      </div>
       <h1 className="text-3xl font-bold mb-6">Video Processor</h1>
 
       {message.type && (

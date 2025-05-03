@@ -122,13 +122,13 @@ export default function ResetProgramsPage() {
   return (
     <div className="container mx-auto px-4 py-8">
       <div className="flex items-center mb-6">
-        <Link href="/admin" className="mr-4">
-          <Button variant="ghost" size="sm">
+        <Link href="/admin">
+          <Button variant="outline" size="sm" className="mr-4">
             <ArrowLeft className="h-4 w-4 mr-2" />
-            Back to Admin
+            Return to Admin
           </Button>
         </Link>
-        <h1 className="text-3xl font-bold">Reset Programs</h1>
+        <h1 className="text-2xl font-bold">Reset Program Data</h1>
       </div>
 
       {message.type && (
