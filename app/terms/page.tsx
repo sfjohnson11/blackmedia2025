@@ -131,16 +131,24 @@ export default function TermsOfServicePage() {
 
         <div className="flex justify-center space-x-4">
           <Link href="/">
-            <Button variant="outline">Return to Home</Button>
+            <Button variant="outline" className="bg-gray-800 text-white hover:bg-gray-700 border-gray-600">
+              Return to Home
+            </Button>
           </Link>
           <Link href="/privacy">
-            <Button variant="outline" className="flex items-center">
+            <Button
+              variant="outline"
+              className="bg-gray-800 text-white hover:bg-gray-700 border-gray-600 flex items-center"
+            >
               Privacy Policy
               <ExternalLink className="h-4 w-4 ml-2" />
             </Button>
           </Link>
           <Link href="/copyright">
-            <Button variant="outline" className="flex items-center">
+            <Button
+              variant="outline"
+              className="bg-gray-800 text-white hover:bg-gray-700 border-gray-600 flex items-center"
+            >
               Copyright Policy
               <ExternalLink className="h-4 w-4 ml-2" />
             </Button>

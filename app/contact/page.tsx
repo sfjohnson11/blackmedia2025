@@ -196,7 +196,9 @@ export default function ContactPage() {
 
         <div className="text-center">
           <Link href="/">
-            <Button variant="outline">Return to Home</Button>
+            <Button variant="outline" className="bg-gray-800 text-white hover:bg-gray-700 border-gray-600">
+              Return to Home
+            </Button>
           </Link>
         </div>
       </div>
