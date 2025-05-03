@@ -181,6 +181,68 @@ export async function listFiles(bucketName: string) {
   }
 }
 
+// New function to get the direct public URL for a file in Supabase storage
+export function getPublicUrl(bucketName: string, filePath: string): string {
+  const { data } = supabase.storage.from(bucketName).getPublicUrl(filePath)
+  return data.publicUrl
+}
+
+// New function to find a working video URL by trying multiple bucket patterns
+export async function findWorkingVideoUrl(fileName: string, channelId: string): Promise<string | null> {
+  console.log(`Finding working URL for file: ${fileName}, channel: ${channelId}`)
+
+  // List of possible bucket names to try
+  const possibleBuckets = [
+    "videos",
+    `channel${channelId}`,
+    `ch${channelId}`,
+    "media",
+    "content",
+    `channel-${channelId}`,
+  ]
+
+  // List of possible file paths within each bucket
+  const possiblePaths = [
+    fileName,
+    `${fileName}`,
+    `channel${channelId}/${fileName}`,
+    `ch${channelId}/${fileName}`,
+    `channel-${channelId}/${fileName}`,
+  ]
+
+  // Try each combination of bucket and path
+  for (const bucket of possibleBuckets) {
+    try {
+      // First check if the bucket exists
+      const buckets = await listBuckets()
+      if (!buckets.some((b) => b.name === bucket)) {
+        console.log(`Bucket ${bucket} does not exist, skipping`)
+        continue
+      }
+
+      // Then try each path in this bucket
+      for (const path of possiblePaths) {
+        try {
+          const url = getPublicUrl(bucket, path)
+          const exists = await checkUrlExists(url)
+          if (exists) {
+            console.log(`Found working URL: ${url}`)
+            return url
+          }
+        } catch (error) {
+          console.log(`Error checking path ${path} in bucket ${bucket}:`, error)
+        }
+      }
+    } catch (error) {
+      console.log(`Error checking bucket ${bucket}:`, error)
+    }
+  }
+
+  // If we get here, we couldn't find a working URL
+  console.log(`Could not find working URL for ${fileName}`)
+  return null
+}
+
 export async function testAllVideoFormats(
   channelId: string,
   fileName: string,
@@ -234,4 +296,44 @@ export async function checkChannelHasPrograms(channelId: string): Promise<boolea
     console.error(`Error in checkChannelHasPrograms for channel ${channelId}:`, e)
     return false
   }
+}
+
+// New function to get direct download URL for a file
+export async function getDirectDownloadUrl(mp4Url: string, channelId: string): Promise<string | null> {
+  // If it's already a full URL, try to use it directly
+  if (mp4Url.startsWith("http")) {
+    return mp4Url
+  }
+
+  // Extract the filename
+  const fileName = mp4Url.split("/").pop() || mp4Url
+
+  // Try to find a working URL using the new function
+  const workingUrl = await findWorkingVideoUrl(fileName, channelId)
+  if (workingUrl) {
+    return workingUrl
+  }
+
+  // If we couldn't find a working URL, try to create a signed URL
+  try {
+    // Try different bucket patterns
+    const bucketPatterns = ["videos", `channel${channelId}`, `ch${channelId}`]
+
+    for (const bucket of bucketPatterns) {
+      try {
+        const { data, error } = await supabase.storage.from(bucket).createSignedUrl(fileName, 60 * 60) // 1 hour expiry
+        if (!error && data?.signedUrl) {
+          console.log(`Created signed URL in bucket ${bucket}: ${data.signedUrl}`)
+          return data.signedUrl
+        }
+      } catch (e) {
+        console.log(`Error creating signed URL in bucket ${bucket}:`, e)
+      }
+    }
+  } catch (e) {
+    console.error("Error creating signed URL:", e)
+  }
+
+  // If all else fails, return null
+  return null
 }
