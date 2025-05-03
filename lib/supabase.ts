@@ -121,16 +121,34 @@ export const getLiveStreamUrl = (channelId: string): string | null => {
 
 export async function checkUrlExists(url: string): Promise<boolean> {
   try {
-    const response = await fetch(url, {
+    // Add a cache-busting parameter to avoid cached responses
+    const checkUrl = `${url}?t=${Date.now()}`
+
+    // Try with a timeout to avoid hanging requests
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 5000) // 5 second timeout
+
+    const response = await fetch(checkUrl, {
       method: "HEAD",
       headers: {
         "Cache-Control": "no-cache",
         Pragma: "no-cache",
       },
+      signal: controller.signal,
     })
+
+    clearTimeout(timeoutId)
+
+    // Log the response status for debugging
+    console.log(`URL check for ${url}: status ${response.status}`)
+
     return response.ok
   } catch (error) {
-    console.error("Error checking URL:", error)
+    if (error.name === "AbortError") {
+      console.error("URL check timed out:", url)
+    } else {
+      console.error("Error checking URL:", url, error)
+    }
     return false
   }
 }
