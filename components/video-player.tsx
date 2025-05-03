@@ -95,6 +95,11 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       setShowStandby(true)
       console.log("Channel 1 detected, starting with standby video visible")
     }
+    // For channel 7 specifically, start with standby visible
+    if (channel.id === "7") {
+      setShowStandby(true)
+      console.log("Channel 7 detected, starting with standby video visible")
+    }
   }, [standbyVideoUrl, channel.id])
 
   // Function to get video URL - focusing exclusively on Supabase URL patterns
@@ -158,6 +163,36 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         `${supabaseUrl}/storage/v1/object/public/ch6/${fileName}`,
         // Try with the direct URL if it's a full path
         mp4Url.startsWith("http") ? mp4Url : null,
+      ].filter(Boolean) as string[]
+
+      // Use the current attempt to select a URL format
+      const attemptIndex = loadAttemptRef.current % urlFormats.length
+      const url = urlFormats[attemptIndex]
+
+      // Add to attempted URLs for debugging
+      if (!attemptedUrls.includes(url)) {
+        setAttemptedUrls((prev) => [...prev, url])
+      }
+
+      return url
+    }
+    // Special handling for Channel 7 which is having playback issues
+    if (channel.id === "7") {
+      console.log("Special handling for channel 7")
+      // Try these specific formats for channel 7
+      const urlFormats = [
+        // Try with channel7 bucket first
+        `${supabaseUrl}/storage/v1/object/public/channel7/${fileName}`,
+        // Try with direct filename in videos bucket
+        `${supabaseUrl}/storage/v1/object/public/videos/${fileName}`,
+        // Try with videos/channel7 path
+        `${supabaseUrl}/storage/v1/object/public/videos/channel7/${fileName}`,
+        // Try with ch7 bucket
+        `${supabaseUrl}/storage/v1/object/public/ch7/${fileName}`,
+        // Try with the direct URL if it's a full path
+        mp4Url.startsWith("http") ? mp4Url : null,
+        // Try with just the filename as a direct path
+        fileName.startsWith("http") ? fileName : null,
       ].filter(Boolean) as string[]
 
       // Use the current attempt to select a URL format
@@ -312,6 +347,34 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
           return false
         }
       }
+      // Special handling for channel 7 to detect format errors
+      if (channel.id === "7") {
+        const checkUrl = `${url}?${Date.now()}`
+        try {
+          const response = await fetch(checkUrl, {
+            method: "HEAD",
+            headers: {
+              "Cache-Control": "no-cache",
+            },
+            // Add a timeout to avoid hanging requests
+            signal: AbortSignal.timeout(5000),
+          })
+
+          // Log detailed response for debugging
+          console.log(`URL check for channel 7: ${url}, status: ${response.status}, ok: ${response.ok}`)
+
+          // Check for 403 Forbidden which might indicate CORS issues
+          if (response.status === 403) {
+            console.error("Possible CORS issue detected for URL:", url)
+            setErrorDetails((prev) => `${prev || ""} - Possible CORS issue detected`)
+          }
+
+          return response.ok
+        } catch (error) {
+          console.error(`Error checking URL for channel 7: ${url}`, error)
+          return false
+        }
+      }
 
       // Standard check for other channels
       const checkUrl = `${url}?${Date.now()}`
@@ -418,6 +481,37 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       } else {
         // We've tried enough formats, show standby
         console.log("All URL formats failed for channel 1, showing standby")
+        setShowStandby(true)
+
+        // Make sure standby video is playing
+        if (standbyVideoRef.current) {
+          standbyVideoRef.current.play().catch((e) => {
+            console.error("Failed to play standby video:", e)
+          })
+        }
+        return
+      }
+    }
+    // Special handling for Channel 7
+    if (channel.id === "7") {
+      console.log("Video error for channel 7, trying next format")
+      loadAttemptRef.current += 1
+
+      // Try more formats for channel 7 before giving up
+      if (currentProgram && videoRef.current && loadAttemptRef.current < 10) {
+        console.log(`Channel 7 - Trying next URL format (attempt ${loadAttemptRef.current})`)
+        const nextUrl = getVideoUrl(currentProgram.mp4_url)
+
+        // Add cache-busting parameter
+        const urlWithCacheBust = `${nextUrl}?t=${Date.now()}-${loadAttemptRef.current}`
+
+        console.log(`Trying URL: ${urlWithCacheBust}`)
+        videoRef.current.src = urlWithCacheBust
+        videoRef.current.load()
+        return
+      } else {
+        // We've tried enough formats, show standby
+        console.log("All URL formats failed for channel 7, showing standby")
         setShowStandby(true)
 
         // Make sure standby video is playing
@@ -704,6 +798,88 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         } else {
           // No program available, show standby video
           console.log(`No program found for channel 6, showing standby video`)
+          setShowStandby(true)
+
+          // Make sure standby video is playing
+          if (standbyVideoRef.current) {
+            standbyVideoRef.current.play().catch((e) => {
+              console.error("Failed to play standby video:", e)
+            })
+          }
+        }
+      }
+      // Special handling for channel 7 which is having format errors
+      else if (channel.id === "7") {
+        console.log("Special handling for channel 7 in refreshCurrentProgram")
+
+        // If we have a program, try to load it with enhanced error handling
+        if (program && videoRef.current) {
+          // Reset counters
+          loadAttemptRef.current = 0
+          setAttemptedUrls([])
+
+          // Try to load the video but keep standby visible until we confirm it works
+          const url = getVideoUrl(program.mp4_url)
+          console.log(`Trying URL for channel 7: ${url}`)
+
+          // Add a cache-busting parameter to the URL
+          const urlWithCacheBust = `${url}?t=${Date.now()}`
+
+          // Check if URL exists before trying to load it
+          try {
+            const exists = await checkUrlExists(url)
+            if (exists) {
+              videoRef.current.src = urlWithCacheBust
+              videoRef.current.load()
+
+              // Add an event listener to detect when video starts playing
+              const playingHandler = () => {
+                console.log("Channel 7 video started playing successfully")
+                setShowStandby(false)
+                videoRef.current?.removeEventListener("playing", playingHandler)
+              }
+
+              videoRef.current.addEventListener("playing", playingHandler)
+
+              // Set a timeout to show standby if video doesn't play within 5 seconds
+              setTimeout(() => {
+                if (showStandby === false && videoRef.current?.paused) {
+                  console.log("Channel 7 video failed to play within timeout, showing standby")
+                  setShowStandby(true)
+
+                  // Make sure standby video is playing
+                  if (standbyVideoRef.current) {
+                    standbyVideoRef.current.play().catch((e) => {
+                      console.error("Failed to play standby video:", e)
+                    })
+                  }
+                }
+              }, 5000)
+            } else {
+              console.log("URL check failed for channel 7, showing standby")
+              setShowStandby(true)
+
+              // Make sure standby video is playing
+              if (standbyVideoRef.current) {
+                standbyVideoRef.current.play().catch((e) => {
+                  console.error("Failed to play standby video:", e)
+                })
+              }
+            }
+          } catch (error) {
+            console.error("Error checking URL for channel 7:", error)
+            setShowStandby(true)
+
+            // Make sure standby video is playing
+            if (standbyVideoRef.current) {
+              standbyVideoRef.current.play().catch((e) => {
+                console.error("Failed to play standby video:", e)
+              })
+            }
+          }
+        } else {
+          // No program available, show standby video
+          console.log(`No program found for channel 7, showing standby video`)
           setShowStandby(true)
 
           // Make sure standby video is playing
@@ -1027,6 +1203,69 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
           return // Exit the loadVideo function early
         }
+        // Special handling for channel 7
+        else if (channel.id === "7") {
+          console.log("Special video loading for channel 7")
+          let foundWorkingUrl = false
+
+          // Try each URL format with enhanced error handling
+          for (let i = 0; i < 10; i++) {
+            // Try more formats for channel 7
+            loadAttemptRef.current = i
+            const url = getVideoUrl(currentProgram.mp4_url)
+            const urlWithCacheBust = `${url}?t=${Date.now()}-${i}`
+
+            try {
+              console.log(`Trying URL format ${i + 1} for channel 7: ${url}`)
+              const exists = await checkUrlExists(url)
+
+              if (exists) {
+                console.log(`Found working URL for channel 7: ${url}`)
+                if (videoRef.current) {
+                  videoRef.current.src = urlWithCacheBust
+                  videoRef.current.load()
+
+                  // Add an event listener to detect when video starts playing
+                  const playingHandler = () => {
+                    console.log("Channel 7 video started playing successfully")
+                    setShowStandby(false)
+                    foundWorkingUrl = true
+                    videoRef.current?.removeEventListener("playing", playingHandler)
+                  }
+
+                  videoRef.current.addEventListener("playing", playingHandler)
+
+                  // Wait a bit to see if this format works before trying the next one
+                  await new Promise((resolve) => setTimeout(resolve, 2000))
+
+                  if (foundWorkingUrl) {
+                    return // Exit if we found a working URL
+                  }
+                }
+              } else {
+                console.log(`URL format ${i + 1} failed for channel 7: ${url}`)
+              }
+            } catch (error) {
+              console.error(`Error checking URL format ${i + 1} for channel 7:`, error)
+            }
+          }
+
+          // If we get here, none of the URLs worked for channel 7
+          console.error(`All URL formats failed for channel 7, program: ${currentProgram.title}`)
+          setErrorDetails(`Could not find a valid video URL for channel 7: ${currentProgram.title}`)
+
+          // Explicitly show standby video
+          setShowStandby(true)
+
+          // Make sure standby video is playing
+          if (standbyVideoRef.current) {
+            standbyVideoRef.current.play().catch((e) => {
+              console.error("Failed to play standby video:", e)
+            })
+          }
+
+          return // Exit the loadVideo function early
+        }
 
         // Try to find a working URL for other channels...
 
@@ -1283,6 +1522,45 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
             {channel.id === "6" && (
               <div className="mb-2 mt-2 pt-2 border-t border-gray-700">
                 <span className="text-yellow-400 font-bold">Channel 6 Debug Info: </span>
+                <div className="ml-4 mt-1">
+                  <button
+                    onClick={() => {
+                      if (videoRef.current) {
+                        console.log("Video element state:", {
+                          readyState: videoRef.current.readyState,
+                          networkState: videoRef.current.networkState,
+                          paused: videoRef.current.paused,
+                          currentSrc: videoRef.current.currentSrc,
+                          error: videoRef.current.error
+                            ? {
+                                code: videoRef.current.error.code,
+                                message: videoRef.current.error.message,
+                              }
+                            : null,
+                        })
+                      }
+                    }}
+                    className="bg-blue-600 hover:bg-blue-700 text-white text-xs px-2 py-1 rounded"
+                  >
+                    Log Video State
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (videoRef.current) {
+                        videoRef.current.load()
+                        videoRef.current.play().catch((e) => console.error("Manual play failed:", e))
+                      }
+                    }}
+                    className="bg-green-600 hover:bg-green-700 text-white text-xs px-2 py-1 rounded ml-2"
+                  >
+                    Force Reload & Play
+                  </button>
+                </div>
+              </div>
+            )}
+            {channel.id === "7" && (
+              <div className="mb-2 mt-2 pt-2 border-t border-gray-700">
+                <span className="text-yellow-400 font-bold">Channel 7 Debug Info: </span>
                 <div className="ml-4 mt-1">
                   <button
                     onClick={() => {
