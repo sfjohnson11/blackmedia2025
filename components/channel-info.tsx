@@ -1,4 +1,5 @@
 import type { Channel, Program } from "@/types"
+import { cleanChannelName } from "@/lib/utils"
 
 interface ChannelInfoProps {
   channel: Channel
@@ -6,9 +7,11 @@ interface ChannelInfoProps {
 }
 
 export function ChannelInfo({ channel, currentProgram }: ChannelInfoProps) {
+  const cleanedName = cleanChannelName(channel.name)
+
   return (
     <div className="max-w-4xl">
-      <h1 className="text-3xl font-bold mb-2">{channel.name}</h1>
+      <h1 className="text-3xl font-bold mb-2">{cleanedName}</h1>
       {channel.description && <p className="text-gray-300 mb-4">{channel.description}</p>}
 
       {currentProgram && (

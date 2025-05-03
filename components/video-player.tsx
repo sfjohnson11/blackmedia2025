@@ -5,6 +5,7 @@ import { useState, useEffect, useRef } from "react"
 import { getCurrentProgram, getUpcomingPrograms, calculateProgramProgress } from "@/lib/supabase"
 import type { Channel, Program } from "@/types"
 import { Clock, Calendar, AlertCircle, RefreshCw, Info } from "lucide-react"
+import { cleanChannelName } from "@/lib/utils"
 
 interface VideoPlayerProps {
   channel: Channel
@@ -30,6 +31,8 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const standbyContainerRef = useRef<HTMLDivElement>(null)
   const mainContainerRef = useRef<HTMLDivElement>(null)
   const loadAttemptRef = useRef(0)
+
+  const cleanedName = cleanChannelName(channel.name)
 
   // Standby video URL - using a reliable source
   const standbyVideoUrl =
@@ -331,7 +334,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4">
           <div className="flex items-center justify-between">
             <h3 className="text-lg font-bold mb-1">
-              Channel {channel.id}: {channel.name}
+              Channel {channel.id}: {cleanedName}
             </h3>
             <button
               onClick={() => setShowDebugInfo(!showDebugInfo)}
@@ -399,7 +402,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
       {/* Channel name overlay - always visible */}
       <div className="absolute top-4 left-4 bg-black/70 px-3 py-1 rounded-md z-10">
-        <span className="text-sm font-medium">{channel.name}</span>
+        <span className="text-sm font-medium">{cleanedName}</span>
       </div>
 
       {/* Program info overlay - only visible when showing main video */}

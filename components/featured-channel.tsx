@@ -2,18 +2,21 @@ import Link from "next/link"
 import { Play, Info } from "lucide-react"
 import type { Channel } from "@/types"
 import { Button } from "@/components/ui/button"
+import { cleanChannelName } from "@/lib/utils"
 
 interface FeaturedChannelProps {
   channel: Channel
 }
 
 export function FeaturedChannel({ channel }: FeaturedChannelProps) {
+  const cleanedName = cleanChannelName(channel.name)
+
   return (
     <div className="relative h-[80vh] w-full">
       {/* Background image */}
       <div className="absolute inset-0">
         {channel.logo_url ? (
-          <img src={channel.logo_url || "/placeholder.svg"} alt={channel.name} className="object-cover w-full h-full" />
+          <img src={channel.logo_url || "/placeholder.svg"} alt={cleanedName} className="object-cover w-full h-full" />
         ) : (
           <div className="w-full h-full bg-gradient-to-b from-gray-900 to-black" />
         )}
@@ -23,8 +26,8 @@ export function FeaturedChannel({ channel }: FeaturedChannelProps) {
 
       {/* Content */}
       <div className="relative h-full flex flex-col justify-end pb-20 px-4 md:px-10">
-        <h1 className="text-4xl md:text-6xl font-bold mb-4">{channel.name}</h1>
-        <p className="text-lg max-w-2xl mb-6">{channel.description || `Watch ${channel.name} 24/7 streaming.`}</p>
+        <h1 className="text-4xl md:text-6xl font-bold mb-4">{cleanedName}</h1>
+        <p className="text-lg max-w-2xl mb-6">{channel.description || `Watch ${cleanedName} 24/7 streaming.`}</p>
 
         <div className="flex space-x-4">
           <Link href={`/watch/${channel.id}`}>
