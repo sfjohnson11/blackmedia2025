@@ -260,6 +260,50 @@ export function getVideoUrl(channelId: string, mp4Url: string) {
   return `${supabaseUrl}/storage/v1/object/public/videos/channel${channelId}/${mp4Url}`
 }
 
+// Helper function to get video URL with multiple fallback options
+export async function getWorkingVideoUrl(channelId: string, mp4Url: string): Promise<string | null> {
+  // Generate different possible URL formats
+  const fileName = mp4Url.split("/").pop() || mp4Url
+
+  const possibleUrls = [
+    // Format 1: Direct from mp4_url if it's a full URL
+    mp4Url.startsWith("http") ? mp4Url : null,
+
+    // Format 2: channel{id}/{filename}
+    `${supabaseUrl}/storage/v1/object/public/channel${channelId}/${fileName}`,
+
+    // Format 3: videos/channel{id}/{filename}
+    `${supabaseUrl}/storage/v1/object/public/videos/channel${channelId}/${fileName}`,
+
+    // Format 4: Try with lowercase "channel" prefix
+    `${supabaseUrl}/storage/v1/object/public/videos/channel-${channelId}/${fileName}`,
+
+    // Format 5: Try without channel prefix in path
+    `${supabaseUrl}/storage/v1/object/public/videos/${fileName}`,
+
+    // Format 6: Try with the channel ID as the bucket name
+    `${supabaseUrl}/storage/v1/object/public/${channelId}/${fileName}`,
+
+    // Format 7: Try with "ch" prefix
+    `${supabaseUrl}/storage/v1/object/public/ch${channelId}/${fileName}`,
+  ].filter(Boolean) as string[]
+
+  // Try each URL to see if it exists
+  for (const url of possibleUrls) {
+    try {
+      const response = await fetch(url, { method: "HEAD" })
+      if (response.ok) {
+        return url
+      }
+    } catch (e) {
+      console.error(`Error checking URL ${url}:`, e)
+    }
+  }
+
+  // If none of the URLs work, return null
+  return null
+}
+
 // Helper function to check if a file exists in storage
 export async function checkFileExists(bucket: string, path: string) {
   try {

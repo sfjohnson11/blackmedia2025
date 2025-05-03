@@ -12,6 +12,10 @@ export default function DebugPage() {
   const [error, setError] = useState<string | null>(null)
   const [testUrl, setTestUrl] = useState<string>("")
   const [testResult, setTestResult] = useState<string>("")
+  const [channelId, setChannelId] = useState<string>("")
+  const [mp4Filename, setMp4Filename] = useState<string>("")
+  const [urlTestResults, setUrlTestResults] = useState<Array<{ url: string; works: boolean }>>([])
+  const [isTestingUrls, setIsTestingUrls] = useState(false)
 
   useEffect(() => {
     async function fetchBuckets() {
@@ -62,6 +66,61 @@ export default function DebugPage() {
     }
   }
 
+  async function testAllUrlFormats() {
+    if (!channelId || !mp4Filename) return
+
+    setIsTestingUrls(true)
+    setUrlTestResults([])
+
+    const fileName = mp4Filename
+    const baseUrl = "https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public"
+
+    const urlFormats = [
+      // Format 1: Direct filename if it's a full URL
+      mp4Filename.startsWith("http") ? mp4Filename : null,
+
+      // Format 2: channel{id}/{filename}
+      `${baseUrl}/channel${channelId}/${fileName}`,
+
+      // Format 3: videos/channel{id}/{filename}
+      `${baseUrl}/videos/channel${channelId}/${fileName}`,
+
+      // Format 4: Try with lowercase "channel" prefix
+      `${baseUrl}/videos/channel-${channelId}/${fileName}`,
+
+      // Format 5: Try without channel prefix in path
+      `${baseUrl}/videos/${fileName}`,
+
+      // Format 6: Try with the channel ID as the bucket name
+      `${baseUrl}/${channelId}/${fileName}`,
+
+      // Format 7: Try with "ch" prefix
+      `${baseUrl}/ch${channelId}/${fileName}`,
+    ].filter(Boolean) as string[]
+
+    const results = []
+
+    for (const url of urlFormats) {
+      try {
+        const response = await fetch(url, { method: "HEAD" })
+        results.push({
+          url,
+          works: response.ok,
+        })
+      } catch (error) {
+        results.push({
+          url,
+          works: false,
+        })
+      }
+
+      // Update results as they come in
+      setUrlTestResults([...results])
+    }
+
+    setIsTestingUrls(false)
+  }
+
   return (
     <div className="container mx-auto px-4 py-8 pt-20">
       <h1 className="text-3xl font-bold mb-6">Storage Debug Page</h1>
@@ -83,6 +142,60 @@ export default function DebugPage() {
         {testResult && (
           <div className={`p-4 rounded-md ${testResult.includes("Success") ? "bg-green-900/30" : "bg-red-900/30"}`}>
             {testResult}
+          </div>
+        )}
+      </div>
+
+      <div className="bg-gray-800 p-6 rounded-lg mb-8">
+        <h2 className="text-xl font-semibold mb-4">Video URL Format Tester</h2>
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-gray-300 mb-1">Channel ID</label>
+          <input
+            type="text"
+            value={channelId || ""}
+            onChange={(e) => setChannelId(e.target.value)}
+            placeholder="Enter channel ID (e.g., 1)"
+            className="w-full px-4 py-2 bg-gray-700 rounded-md text-white mb-2"
+          />
+
+          <label className="block text-sm font-medium text-gray-300 mb-1">MP4 Filename</label>
+          <input
+            type="text"
+            value={mp4Filename || ""}
+            onChange={(e) => setMp4Filename(e.target.value)}
+            placeholder="Enter MP4 filename"
+            className="w-full px-4 py-2 bg-gray-700 rounded-md text-white"
+          />
+        </div>
+
+        <button
+          onClick={testAllUrlFormats}
+          disabled={!channelId || !mp4Filename || isTestingUrls}
+          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-md mb-4"
+        >
+          {isTestingUrls ? "Testing URLs..." : "Test All URL Formats"}
+        </button>
+
+        {urlTestResults.length > 0 && (
+          <div className="mt-4">
+            <h3 className="font-semibold mb-2">Results:</h3>
+            <div className="bg-gray-900 p-3 rounded-md max-h-60 overflow-y-auto">
+              {urlTestResults.map((result, index) => (
+                <div key={index} className={`p-2 mb-2 rounded ${result.works ? "bg-green-900/30" : "bg-red-900/30"}`}>
+                  <div className="flex items-start">
+                    <span
+                      className={`inline-block w-5 h-5 rounded-full mr-2 flex-shrink-0 ${result.works ? "bg-green-500" : "bg-red-500"}`}
+                    ></span>
+                    <div>
+                      <p className="break-all text-xs">{result.url}</p>
+                      <p className={`text-xs mt-1 ${result.works ? "text-green-400" : "text-red-400"}`}>
+                        {result.works ? "✓ Working" : "✗ Not Found"}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>

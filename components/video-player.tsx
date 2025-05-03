@@ -40,12 +40,12 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const standbyVideoUrl =
     "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/standby_blacktruthtv-D7yZUERL2zhjE71Llxul69gbPLxGES.mp4"
 
-  // Function to get video URL - try different formats
+  // Function to get video URL - try different formats with more variations
   const getVideoUrl = (mp4Url: string) => {
     // If we've already tried this URL format, try a different one
     const fileName = mp4Url.split("/").pop() || mp4Url
 
-    // Generate URL formats based on attempt number - simplified to most likely formats
+    // Generate URL formats based on attempt number - expanded with more possibilities
     const urlFormats = [
       // Format 1: Direct from mp4_url if it's a full URL
       mp4Url.startsWith("http") ? mp4Url : null,
@@ -55,6 +55,18 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
       // Format 3: videos/channel{id}/{filename}
       `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/videos/channel${channel.id}/${fileName}`,
+
+      // Format 4: Try with lowercase "channel" prefix
+      `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/videos/channel-${channel.id}/${fileName}`,
+
+      // Format 5: Try without channel prefix in path
+      `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/videos/${fileName}`,
+
+      // Format 6: Try with the channel ID as the bucket name
+      `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/${channel.id}/${fileName}`,
+
+      // Format 7: Try with "ch" prefix
+      `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/ch${channel.id}/${fileName}`,
     ].filter(Boolean) as string[]
 
     // Use the current attempt to select a URL format
@@ -72,66 +84,15 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     return url
   }
 
-  // Function to refresh the current program
-  const refreshCurrentProgram = async () => {
+  // Function to check if a URL exists before trying to play it
+  const checkUrlExists = async (url: string): Promise<boolean> => {
     try {
-      setIsLoading(true)
-      const { program, isNext, error } = await getCurrentProgram(channel.id)
-
-      if (error) {
-        throw error
-      }
-
-      if (program) {
-        // Only update if the program has changed to avoid unnecessary re-renders
-        if (!currentProgram || program.id !== currentProgram.id) {
-          setCurrentProgram(program)
-          // Reset attempted URLs and load attempt counter
-          setAttemptedUrls([])
-          loadAttemptRef.current = 0
-        }
-
-        // Calculate progress if it's a current program
-        if (!isNext) {
-          const { progressPercent } = calculateProgramProgress(program)
-          setProgress(progressPercent)
-        } else {
-          setProgress(0)
-        }
-      } else {
-        setCurrentProgram(null)
-        setShowStandby(true)
-        setProgress(0)
-      }
-
-      // Also refresh upcoming programs
-      const { programs } = await getUpcomingPrograms(channel.id)
-      setUpcomingPrograms(programs)
-
-      setError(null)
-    } catch (err) {
-      console.error("Error refreshing program:", err)
-      setError("Failed to load program")
-    } finally {
-      setIsLoading(false)
+      const response = await fetch(url, { method: "HEAD" })
+      return response.ok
+    } catch (error) {
+      console.error("Error checking URL:", error)
+      return false
     }
-  }
-
-  // Handle video loaded successfully
-  const handleVideoLoaded = () => {
-    console.log("Main video loaded successfully")
-
-    // Clear any error timers
-    if (errorTimerRef.current) {
-      clearTimeout(errorTimerRef.current)
-      errorTimerRef.current = null
-    }
-
-    // Hide standby with a slight delay to ensure smooth transition
-    setTimeout(() => {
-      setShowStandby(false)
-      setErrorDetails(null)
-    }, 500)
   }
 
   // Handle video error with improved error reporting
@@ -169,13 +130,14 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     console.error("Failed URL:", target.src)
 
     // Store error details for display
-    setErrorDetails(errorMessage)
+    setErrorDetails(`${errorMessage} (URL: ${target.src.split("/").slice(-2).join("/")}...)`)
 
     // Try the next URL format automatically
     loadAttemptRef.current += 1
 
     // If we have a current program, try the next URL format
-    if (currentProgram && videoRef.current && loadAttemptRef.current < maxAttempts) {
+    if (currentProgram && videoRef.current && loadAttemptRef.current < maxAttempts * 2) {
+      // Increased max attempts
       console.log(`Automatically trying next URL format (attempt ${loadAttemptRef.current})`)
       const nextUrl = getVideoUrl(currentProgram.mp4_url)
       videoRef.current.src = nextUrl
@@ -221,6 +183,41 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     } finally {
       setIsRetrying(false)
     }
+  }
+
+  const refreshCurrentProgram = async () => {
+    setIsLoading(true)
+    setError(null)
+
+    try {
+      const program = await getCurrentProgram(channel.id)
+      const upcoming = await getUpcomingPrograms(channel.id)
+
+      setCurrentProgram(program)
+      setUpcomingPrograms(upcoming)
+
+      if (program && videoRef.current) {
+        // Reset counters
+        loadAttemptRef.current = 0
+        setAttemptedUrls([])
+
+        // Set the video source
+        videoRef.current.src = getVideoUrl(program.mp4_url)
+        videoRef.current.load()
+        setShowStandby(false) // Hide standby when new program loads
+      } else {
+        setShowStandby(true) // Show standby if no program
+      }
+    } catch (e) {
+      setError(`Failed to refresh program: ${e}`)
+      setShowStandby(true)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleVideoLoaded = () => {
+    setShowStandby(false) // Hide standby when video loads successfully
   }
 
   // Effect to handle initial setup and periodic refresh
@@ -280,12 +277,34 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       // Reset counters
       loadAttemptRef.current = 0
       setAttemptedUrls([])
+      setErrorDetails(null)
 
-      // Set the video source
-      videoRef.current.src = getVideoUrl(currentProgram.mp4_url)
-      videoRef.current.load()
+      const loadVideo = async () => {
+        // Try to find a working URL
+        for (let i = 0; i < 7; i++) {
+          // Try all 7 URL formats
+          loadAttemptRef.current = i
+          const url = getVideoUrl(currentProgram.mp4_url)
 
-      // Play will be handled by the onLoadedData event
+          // Check if the URL exists before trying to play it
+          const exists = await checkUrlExists(url)
+          if (exists) {
+            console.log(`Found working URL: ${url}`)
+            if (videoRef.current) {
+              videoRef.current.src = url
+              videoRef.current.load()
+              return // Exit if we found a working URL
+            }
+          }
+        }
+
+        // If we get here, none of the URLs worked
+        console.error("All URL formats failed")
+        setErrorDetails("Could not find a valid video URL for this channel")
+        setShowStandby(true)
+      }
+
+      loadVideo()
     }
   }, [currentProgram])
 
@@ -393,6 +412,15 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         </div>
 
         {/* Debug info button */}
+        <button
+          onClick={() => setShowDebugInfo(!showDebugInfo)}
+          className="absolute top-4 right-4 bg-black/70 p-2 rounded-md z-10 text-gray-400 hover:text-white"
+          aria-label="Toggle debug info"
+        >
+          <Info className="h-4 w-4" />
+        </button>
+
+        {/* Debug info panel - expanded with more helpful information */}
         {showDebugInfo && (
           <div className="absolute bottom-4 left-4 right-4 bg-black/80 p-4 rounded-lg z-10 text-xs">
             <h4 className="font-bold mb-2">Debug Information:</h4>
@@ -414,6 +442,10 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
                 <span>
                   {currentProgram.title} (ID: {currentProgram.id})
                 </span>
+                <div className="ml-4 mt-1">
+                  <span className="text-blue-400">MP4 URL: </span>
+                  <span>{currentProgram.mp4_url}</span>
+                </div>
               </div>
             )}
 
@@ -429,6 +461,15 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
                 </ul>
               </div>
             )}
+
+            <div className="mt-2 pt-2 border-t border-gray-700">
+              <button
+                onClick={retryPlayback}
+                className="bg-blue-600 hover:bg-blue-700 text-white text-xs px-2 py-1 rounded"
+              >
+                Retry All URL Formats
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -437,15 +478,6 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       <div className="absolute top-4 left-4 bg-black/70 px-3 py-1 rounded-md z-10">
         <span className="text-sm font-medium">{cleanedName}</span>
       </div>
-
-      {/* Debug toggle button */}
-      <button
-        onClick={() => setShowDebugInfo(!showDebugInfo)}
-        className="absolute top-4 right-4 bg-black/70 p-2 rounded-md z-10 text-gray-400 hover:text-white"
-        aria-label="Toggle debug info"
-      >
-        <Info className="h-4 w-4" />
-      </button>
 
       {/* Program info overlay - only visible when showing main video */}
       {currentProgram && !showStandby && (
