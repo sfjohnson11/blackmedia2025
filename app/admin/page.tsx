@@ -77,6 +77,7 @@ export default function AdminDashboard() {
         { name: "Breaking News", href: "/admin/news", icon: <Radio className="h-4 w-4" /> },
         { name: "View Schedule", href: "/browse", icon: <Calendar className="h-4 w-4" /> },
         { name: "Video Processor", href: "/admin/video-processor", icon: <FileVideo className="h-4 w-4" /> },
+        { name: "Refresh Programs", href: "/admin/refresh-programs", icon: <RefreshCw className="h-4 w-4" /> },
       ],
     },
     {
