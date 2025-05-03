@@ -1,12 +1,20 @@
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
-import { Upload, Code, Calendar } from "lucide-react"
+import { Upload, Code, Calendar, Lock } from "lucide-react"
 
 export default function SetupPage() {
   return (
     <div className="pt-24 px-4 md:px-10 flex flex-col items-center justify-center min-h-[80vh]">
       <div className="bg-gray-800 p-6 rounded-lg max-w-2xl w-full">
-        <h1 className="text-3xl font-bold mb-6 text-center">Black Truth TV Setup</h1>
+        <div className="flex justify-between items-center mb-6">
+          <h1 className="text-3xl font-bold text-center">Black Truth TV Setup</h1>
+          <Link href="/admin">
+            <Button variant="outline" size="sm" className="flex items-center gap-2">
+              <Lock className="h-4 w-4" />
+              Admin Dashboard
+            </Button>
+          </Link>
+        </div>
 
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
           <Link href="/setup/sql-setup" className="block">
