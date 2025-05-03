@@ -7,12 +7,12 @@ interface DonationTiersProps {
 export function DonationTiers({ stripeUrl }: DonationTiersProps) {
   return (
     <div className="my-16">
-      <h2 className="text-3xl font-bold text-center mb-8">Choose Your Impact Level</h2>
+      <h2 className="text-3xl font-bold text-center mb-8">Choose Your Donation Amount</h2>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 hover:border-red-500 transition-all duration-300">
           <h3 className="text-xl font-bold mb-2">Supporter</h3>
           <div className="text-3xl font-bold text-red-500 mb-4">
-            $10<span className="text-lg text-gray-400">/month</span>
+            $10<span className="text-lg text-gray-400"> one-time</span>
           </div>
           <ul className="space-y-2 mb-6 text-gray-300">
             <li>• Support our basic operations</li>
@@ -30,7 +30,7 @@ export function DonationTiers({ stripeUrl }: DonationTiersProps) {
           </div>
           <h3 className="text-xl font-bold mb-2">Champion</h3>
           <div className="text-3xl font-bold text-red-500 mb-4">
-            $25<span className="text-lg text-gray-400">/month</span>
+            $25<span className="text-lg text-gray-400"> one-time</span>
           </div>
           <ul className="space-y-2 mb-6 text-gray-300">
             <li>• Fund new content creation</li>
@@ -46,7 +46,7 @@ export function DonationTiers({ stripeUrl }: DonationTiersProps) {
         <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 hover:border-red-500 transition-all duration-300">
           <h3 className="text-xl font-bold mb-2">Visionary</h3>
           <div className="text-3xl font-bold text-red-500 mb-4">
-            $50<span className="text-lg text-gray-400">/month</span>
+            $50<span className="text-lg text-gray-400"> one-time</span>
           </div>
           <ul className="space-y-2 mb-6 text-gray-300">
             <li>• Help expand to new channels</li>
@@ -61,9 +61,10 @@ export function DonationTiers({ stripeUrl }: DonationTiersProps) {
       </div>
 
       <div className="text-center mt-8">
+        <p className="text-gray-300 mb-3">Stripe default is set to $10, but you can donate any amount you choose</p>
         <a href={stripeUrl} target="_blank" rel="noopener noreferrer">
           <Button variant="link" className="text-red-400 hover:text-red-300">
-            Or make a custom donation amount
+            Make a custom donation amount
           </Button>
         </a>
       </div>

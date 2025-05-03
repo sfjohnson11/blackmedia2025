@@ -48,11 +48,12 @@ export default function DonatePage() {
               className="bg-red-600 hover:bg-red-700 text-white px-8 py-6 text-xl rounded-lg flex items-center gap-3"
             >
               <DollarSign className="h-6 w-6" />
-              Donate Now
+              Make a One-Time Donation
               <ArrowRight className="h-5 w-5 ml-2" />
             </Button>
           </a>
-          <p className="mt-4 text-gray-400">Secure payments processed by Stripe</p>
+          <p className="mt-4 text-gray-400">Secure one-time payments processed by Stripe</p>
+          <p className="mt-2 text-gray-400">Default amount is $10, but you can donate any amount you choose</p>
         </div>
 
         <DonationTiers stripeUrl={stripeUrl} />
