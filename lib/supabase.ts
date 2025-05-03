@@ -5,6 +5,21 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ""
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
+// Create a function to get the admin client only when needed
+// This prevents errors during build/render time when env vars might not be available
+export function getAdminClient() {
+  const supabaseAdminUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+  if (!supabaseAdminUrl || !supabaseServiceKey) {
+    throw new Error(
+      "Supabase admin credentials are not available. Make sure SUPABASE_SERVICE_ROLE_KEY is set in your environment variables.",
+    )
+  }
+
+  return createClient(supabaseAdminUrl, supabaseServiceKey)
+}
+
 export const isLiveChannel = (channelId: string): boolean => {
   // Only Channel 21 is live
   return channelId === "21"

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { supabase } from "@/lib/supabase"
+import { supabase, getAdminClient } from "@/lib/supabase"
 import { Button } from "@/components/ui/button"
 import Link from "next/link"
 import { ArrowLeft, CheckCircle, XCircle, ImageIcon, Upload } from "lucide-react"
@@ -40,65 +40,79 @@ export default function UploadChannelImagePage() {
 
       setChannelName(channel.name)
 
-      // Step 2: Check if the bucket exists, create if not
-      setUploadStep("Checking storage bucket...")
-      const bucketName = `channel${channelId}`
+      try {
+        // Get the admin client only when needed
+        const supabaseAdmin = getAdminClient()
 
-      // List buckets to check if it exists
-      const { data: buckets, error: bucketsError } = await supabase.storage.listBuckets()
+        // Step 2: Check if the bucket exists, create if not
+        setUploadStep("Checking storage bucket...")
+        const bucketName = `channel${channelId}`
 
-      if (bucketsError) {
-        throw new Error(`Error checking buckets: ${bucketsError.message}`)
-      }
+        // List buckets to check if it exists
+        const { data: buckets, error: bucketsError } = await supabaseAdmin.storage.listBuckets()
 
-      const bucketExists = buckets.some((bucket) => bucket.name === bucketName)
+        if (bucketsError) {
+          throw new Error(`Error checking buckets: ${bucketsError.message}`)
+        }
 
-      // Create bucket if it doesn't exist
-      if (!bucketExists) {
-        setUploadStep("Creating storage bucket...")
-        const { error: createBucketError } = await supabase.storage.createBucket(bucketName, {
-          public: true,
+        const bucketExists = buckets.some((bucket) => bucket.name === bucketName)
+
+        // Create bucket if it doesn't exist
+        if (!bucketExists) {
+          setUploadStep("Creating storage bucket...")
+          const { error: createBucketError } = await supabaseAdmin.storage.createBucket(bucketName, {
+            public: true,
+          })
+
+          if (createBucketError) {
+            throw new Error(`Error creating bucket: ${createBucketError.message}`)
+          }
+        }
+
+        // Step 3: Fetch the image from the public folder
+        setUploadStep("Preparing image...")
+        const imageResponse = await fetch("/images/panthers-vanguard.jpeg")
+        const imageBlob = await imageResponse.blob()
+
+        // Step 4: Upload the image to Supabase storage
+        setUploadStep("Uploading image to Supabase...")
+        const fileName = "panthers-vanguard.jpeg"
+        const { error: uploadError } = await supabaseAdmin.storage.from(bucketName).upload(fileName, imageBlob, {
+          upsert: true,
+          contentType: "image/jpeg",
         })
 
-        if (createBucketError) {
-          throw new Error(`Error creating bucket: ${createBucketError.message}`)
+        if (uploadError) {
+          throw new Error(`Error uploading image: ${uploadError.message}`)
         }
+
+        // Step 5: Get the public URL
+        const { data: publicUrlData } = supabaseAdmin.storage.from(bucketName).getPublicUrl(fileName)
+
+        const imageUrl = publicUrlData.publicUrl
+
+        // Step 6: Update the channel with the new image URL
+        setUploadStep("Updating channel record...")
+        const { error: updateError } = await supabase
+          .from("channels")
+          .update({ logo_url: imageUrl })
+          .eq("id", channelId)
+
+        if (updateError) {
+          throw new Error(`Error updating channel: ${updateError.message}`)
+        }
+
+        setResult({
+          success: true,
+          message: `Successfully uploaded image and updated channel ${channelId}: ${channel.name}`,
+        })
+      } catch (adminError) {
+        // If admin client fails, try with regular client as fallback
+        console.error("Admin client error:", adminError)
+        throw new Error(
+          `Admin access failed: ${adminError.message}. Make sure SUPABASE_SERVICE_ROLE_KEY is set in your environment variables.`,
+        )
       }
-
-      // Step 3: Fetch the image from the public folder
-      setUploadStep("Preparing image...")
-      const imageResponse = await fetch("/images/panthers-vanguard.jpeg")
-      const imageBlob = await imageResponse.blob()
-
-      // Step 4: Upload the image to Supabase storage
-      setUploadStep("Uploading image to Supabase...")
-      const fileName = "panthers-vanguard.jpeg"
-      const { error: uploadError } = await supabase.storage.from(bucketName).upload(fileName, imageBlob, {
-        upsert: true,
-        contentType: "image/jpeg",
-      })
-
-      if (uploadError) {
-        throw new Error(`Error uploading image: ${uploadError.message}`)
-      }
-
-      // Step 5: Get the public URL
-      const { data: publicUrlData } = supabase.storage.from(bucketName).getPublicUrl(fileName)
-
-      const imageUrl = publicUrlData.publicUrl
-
-      // Step 6: Update the channel with the new image URL
-      setUploadStep("Updating channel record...")
-      const { error: updateError } = await supabase.from("channels").update({ logo_url: imageUrl }).eq("id", channelId)
-
-      if (updateError) {
-        throw new Error(`Error updating channel: ${updateError.message}`)
-      }
-
-      setResult({
-        success: true,
-        message: `Successfully uploaded image and updated channel ${channelId}: ${channel.name}`,
-      })
     } catch (error) {
       console.error("Error in upload process:", error)
       setResult({
