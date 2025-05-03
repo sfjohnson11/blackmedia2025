@@ -14,6 +14,7 @@ import { Clock, Calendar, RefreshCw, Info, Play } from "lucide-react"
 import { cleanChannelName } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import Link from "next/link"
+// import { HLSVideoPlayer } from "@/components/hls-video-player" // Removed HLSVideoPlayer import
 
 interface VideoPlayerProps {
   channel: Channel
@@ -1056,15 +1057,17 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         className={`absolute inset-0 transition-opacity duration-500 ${showStandby ? "opacity-0" : "opacity-100"}`}
         style={{ zIndex: showStandby ? 1 : 2 }}
       >
-        <video
-          ref={videoRef}
-          className="w-full h-full"
-          controls
-          autoPlay
-          onError={handleVideoError}
-          onLoadedData={handleVideoLoaded}
-          playsInline
-        />
+        {currentProgram && (
+          <video
+            ref={videoRef}
+            src={getVideoUrl(currentProgram.mp4_url)}
+            autoPlay
+            controls
+            onError={handleVideoError}
+            onLoadedData={handleVideoLoaded}
+            className="w-full h-full"
+          />
+        )}
       </div>
 
       {/* Standby video container - always rendered but may be hidden */}

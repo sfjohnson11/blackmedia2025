@@ -4,7 +4,19 @@ import { useState, useEffect } from "react"
 import Link from "next/link"
 import { supabase } from "@/lib/supabase"
 import { Button } from "@/components/ui/button"
-import { Settings, Upload, Database, ImageIcon, Users, Calendar, RefreshCw, Lock, Radio, Clock } from "lucide-react"
+import {
+  Settings,
+  Upload,
+  Database,
+  ImageIcon,
+  Users,
+  Calendar,
+  RefreshCw,
+  Lock,
+  Radio,
+  Clock,
+  FileVideo,
+} from "lucide-react"
 
 export default function AdminDashboard() {
   const [stats, setStats] = useState({
@@ -64,6 +76,7 @@ export default function AdminDashboard() {
         { name: "Monday Schedule Helper", href: "/admin/monday-schedule", icon: <Clock className="h-4 w-4" /> },
         { name: "Breaking News", href: "/admin/news", icon: <Radio className="h-4 w-4" /> },
         { name: "View Schedule", href: "/browse", icon: <Calendar className="h-4 w-4" /> },
+        { name: "Video Processor", href: "/admin/video-processor", icon: <FileVideo className="h-4 w-4" /> },
       ],
     },
     {
