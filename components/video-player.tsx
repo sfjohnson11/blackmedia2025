@@ -49,30 +49,33 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const standbyVideoUrl =
     "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/standby_blacktruthtv-D7yZUERL2zhjE71Llxul69gbPLxGES.mp4"
 
+  useEffect(() => {
+    // Initialize standby video
+    if (standbyVideoRef.current) {
+      standbyVideoRef.current.src = standbyVideoUrl
+      standbyVideoRef.current.load()
+    }
+  }, [])
+
   // Function to get video URL - focusing exclusively on Supabase URL patterns
   const getVideoUrl = (mp4Url: string) => {
     // Extract the filename from the URL
     const fileName = mp4Url.split("/").pop() || mp4Url
 
-    // Generate URL formats based on Supabase storage patterns
-    // For channels 1 and 2, prioritize these formats
-    if (channel.id === "1" || channel.id === "2") {
-      return [
-        // Format 2: channel{id}/{filename} - standard bucket pattern (most likely to work for channels 1 and 2)
-        `${supabaseUrl}/storage/v1/object/public/channel${channel.id}/${fileName}`,
+    // If it's already a full URL with http/https, use it directly
+    if (mp4Url.startsWith("http")) {
+      return mp4Url
+    }
 
-        // Format 4: Root bucket with filename only
-        `${supabaseUrl}/storage/v1/object/public/videos/${fileName}`,
-
-        // Format 1: Direct URL if already a complete Supabase URL
-        mp4Url.includes("supabase.co/storage") ? mp4Url : null,
-      ].filter(Boolean)[0] // Return the first format for these channels
+    // For Channel 21 (live channel), prioritize direct path
+    if (channel.id === "21") {
+      return `${supabaseUrl}/storage/v1/object/public/videos/${fileName}`
     }
 
     // For other channels, use the standard rotation of formats
     const urlFormats = [
-      // Format 1: Direct URL if already a complete Supabase URL
-      mp4Url.includes("supabase.co/storage") ? mp4Url : null,
+      // Format 1: Direct URL if already a complete URL
+      mp4Url.startsWith("http") ? mp4Url : null,
 
       // Format 2: channel{id}/{filename} - standard bucket pattern
       `${supabaseUrl}/storage/v1/object/public/channel${channel.id}/${fileName}`,
@@ -108,8 +111,8 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   // Function to check if a Supabase URL exists before trying to play it
   const checkUrlExists = async (url: string): Promise<boolean> => {
     try {
-      // Special handling for channels 1 and 2 - more aggressive checking
-      if (channel.id === "1" || channel.id === "2") {
+      // Special handling for Channel 21 (live channel) - more aggressive checking
+      if (channel.id === "21") {
         // Try multiple times with different cache-busting parameters
         for (let i = 0; i < 3; i++) {
           const checkUrl = `${url}?t=${Date.now()}-${i}`
@@ -176,12 +179,23 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     // Store error details for display
     setErrorDetails(`${errorMessage} (URL: ${target.src.split("/").slice(-2).join("/")}...)`)
 
-    // Special handling for channels 1 and 2 - try more aggressively
-    if (channel.id === "1" || channel.id === "2") {
+    // For Channel 21 (live channel), try more aggressively with different formats
+    if (channel.id === "21") {
       loadAttemptRef.current += 1
 
+      // For Channel 21, try the live stream URL if video files fail
+      if (loadAttemptRef.current >= 3 && isLiveChannel(channel.id)) {
+        const liveUrl = getLiveStreamUrl(channel.id)
+        if (liveUrl && videoRef.current) {
+          console.log(`Trying live stream URL for channel ${channel.id}: ${liveUrl}`)
+          videoRef.current.src = liveUrl
+          videoRef.current.load()
+          return
+        }
+      }
+
       if (currentProgram && videoRef.current && loadAttemptRef.current < 10) {
-        // More attempts for channels 1 and 2
+        // More attempts for Channel 21
         console.log(`Channel ${channel.id} - Trying next URL format (attempt ${loadAttemptRef.current})`)
         const nextUrl = getVideoUrl(currentProgram.mp4_url)
         videoRef.current.src = nextUrl
@@ -247,12 +261,26 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     setError(null)
 
     try {
-      const program = await getCurrentProgram(channel.id)
-      const upcoming = await getUpcomingPrograms(channel.id)
+      const { program } = await getCurrentProgram(channel.id)
+      const { programs } = await getUpcomingPrograms(channel.id)
 
       setCurrentProgram(program)
-      setUpcomingPrograms(upcoming)
+      setUpcomingPrograms(programs)
 
+      // If this is Channel 21 (live), try to use the live stream first
+      if (isLiveChannel(channel.id)) {
+        const liveUrl = getLiveStreamUrl(channel.id)
+        if (liveUrl && videoRef.current) {
+          console.log(`Loading live stream for channel ${channel.id}: ${liveUrl}`)
+          videoRef.current.src = liveUrl
+          videoRef.current.load()
+          setShowStandby(false)
+          setIsLoading(false)
+          return
+        }
+      }
+
+      // For non-live channels or if live stream fails
       if (program && videoRef.current) {
         // Reset counters
         loadAttemptRef.current = 0
@@ -263,11 +291,28 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         videoRef.current.load()
         setShowStandby(false) // Hide standby when new program loads
       } else {
-        setShowStandby(true) // Show standby if no program
+        // No program available, show standby video
+        console.log(`No program found for channel ${channel.id}, showing standby video`)
+        setShowStandby(true)
+
+        // Make sure standby video is playing
+        if (standbyVideoRef.current) {
+          standbyVideoRef.current.play().catch((e) => {
+            console.error("Failed to play standby video:", e)
+          })
+        }
       }
     } catch (e) {
+      console.error(`Error refreshing program for channel ${channel.id}:`, e)
       setError(`Failed to refresh program: ${e}`)
       setShowStandby(true)
+
+      // Make sure standby video is playing on error
+      if (standbyVideoRef.current) {
+        standbyVideoRef.current.play().catch((e) => {
+          console.error("Failed to play standby video:", e)
+        })
+      }
     } finally {
       setIsLoading(false)
     }
@@ -279,8 +324,9 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
   // Effect to handle initial setup and periodic refresh
   useEffect(() => {
-    // Initial refresh if no program provided
+    // Initial setup
     if (!currentProgram) {
+      console.log(`No initial program for channel ${channel.id}, refreshing...`)
       refreshCurrentProgram()
     } else {
       // If we have an initial program, try to load it
@@ -292,6 +338,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         // Set the video source
         videoRef.current.src = getVideoUrl(currentProgram.mp4_url)
         videoRef.current.load()
+        setShowStandby(false)
       }
     }
 
@@ -352,6 +399,15 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
           setShowStandby(true)
           return
         }
+      }
+
+      // For Channel 21 (live channel), try direct URL first
+      if (channel.id === "21" && currentProgram.mp4_url) {
+        const url = getVideoUrl(currentProgram.mp4_url)
+        console.log(`Trying URL for Channel 21: ${url}`)
+        videoRef.current.src = url
+        videoRef.current.load()
+        return
       }
 
       const loadVideo = async () => {

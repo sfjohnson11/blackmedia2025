@@ -6,8 +6,8 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ""
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
 export const isLiveChannel = (channelId: string): boolean => {
-  // Channels 1 and 2 are live
-  return channelId === "1" || channelId === "2"
+  // Only Channel 21 is live
+  return channelId === "21"
 }
 
 export async function createTables() {
@@ -47,21 +47,32 @@ export async function createTables() {
 export async function getCurrentProgram(channelId: string): Promise<{ program: any }> {
   const now = new Date().toISOString()
 
-  const { data: program, error } = await supabase
-    .from("programs")
-    .select("*")
-    .eq("channel_id", channelId)
-    .lte("start_time", now)
-    .order("start_time", { ascending: false })
-    .limit(1)
-    .single()
+  try {
+    const { data: program, error } = await supabase
+      .from("programs")
+      .select("*")
+      .eq("channel_id", channelId)
+      .lte("start_time", now)
+      .order("start_time", { ascending: false })
+      .limit(1)
+      .single()
 
-  if (error) {
-    console.error("Error fetching current program:", error)
+    if (error) {
+      // Check if this is a "no rows returned" error, which is expected when no programs exist
+      if (error.code === "PGRST116") {
+        console.log(`No current program found for channel ${channelId}`)
+        return { program: null }
+      }
+
+      console.error("Error fetching current program:", error)
+      return { program: null }
+    }
+
+    return { program }
+  } catch (e) {
+    console.error(`Error in getCurrentProgram for channel ${channelId}:`, e)
     return { program: null }
   }
-
-  return { program }
 }
 
 export async function getUpcomingPrograms(channelId: string): Promise<{ programs: any[] }> {
@@ -100,14 +111,28 @@ export function calculateProgramProgress(program: any): { progressPercent: numbe
 }
 
 export const getLiveStreamUrl = (channelId: string): string | null => {
-  // Hardcoded live stream URLs for channels 1 and 2
-  if (channelId === "1") {
-    return "https://stream.mux.com/appJ01ykqzzg60HSy94G02n8QZd02za9N.m3u8"
-  }
-  if (channelId === "2") {
-    return "https://stream.mux.com/newFakeStreamKey.m3u8" // Replace with actual stream URL
+  // Only Channel 21 has a live stream
+  if (channelId === "21") {
+    // Use a reliable test stream URL for Channel 21
+    return "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"
   }
   return null
+}
+
+export async function checkUrlExists(url: string): Promise<boolean> {
+  try {
+    const response = await fetch(url, {
+      method: "HEAD",
+      headers: {
+        "Cache-Control": "no-cache",
+        Pragma: "no-cache",
+      },
+    })
+    return response.ok
+  } catch (error) {
+    console.error("Error checking URL:", error)
+    return false
+  }
 }
 
 export async function listBuckets() {
