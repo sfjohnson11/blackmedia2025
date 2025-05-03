@@ -2,9 +2,9 @@
 
 // Check if a channel requires password protection
 export function isPasswordProtected(channelId: string): boolean {
-  // Channels 22-29 are password protected
+  // Channels 23-29 are password protected (updated from 22-29)
   const id = Number.parseInt(channelId, 10)
-  return id >= 22 && id <= 29
+  return id >= 23 && id <= 29
 }
 
 // Store channel access in localStorage

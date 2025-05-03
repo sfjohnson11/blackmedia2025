@@ -11,9 +11,9 @@ export default function ChannelPasswordsPage() {
   const [copiedChannel, setCopiedChannel] = useState<string | null>(null)
 
   useEffect(() => {
-    // Generate the default passwords for channels 22-29
+    // Generate the default passwords for channels 23-29 (updated from 22-29)
     const passwords: { [key: string]: string } = {}
-    for (let i = 22; i <= 29; i++) {
+    for (let i = 23; i <= 29; i++) {
       passwords[i.toString()] = `channel${i}`
     }
     setChannelPasswords(passwords)
@@ -46,7 +46,7 @@ export default function ChannelPasswordsPage() {
         <div className="mb-6">
           <div className="flex items-center justify-between mb-4">
             <p className="text-gray-300">
-              Manage passwords for protected channels (22-29). These passwords are required for viewers to access these
+              Manage passwords for protected channels (23-29). These passwords are required for viewers to access these
               channels.
             </p>
             <Button
@@ -79,7 +79,7 @@ export default function ChannelPasswordsPage() {
                 </tr>
               </thead>
               <tbody>
-                {Array.from({ length: 8 }, (_, i) => (i + 22).toString()).map((channelId) => (
+                {Array.from({ length: 7 }, (_, i) => (i + 23).toString()).map((channelId) => (
                   <tr key={channelId} className="border-b border-gray-800">
                     <td className="px-4 py-3">
                       <div className="flex items-center">
@@ -127,7 +127,7 @@ export default function ChannelPasswordsPage() {
             Password Information
           </h2>
           <ul className="space-y-2 text-gray-300">
-            <li>• Default passwords are set to "channel" followed by the channel number (e.g., "channel22")</li>
+            <li>• Default passwords are set to "channel" followed by the channel number (e.g., "channel23")</li>
             <li>• Passwords are stored in the browser and expire after 24 hours</li>
             <li>• For production use, consider implementing server-side password verification</li>
             <li>• Share these passwords only with authorized viewers</li>
