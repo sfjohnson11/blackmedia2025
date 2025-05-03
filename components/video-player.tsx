@@ -14,7 +14,6 @@ import { Clock, Calendar, RefreshCw, Info, Play } from "lucide-react"
 import { cleanChannelName } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import Link from "next/link"
-// import { HLSVideoPlayer } from "@/components/hls-video-player" // Removed HLSVideoPlayer import
 
 interface VideoPlayerProps {
   channel: Channel
@@ -42,7 +41,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const standbyContainerRef = useRef<HTMLDivElement>(null)
   const mainContainerRef = useRef<HTMLDivElement>(null)
   const loadAttemptRef = useRef(0)
-  const maxAttempts = 3 // Reduce number of attempts to avoid excessive retries
+  const maxAttempts = 5 // Increased number of attempts
 
   const cleanedName = cleanChannelName(channel.name)
 
@@ -90,11 +89,11 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       })
     }
 
-    // For channel 2 specifically, start with standby visible
+    // For channel 1 specifically, start with standby visible
     // This helps ensure we don't show a black screen while checking URLs
-    if (channel.id === "2") {
+    if (channel.id === "1") {
       setShowStandby(true)
-      console.log("Channel 2 detected, starting with standby video visible")
+      console.log("Channel 1 detected, starting with standby video visible")
     }
   }, [standbyVideoUrl, channel.id])
 
@@ -118,16 +117,18 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       console.log("Special handling for channel 1")
       // Try these specific formats for channel 1
       const urlFormats = [
-        // Try with direct filename in videos bucket first (most likely to work)
-        `${supabaseUrl}/storage/v1/object/public/videos/${fileName}`,
-        // Try with channel1 bucket
+        // Try with channel1 bucket first (most likely to work)
         `${supabaseUrl}/storage/v1/object/public/channel1/${fileName}`,
+        // Try with direct filename in videos bucket
+        `${supabaseUrl}/storage/v1/object/public/videos/${fileName}`,
         // Try with videos/channel1 path
         `${supabaseUrl}/storage/v1/object/public/videos/channel1/${fileName}`,
         // Try with ch1 bucket
         `${supabaseUrl}/storage/v1/object/public/ch1/${fileName}`,
         // Try with the direct URL if it's a full path
         mp4Url.startsWith("http") ? mp4Url : null,
+        // Try with just the filename as a direct path
+        fileName.startsWith("http") ? fileName : null,
       ].filter(Boolean) as string[]
 
       // Use the current attempt to select a URL format
@@ -201,17 +202,17 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
     // For other channels, use the standard rotation of formats
     const urlFormats = [
-      // Format 1: Direct URL if already a complete URL
-      mp4Url.startsWith("http") ? mp4Url : null,
-
-      // Format 2: channel{id}/{filename} - standard bucket pattern
+      // Format 1: channel{id}/{filename} - standard bucket pattern
       `${supabaseUrl}/storage/v1/object/public/channel${channel.id}/${fileName}`,
 
-      // Format 3: videos/channel{id}/{filename} - nested path pattern
-      `${supabaseUrl}/storage/v1/object/public/videos/channel${channel.id}/${fileName}`,
+      // Format 2: Direct URL if already a complete URL
+      mp4Url.startsWith("http") ? mp4Url : null,
 
-      // Format 4: Root bucket with filename only
+      // Format 3: Root bucket with filename only
       `${supabaseUrl}/storage/v1/object/public/videos/${fileName}`,
+
+      // Format 4: videos/channel{id}/{filename} - nested path pattern
+      `${supabaseUrl}/storage/v1/object/public/videos/channel${channel.id}/${fileName}`,
 
       // Format 5: Using channel ID as bucket
       `${supabaseUrl}/storage/v1/object/public/${channel.id}/${fileName}`,
@@ -252,6 +253,35 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
           if (response.ok) return true
         }
         return false
+      }
+
+      // Special handling for channel 1 to detect format errors
+      if (channel.id === "1") {
+        const checkUrl = `${url}?${Date.now()}`
+        try {
+          const response = await fetch(checkUrl, {
+            method: "HEAD",
+            headers: {
+              "Cache-Control": "no-cache",
+            },
+            // Add a timeout to avoid hanging requests
+            signal: AbortSignal.timeout(5000),
+          })
+
+          // Log detailed response for debugging
+          console.log(`URL check for channel 1: ${url}, status: ${response.status}, ok: ${response.ok}`)
+
+          // Check for 403 Forbidden which might indicate CORS issues
+          if (response.status === 403) {
+            console.error("Possible CORS issue detected for URL:", url)
+            setErrorDetails((prev) => `${prev || ""} - Possible CORS issue detected`)
+          }
+
+          return response.ok
+        } catch (error) {
+          console.error(`Error checking URL for channel 1: ${url}`, error)
+          return false
+        }
       }
 
       // Special handling for channel 6 to detect format errors
@@ -1060,7 +1090,6 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         {currentProgram && (
           <video
             ref={videoRef}
-            src={getVideoUrl(currentProgram.mp4_url)}
             autoPlay
             controls
             onError={handleVideoError}
