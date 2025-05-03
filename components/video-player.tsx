@@ -7,6 +7,7 @@ import type { Channel, Program } from "@/types"
 import { Clock, Calendar, RefreshCw, Info, Play } from "lucide-react"
 import { cleanChannelName } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import Link from "next/link"
 
 interface VideoPlayerProps {
   channel: Channel
@@ -48,6 +49,21 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     const fileName = mp4Url.split("/").pop() || mp4Url
 
     // Generate URL formats based on Supabase storage patterns
+    // For channels 1 and 2, prioritize these formats
+    if (channel.id === "1" || channel.id === "2") {
+      return [
+        // Format 2: channel{id}/{filename} - standard bucket pattern (most likely to work for channels 1 and 2)
+        `${supabaseUrl}/storage/v1/object/public/channel${channel.id}/${fileName}`,
+
+        // Format 4: Root bucket with filename only
+        `${supabaseUrl}/storage/v1/object/public/videos/${fileName}`,
+
+        // Format 1: Direct URL if already a complete Supabase URL
+        mp4Url.includes("supabase.co/storage") ? mp4Url : null,
+      ].filter(Boolean)[0] // Return the first format for these channels
+    }
+
+    // For other channels, use the standard rotation of formats
     const urlFormats = [
       // Format 1: Direct URL if already a complete Supabase URL
       mp4Url.includes("supabase.co/storage") ? mp4Url : null,
@@ -63,6 +79,12 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
       // Format 5: Using channel ID as bucket
       `${supabaseUrl}/storage/v1/object/public/${channel.id}/${fileName}`,
+
+      // Format 6: Try with channel ID as string in path
+      `${supabaseUrl}/storage/v1/object/public/videos/ch${channel.id}/${fileName}`,
+
+      // Format 7: Try with direct filename in channel bucket
+      `${supabaseUrl}/storage/v1/object/public/ch${channel.id}/${fileName}`,
     ].filter(Boolean) as string[]
 
     // Use the current attempt to select a URL format
@@ -80,7 +102,23 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   // Function to check if a Supabase URL exists before trying to play it
   const checkUrlExists = async (url: string): Promise<boolean> => {
     try {
-      // Add cache-busting parameter to avoid cached responses
+      // Special handling for channels 1 and 2 - more aggressive checking
+      if (channel.id === "1" || channel.id === "2") {
+        // Try multiple times with different cache-busting parameters
+        for (let i = 0; i < 3; i++) {
+          const checkUrl = `${url}?t=${Date.now()}-${i}`
+          const response = await fetch(checkUrl, {
+            method: "HEAD",
+            headers: {
+              "Cache-Control": "no-cache",
+            },
+          })
+          if (response.ok) return true
+        }
+        return false
+      }
+
+      // Standard check for other channels
       const checkUrl = `${url}?${Date.now()}`
       const response = await fetch(checkUrl, {
         method: "HEAD",
@@ -132,27 +170,40 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     // Store error details for display
     setErrorDetails(`${errorMessage} (URL: ${target.src.split("/").slice(-2).join("/")}...)`)
 
-    // Try the next URL format automatically
-    loadAttemptRef.current += 1
+    // Special handling for channels 1 and 2 - try more aggressively
+    if (channel.id === "1" || channel.id === "2") {
+      loadAttemptRef.current += 1
 
-    // If we have a current program, try the next URL format
-    if (currentProgram && videoRef.current && loadAttemptRef.current < maxAttempts * 2) {
-      // Increased max attempts
-      console.log(`Automatically trying next URL format (attempt ${loadAttemptRef.current})`)
-      const nextUrl = getVideoUrl(currentProgram.mp4_url)
-      videoRef.current.src = nextUrl
-      videoRef.current.load()
-    } else {
-      // If no program or we've tried all formats, show standby
-      console.log("All URL formats failed or no program, showing standby")
-      setShowStandby(true)
-
-      // Make sure standby video is playing
-      if (standbyVideoRef.current) {
-        standbyVideoRef.current.play().catch((e) => {
-          console.error("Failed to play standby video:", e)
-        })
+      if (currentProgram && videoRef.current && loadAttemptRef.current < 10) {
+        // More attempts for channels 1 and 2
+        console.log(`Channel ${channel.id} - Trying next URL format (attempt ${loadAttemptRef.current})`)
+        const nextUrl = getVideoUrl(currentProgram.mp4_url)
+        videoRef.current.src = nextUrl
+        videoRef.current.load()
+        return
       }
+    } else {
+      // Standard handling for other channels
+      loadAttemptRef.current += 1
+
+      if (currentProgram && videoRef.current && loadAttemptRef.current < maxAttempts * 3) {
+        console.log(`Automatically trying next URL format (attempt ${loadAttemptRef.current})`)
+        const nextUrl = getVideoUrl(currentProgram.mp4_url)
+        videoRef.current.src = nextUrl
+        videoRef.current.load()
+        return
+      }
+    }
+
+    // If no program or we've tried all formats, show standby
+    console.log("All URL formats failed or no program, showing standby")
+    setShowStandby(true)
+
+    // Make sure standby video is playing
+    if (standbyVideoRef.current) {
+      standbyVideoRef.current.play().catch((e) => {
+        console.error("Failed to play standby video:", e)
+      })
     }
   }
 
@@ -496,6 +547,12 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
               >
                 Copy Debug Info
               </button>
+              <Link
+                href="/debug/video-test"
+                className="bg-green-600 hover:bg-green-700 text-white text-xs px-2 py-1 rounded"
+              >
+                Open URL Tester
+              </Link>
             </div>
           </div>
         )}

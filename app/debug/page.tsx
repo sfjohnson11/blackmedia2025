@@ -148,6 +148,24 @@ export default function DebugPage() {
         )}
       </div>
 
+      <div className="mt-8 bg-blue-900/30 p-6 rounded-lg">
+        <div className="flex items-start">
+          <div className="mr-4">
+            <Play className="h-6 w-6 text-blue-400" />
+          </div>
+          <div>
+            <h2 className="text-xl font-semibold mb-2">New Video URL Tester Tool</h2>
+            <p className="mb-4">
+              We've created a dedicated tool for testing Supabase video URLs with better playback testing and
+              troubleshooting features.
+            </p>
+            <Link href="/debug/video-test">
+              <Button className="bg-blue-600 hover:bg-blue-700">Go to Video URL Tester</Button>
+            </Link>
+          </div>
+        </div>
+      </div>
+
       <div className="bg-gray-800 p-6 rounded-lg mb-8">
         <h2 className="text-xl font-semibold mb-4">Video URL Format Tester</h2>
         <div className="mb-4">
@@ -200,24 +218,6 @@ export default function DebugPage() {
             </div>
           </div>
         )}
-      </div>
-
-      <div className="mt-8 bg-blue-900/30 p-6 rounded-lg">
-        <div className="flex items-start">
-          <div className="mr-4">
-            <Play className="h-6 w-6 text-blue-400" />
-          </div>
-          <div>
-            <h2 className="text-xl font-semibold mb-2">New Video URL Tester Tool</h2>
-            <p className="mb-4">
-              We've created a dedicated tool for testing Supabase video URLs with better playback testing and
-              troubleshooting features.
-            </p>
-            <Link href="/debug/video-test">
-              <Button className="bg-blue-600 hover:bg-blue-700">Go to Video URL Tester</Button>
-            </Link>
-          </div>
-        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">

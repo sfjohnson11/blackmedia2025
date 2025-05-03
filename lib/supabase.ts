@@ -265,6 +265,39 @@ export async function getWorkingVideoUrl(channelId: string, mp4Url: string): Pro
   // Extract the filename from the URL path
   const fileName = mp4Url.split("/").pop() || mp4Url
 
+  // Special handling for channels 1 and 2
+  if (channelId === "1" || channelId === "2") {
+    // Prioritize formats that are known to work for channels 1 and 2
+    const priorityUrls = [
+      // Standard bucket pattern: channel{id}/{filename} - most likely to work for channels 1 and 2
+      `${supabaseUrl}/storage/v1/object/public/channel${channelId}/${fileName}`,
+
+      // Root bucket with filename only
+      `${supabaseUrl}/storage/v1/object/public/videos/${fileName}`,
+
+      // Direct URL if already a Supabase URL
+      mp4Url.includes("supabase.co/storage") ? mp4Url : null,
+    ].filter(Boolean) as string[]
+
+    // Check these URLs first
+    for (const url of priorityUrls) {
+      try {
+        // Add cache-busting query parameter
+        const response = await fetch(`${url}?t=${Date.now()}`, {
+          method: "HEAD",
+          headers: {
+            "Cache-Control": "no-cache",
+          },
+        })
+        if (response.ok) {
+          return url
+        }
+      } catch (e) {
+        // Continue to next URL
+      }
+    }
+  }
+
   // Generate different possible Supabase URL formats
   const possibleUrls = [
     // Format 1: Direct URL if already a Supabase URL
@@ -281,6 +314,12 @@ export async function getWorkingVideoUrl(channelId: string, mp4Url: string): Pro
 
     // Format 5: Using channel ID as bucket name
     `${supabaseUrl}/storage/v1/object/public/${channelId}/${fileName}`,
+
+    // Format 6: Try with channel ID as string in path
+    `${supabaseUrl}/storage/v1/object/public/videos/ch${channelId}/${fileName}`,
+
+    // Format 7: Try with direct filename in channel bucket
+    `${supabaseUrl}/storage/v1/object/public/ch${channelId}/${fileName}`,
   ].filter(Boolean) as string[]
 
   // Check all URLs in parallel for faster response
@@ -318,7 +357,7 @@ export async function testAllVideoFormats(
   fileName: string,
 ): Promise<Array<{ url: string; works: boolean }>> {
   // Generate different possible Supabase URL formats
-  const possibleUrls = [
+  let possibleUrls = [
     // Format 1: Standard bucket pattern: channel{id}/{filename}
     `${supabaseUrl}/storage/v1/object/public/channel${channelId}/${fileName}`,
 
@@ -333,7 +372,39 @@ export async function testAllVideoFormats(
 
     // Format 5: Using 'ch' prefix
     `${supabaseUrl}/storage/v1/object/public/ch${channelId}/${fileName}`,
+
+    // Format 6: Try with channel ID as string in path
+    `${supabaseUrl}/storage/v1/object/public/videos/ch${channelId}/${fileName}`,
+
+    // Format 7: Try with direct filename in channel bucket
+    `${supabaseUrl}/storage/v1/object/public/ch${channelId}/${fileName}`,
   ]
+
+  // For channels 1 and 2, reorder to prioritize formats that are more likely to work
+  if (channelId === "1" || channelId === "2") {
+    possibleUrls = [
+      // Format 1: Standard bucket pattern: channel{id}/{filename}
+      `${supabaseUrl}/storage/v1/object/public/channel${channelId}/${fileName}`,
+
+      // Format 3: Root bucket with filename only
+      `${supabaseUrl}/storage/v1/object/public/videos/${fileName}`,
+
+      // Format 4: Using channel ID as bucket name
+      `${supabaseUrl}/storage/v1/object/public/${channelId}/${fileName}`,
+
+      // Format 2: Nested path pattern: videos/channel{id}/{filename}
+      `${supabaseUrl}/storage/v1/object/public/videos/channel${channelId}/${fileName}`,
+
+      // Format 5: Using 'ch' prefix
+      `${supabaseUrl}/storage/v1/object/public/ch${channelId}/${fileName}`,
+
+      // Format 6: Try with channel ID as string in path
+      `${supabaseUrl}/storage/v1/object/public/videos/ch${channelId}/${fileName}`,
+
+      // Format 7: Try with direct filename in channel bucket
+      `${supabaseUrl}/storage/v1/object/public/ch${channelId}/${fileName}`,
+    ]
+  }
 
   // Check all URLs and return results
   const results = await Promise.all(
