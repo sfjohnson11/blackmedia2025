@@ -494,21 +494,6 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     }
   }
 
-  // Toggle Picture-in-Picture
-  const togglePictureInPicture = async () => {
-    if (!videoRef.current) return
-
-    try {
-      if (document.pictureInPictureElement) {
-        await document.exitPictureInPicture()
-      } else {
-        await videoRef.current.requestPictureInPicture()
-      }
-    } catch (err) {
-      console.error("Error toggling picture-in-picture:", err)
-    }
-  }
-
   // Change playback speed
   const changePlaybackSpeed = (rate: number) => {
     if (!videoRef.current) return
@@ -560,10 +545,6 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         case "f":
           e.preventDefault()
           toggleFullscreen()
-          break
-        case "p":
-          e.preventDefault()
-          togglePictureInPicture()
           break
         case "arrowleft":
           e.preventDefault()
@@ -664,49 +645,17 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       (target.error.code === MediaError.MEDIA_ERR_DECODE ||
         target.error.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED)
     ) {
-      console.log("Format error detected, trying different MIME type")
+      console.log("Format error detected, trying simplified approach")
 
-      if (videoUrl && tryNextMimeType(videoUrl, videoRef, setCurrentMimeType, setMimeTypeAttempts, mimeTypeAttempts)) {
-        // Successfully tried a different MIME type, wait for result
-        return
-      }
+      if (videoUrl) {
+        // Try with a cache buster
+        const cacheBustedUrl = `${videoUrl.split("?")[0]}?t=${Date.now()}`
+        console.log(`Retrying with cache buster: ${cacheBustedUrl}`)
 
-      // If we've tried all MIME types, try alternative format
-      if (!formatFallbackAttempted && videoUrl) {
-        setFormatFallbackAttempted(true)
-        console.log("Trying alternative format")
-
-        try {
-          // Try channel-specific URL first
-          const channelSpecificUrl = getChannelSpecificUrl(channel.id, videoUrl)
-
-          if (channelSpecificUrl) {
-            console.log(`Using channel-specific URL for channel ${channel.id}: ${channelSpecificUrl}`)
-            setVideoUrl(channelSpecificUrl)
-            setMimeTypeAttempts([])
-
-            if (videoRef.current) {
-              videoRef.current.src = channelSpecificUrl
-              videoRef.current.load()
-              return
-            }
-          }
-
-          // Try alternative format as fallback
-          const alternativeUrl = await tryAlternativeFormat(videoUrl)
-          if (alternativeUrl) {
-            console.log("Found alternative format URL:", alternativeUrl)
-            setVideoUrl(alternativeUrl)
-            setMimeTypeAttempts([])
-
-            if (videoRef.current) {
-              videoRef.current.src = alternativeUrl
-              videoRef.current.load()
-              return
-            }
-          }
-        } catch (error) {
-          console.error("Error trying format fallback:", error)
+        if (videoRef.current) {
+          videoRef.current.src = cacheBustedUrl
+          videoRef.current.load()
+          return
         }
       }
     }
@@ -1465,76 +1414,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
                 videoRef.current.currentTime = savedProgress
               }
             }}
-            onError={() => {
-              // Safely extract error details from the video element
-              let errorMessage = "Unknown error"
-
-              if (videoRef.current && videoRef.current.error) {
-                const videoError = videoRef.current.error
-                console.error("Video error details:", {
-                  code: videoError.code,
-                  message: videoError.message,
-                  name: videoError.name,
-                })
-
-                // Map error codes to human-readable messages
-                switch (videoError.code) {
-                  case MediaError.MEDIA_ERR_ABORTED:
-                    errorMessage = "The fetching process was aborted by the user"
-                    break
-                  case MediaError.MEDIA_ERR_NETWORK:
-                    errorMessage = "Network error - video download failed"
-                    break
-                  case MediaError.MEDIA_ERR_DECODE:
-                    errorMessage = "Video decoding failed - format may be unsupported"
-                    break
-                  case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
-                    errorMessage = "Video not found (404) or access denied"
-                    break
-                  default:
-                    errorMessage = videoError.message || `Error code: ${videoError.code}`
-                }
-
-                // For format errors, try a direct approach
-                if (
-                  videoError.code === MediaError.MEDIA_ERR_DECODE ||
-                  videoError.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED
-                ) {
-                  console.log("Format error detected, trying simplified approach")
-
-                  if (videoUrl) {
-                    // Try with a cache buster
-                    const cacheBustedUrl = `${videoUrl.split("?")[0]}?t=${Date.now()}`
-                    console.log(`Retrying with cache buster: ${cacheBustedUrl}`)
-
-                    if (videoRef.current) {
-                      videoRef.current.src = cacheBustedUrl
-                      videoRef.current.load()
-                      return
-                    }
-                  }
-                }
-              }
-
-              console.error("Video error:", errorMessage)
-              setLoadError(`Error loading video: ${errorMessage}`)
-
-              // Increment attempt counter
-              loadAttemptRef.current += 1
-              console.log(`Video error, attempt ${loadAttemptRef.current} of ${maxAttempts}`)
-
-              // Only use fallback if we've tried enough times
-              if (loadAttemptRef.current >= maxAttempts) {
-                tryFallbackVideo()
-              } else if (videoRef.current && videoUrl) {
-                // Try reloading with a cache buster
-                const currentSrc = videoUrl.split("?")[0]
-                const cacheBustedUrl = `${currentSrc}?t=${Date.now()}`
-                console.log(`Retrying with cache buster: ${cacheBustedUrl}`)
-                videoRef.current.src = cacheBustedUrl
-                videoRef.current.load()
-              }
-            }}
+            onError={handleVideoError}
             onTimeUpdate={handleTimeUpdate}
             onLoadedMetadata={handleMetadataLoaded}
             onPlay={handleVideoStarted}
@@ -1580,13 +1460,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
                 <div className="flex justify-center space-x-3">
                   <button
                     className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded flex items-center"
-                    onClick={() => {
-                      if (videoRef.current) {
-                        setIsLoading(true)
-                        setLoadError(null)
-                        videoRef.current.load()
-                      }
-                    }}
+                    onClick={retryPlayback}
                   >
                     <RefreshCw className="h-4 w-4 mr-2" /> Try Again
                   </button>
@@ -1604,7 +1478,9 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
         {/* Video controls overlay */}
         <div
-          className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4"
+          className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4 transition-opacity duration-300 ${
+            showControls ? "opacity-100" : "opacity-0"
+          }`}
           style={{ zIndex: 10 }}
           onClick={(e) => e.stopPropagation()}
         >
@@ -1635,7 +1511,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4">
               <button
-                onClick={togglePlayPause}
+                onClick={togglePlay}
                 className="hover:text-red-500 transition-colors bg-black/30 p-2 rounded-full"
               >
                 {isPlaying ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6" />}
