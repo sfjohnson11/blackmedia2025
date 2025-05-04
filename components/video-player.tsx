@@ -37,7 +37,8 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const [error, setError] = useState<string | null>(null)
   const [showStandby, setShowStandby] = useState(false)
   const [errorDetails, setErrorDetails] = useState<string | null>(null)
-  const [isRetrying, setIsRetrying] = useState(isRetrying)
+  // Fix: Initialize isRetrying with false instead of referencing itself
+  const [isRetrying, setIsRetrying] = useState(false)
   const [attemptedUrls, setAttemptedUrls] = useState<string[]>([])
   const [showDebugInfo, setShowDebugInfo] = useState(false)
   const [directUrl, setDirectUrl] = useState<string | null>(null)
@@ -820,8 +821,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
               setShowStandby(false)
             } else {
               // If we couldn't get a direct URL, try using the raw mp4_url as a fallback
-              console.log(`No direct URL found for initial  try using the raw mp4_url as a fallback
-              console.log(\`No direct URL found for initial program, trying raw mp4_url: ${currentProgram.mp4_url}`)
+              console.log(`No direct URL found for initial program, trying raw mp4_url: ${currentProgram.mp4_url}`)
 
               // Check if mp4_url is a valid URL or path
               if (
