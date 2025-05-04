@@ -422,6 +422,11 @@ let dbPromise: Promise<IDBDatabase> | null = null
 function initDB(): Promise<IDBDatabase> {
   if (!dbPromise) {
     dbPromise = new Promise((resolve, reject) => {
+      if (typeof window === "undefined" || !window.indexedDB) {
+        reject("IndexedDB not available")
+        return
+      }
+
       const request = indexedDB.open(DB_NAME, 1)
 
       request.onerror = (event) => {
@@ -450,6 +455,15 @@ export async function saveWatchProgress(programId: number, currentTime: number):
     // Don't save progress if it's very close to the beginning (less than 5 seconds)
     if (currentTime < 5) return
 
+    // For Freedom School videos (which have higher IDs), log more details
+    if (programId > 900) {
+      console.log(`Saving Freedom School video progress: ID=${programId}, time=${Math.round(currentTime)}s`)
+    }
+
+    if (typeof window === "undefined" || !window.indexedDB) {
+      throw new Error("IndexedDB not available")
+    }
+
     const db = await initDB()
     const tx = db.transaction(STORE_NAME, "readwrite")
     const store = tx.objectStore(STORE_NAME)
@@ -466,8 +480,6 @@ export async function saveWatchProgress(programId: number, currentTime: number):
       timestamp: Date.now(),
       userId,
     })
-
-    console.log(`Saved watch progress for program ${programId}: ${currentTime}s (in IndexedDB)`)
 
     // Also save a backup in localStorage in case IndexedDB fails
     try {
@@ -504,6 +516,15 @@ export async function saveWatchProgress(programId: number, currentTime: number):
 // Get watch progress from IndexedDB
 export async function getWatchProgress(programId: number): Promise<number | null> {
   try {
+    if (typeof window === "undefined" || !window.indexedDB) {
+      throw new Error("IndexedDB not available")
+    }
+
+    // For Freedom School videos (which have higher IDs), log more details
+    if (programId > 900) {
+      console.log(`Getting Freedom School video progress: ID=${programId}`)
+    }
+
     const db = await initDB()
     const tx = db.transaction(STORE_NAME, "readonly")
     const store = tx.objectStore(STORE_NAME)

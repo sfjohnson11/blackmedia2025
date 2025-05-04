@@ -1,107 +1,158 @@
-import { supabase } from "@/lib/supabase"
-import { VideoPlayer } from "@/components/video-player"
-import { redirect } from "next/navigation"
+"use client"
 
-export const metadata = {
-  title: "Freedom School Channel - Black Truth TV",
-  description: "Educational content about the history and tradition of Freedom Schools in African American history",
+import { useState, useEffect } from "react"
+import { FreedomSchoolPlayer } from "@/components/freedom-school-player"
+import { supabase } from "@/lib/supabase"
+import { Button } from "@/components/ui/button"
+import { ArrowLeft, Loader2 } from "lucide-react"
+import Link from "next/link"
+
+interface FreedomSchoolVideo {
+  id: number
+  title: string
+  description: string
+  video_url: string
+  thumbnail_url?: string
+  created_at: string
 }
 
-export default async function FreedomSchoolChannelPage() {
-  // Get the Freedom School channel
-  const { data: channel, error: channelError } = await supabase
-    .from("channels")
-    .select("*")
-    .eq("id", "freedom-school")
-    .single()
+export default function FreedomSchoolPage() {
+  const [videos, setVideos] = useState<FreedomSchoolVideo[]>([])
+  const [selectedVideo, setSelectedVideo] = useState<FreedomSchoolVideo | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-  if (channelError || !channel) {
-    console.error("Error fetching Freedom School channel:", channelError)
-    redirect("/freedom-school") // Redirect to the sign-up page if channel not found
+  useEffect(() => {
+    async function fetchVideos() {
+      try {
+        setLoading(true)
+        const { data, error } = await supabase
+          .from("freedom_school_videos")
+          .select("*")
+          .order("created_at", { ascending: false })
+
+        if (error) {
+          throw error
+        }
+
+        if (data && data.length > 0) {
+          setVideos(data as FreedomSchoolVideo[])
+          setSelectedVideo(data[0] as FreedomSchoolVideo)
+        } else {
+          // If no videos in database, use a sample video
+          const sampleVideo: FreedomSchoolVideo = {
+            id: 1,
+            title: "Introduction to Freedom School",
+            description: "Learn about the purpose and vision of our Freedom School program.",
+            video_url:
+              "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/freedom_school_sample-D7yZUERL2zhjE71Llxul69gbPLxGES.mp4",
+            created_at: new Date().toISOString(),
+          }
+          setVideos([sampleVideo])
+          setSelectedVideo(sampleVideo)
+        }
+      } catch (err) {
+        console.error("Error fetching Freedom School videos:", err)
+        setError("Failed to load Freedom School videos. Please try again later.")
+
+        // Use sample video as fallback
+        const sampleVideo: FreedomSchoolVideo = {
+          id: 1,
+          title: "Introduction to Freedom School",
+          description: "Learn about the purpose and vision of our Freedom School program.",
+          video_url:
+            "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/freedom_school_sample-D7yZUERL2zhjE71Llxul69gbPLxGES.mp4",
+          created_at: new Date().toISOString(),
+        }
+        setVideos([sampleVideo])
+        setSelectedVideo(sampleVideo)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchVideos()
+  }, [])
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[80vh]">
+        <div className="flex flex-col items-center">
+          <Loader2 className="h-12 w-12 text-red-600 animate-spin mb-4" />
+          <p className="text-xl">Loading Freedom School...</p>
+        </div>
+      </div>
+    )
   }
 
-  // Get current program
-  const now = new Date().toISOString()
-  const { data: currentProgram, error: programError } = await supabase
-    .from("programs")
-    .select("*")
-    .eq("channel_id", "freedom-school")
-    .lte("start_time", now)
-    .order("start_time", { ascending: false })
-    .limit(1)
-    .single()
-
-  if (programError && programError.code !== "PGRST116") {
-    console.error("Error fetching current program:", programError)
-  }
-
-  // Get upcoming programs
-  const { data: upcomingPrograms = [], error: upcomingError } = await supabase
-    .from("programs")
-    .select("*")
-    .eq("channel_id", "freedom-school")
-    .gt("start_time", now)
-    .order("start_time", { ascending: true })
-    .limit(5)
-
-  if (upcomingError) {
-    console.error("Error fetching upcoming programs:", upcomingError)
+  if (error && videos.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[80vh] p-4">
+        <h2 className="text-2xl font-bold mb-4">Error</h2>
+        <p className="text-red-500 mb-6">{error}</p>
+        <Button asChild>
+          <Link href="/">Return to Home</Link>
+        </Button>
+      </div>
+    )
   }
 
   return (
-    <div className="min-h-screen bg-black pt-16">
-      <div className="max-w-7xl mx-auto px-4 py-8">
-        <h1 className="text-3xl font-bold mb-6">Freedom School Channel</h1>
+    <div className="container mx-auto px-4 py-8">
+      <div className="flex items-center mb-6">
+        <Button variant="ghost" asChild className="mr-4">
+          <Link href="/">
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back to Home
+          </Link>
+        </Button>
+        <h1 className="text-3xl font-bold">Freedom School</h1>
+      </div>
 
+      {selectedVideo && (
         <div className="mb-8">
-          <VideoPlayer
-            channel={channel}
-            initialProgram={currentProgram || null}
-            upcomingPrograms={upcomingPrograms || []}
+          <FreedomSchoolPlayer
+            videoUrl={selectedVideo.video_url}
+            title={selectedVideo.title}
+            programId={selectedVideo.id}
           />
+          <div className="mt-4">
+            <h2 className="text-2xl font-bold mb-2">{selectedVideo.title}</h2>
+            <p className="text-gray-400">{selectedVideo.description}</p>
+          </div>
         </div>
+      )}
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-          <div className="md:col-span-2">
-            <div className="bg-gray-900 rounded-xl p-6">
-              <h2 className="text-2xl font-bold mb-4">About Freedom Schools</h2>
-              <p className="text-gray-300 mb-4">
-                Freedom Schools were established during the Civil Rights Movement as alternative free schools for
-                African Americans. They were part of a nationwide effort to counter the inadequate education available
-                to Black Americans, particularly in the South.
-              </p>
-              <p className="text-gray-300 mb-4">
-                The curriculum was designed to encourage political and social awareness, emphasizing voter registration,
-                political organization, and the history of the civil rights movement. Freedom Schools provided a space
-                where students could openly discuss current events and the social conditions they faced.
-              </p>
-              <p className="text-gray-300">
-                Today, the tradition continues through programs that focus on social justice, cultural heritage, and
-                community empowerment. Our Freedom School Channel celebrates this legacy by providing educational
-                content that inspires and informs.
-              </p>
+      <div className="mt-8">
+        <h3 className="text-xl font-bold mb-4">All Videos</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {videos.map((video) => (
+            <div
+              key={video.id}
+              className={`bg-gray-800 rounded-lg overflow-hidden cursor-pointer transition-all hover:ring-2 hover:ring-red-500 ${
+                selectedVideo?.id === video.id ? "ring-2 ring-red-500" : ""
+              }`}
+              onClick={() => setSelectedVideo(video)}
+            >
+              <div className="aspect-video bg-gray-900 relative">
+                {video.thumbnail_url ? (
+                  <img
+                    src={video.thumbnail_url || "/placeholder.svg"}
+                    alt={video.title}
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center">
+                    <span className="text-gray-500">No thumbnail</span>
+                  </div>
+                )}
+              </div>
+              <div className="p-4">
+                <h4 className="font-bold mb-1 truncate">{video.title}</h4>
+                <p className="text-sm text-gray-400 line-clamp-2">{video.description}</p>
+              </div>
             </div>
-          </div>
-
-          <div className="md:col-span-1">
-            <div className="bg-gray-900 rounded-xl p-6">
-              <h2 className="text-xl font-bold mb-4">Join Our Freedom School</h2>
-              <p className="text-gray-300 mb-4">Sign up for our Freedom School program to access:</p>
-              <ul className="list-disc list-inside text-gray-300 mb-6 space-y-2">
-                <li>Live interactive classes</li>
-                <li>Exclusive educational content</li>
-                <li>Community discussions</li>
-                <li>Reading materials and resources</li>
-                <li>Certificate of completion</li>
-              </ul>
-              <a
-                href="/freedom-school"
-                className="block w-full bg-red-600 hover:bg-red-700 text-white py-3 px-4 rounded text-center font-medium"
-              >
-                Sign Up Now
-              </a>
-            </div>
-          </div>
+          ))}
         </div>
       </div>
     </div>

@@ -2,296 +2,490 @@
 
 import type React from "react"
 
-import { useEffect, useRef, useState } from "react"
-import { supabase } from "@/lib/supabase"
+import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
-import { Volume2, VolumeX, Maximize, ExternalLink, AlertCircle } from "lucide-react"
-import Link from "next/link"
+import { Play, Pause, Volume2, VolumeX, Maximize, RotateCcw, RefreshCw } from "lucide-react"
+import { saveWatchProgress, getWatchProgress } from "@/lib/supabase"
 
-// Define the Freedom School video content with more reliable sources
-const FREEDOM_SCHOOL_CHANNEL_ID = "freedom-school"
-const FREEDOM_SCHOOL_VIDEOS = [
-  {
-    id: 1,
-    title: "The History of Freedom Schools",
-    description: "Learn about the origins of Freedom Schools during the Civil Rights Movement",
-    mp4_url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4", // Reliable test video
-    thumbnail: "/placeholder.svg?key=z9nia",
-    duration: 180, // in seconds
-  },
-  {
-    id: 2,
-    title: "Freedom Schools Today",
-    description: "How the tradition continues in modern African American education",
-    mp4_url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4", // Reliable test video
-    thumbnail: "/placeholder.svg?key=7cdxz",
-    duration: 240, // in seconds
-  },
-  {
-    id: 3,
-    title: "Education as Liberation",
-    description: "The philosophy behind Freedom Schools",
-    mp4_url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4", // Reliable test video
-    thumbnail: "/placeholder.svg?key=ye8i8",
-    duration: 210, // in seconds
-  },
-]
+interface FreedomSchoolPlayerProps {
+  videoUrl: string
+  title: string
+  programId?: number
+}
 
-export function FreedomSchoolPlayer() {
-  const videoRef = useRef<HTMLVideoElement>(null)
-  const [currentVideoIndex, setCurrentVideoIndex] = useState(0)
-  const [isMuted, setIsMuted] = useState(true)
-  const [isPlaying, setIsPlaying] = useState(true)
-  const [showInfo, setShowInfo] = useState(false)
+export function FreedomSchoolPlayer({ videoUrl, title, programId = 999 }: FreedomSchoolPlayerProps) {
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [progress, setProgress] = useState(0)
+  const [currentTime, setCurrentTime] = useState(0)
+  const [duration, setDuration] = useState(0)
+  const [volume, setVolume] = useState(1)
+  const [isMuted, setIsMuted] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [isRetrying, setIsRetrying] = useState(false)
 
-  const currentVideo = FREEDOM_SCHOOL_VIDEOS[currentVideoIndex]
-  const videoUrl = currentVideo.mp4_url
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const progressSaveIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const progressUpdateIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const stableVideoUrlRef = useRef<string>(videoUrl)
+  const lastSavedTimeRef = useRef<number>(0)
+  const loadingRef = useRef<boolean>(true)
+  const playbackCheckIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const lastPlaybackTimeRef = useRef<number>(0)
+  const playbackStallCountRef = useRef<number>(0)
 
-  // Handle video end - play the next video in the loop
-  const handleVideoEnd = () => {
-    const nextIndex = (currentVideoIndex + 1) % FREEDOM_SCHOOL_VIDEOS.length
-    setCurrentVideoIndex(nextIndex)
-  }
+  // Fallback video URL in case the primary one fails
+  const fallbackVideoUrl =
+    "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/freedom_school_sample-D7yZUERL2zhjE71Llxul69gbPLxGES.mp4"
 
-  // Toggle mute state
-  const toggleMute = () => {
-    if (videoRef.current) {
-      videoRef.current.muted = !videoRef.current.muted
-      setIsMuted(!isMuted)
-    }
-  }
+  // Initialize player and load saved progress
+  useEffect(() => {
+    // Store the video URL in a ref to ensure it doesn't change
+    stableVideoUrlRef.current = videoUrl
 
-  // Toggle info overlay
-  const toggleInfo = () => {
-    setShowInfo(!showInfo)
-  }
+    const loadSavedProgress = async () => {
+      if (!videoRef.current) return
 
-  // Handle video errors
-  const handleVideoError = (e: React.SyntheticEvent<HTMLVideoElement, Event>) => {
-    console.error("Video error occurred:", e)
-
-    // If we have a video element and a source URL, try reloading with a different approach
-    if (videoRef.current && videoUrl) {
-      console.log("Attempting to reload video with fallback method")
-
-      // Try direct assignment without URL checking
-      videoRef.current.src = videoUrl
-
-      // Force load and play
-      videoRef.current.load()
-      videoRef.current.play().catch((err) => {
-        console.error("Failed to play video after fallback:", err)
-      })
-    }
-  }
-
-  // Handle video loaded
-  const handleVideoLoaded = () => {
-    setIsLoading(false)
-    setError(null)
-  }
-
-  // Try to play the video
-  const attemptPlay = async () => {
-    if (videoRef.current) {
       try {
-        setIsLoading(true)
-        await videoRef.current.play()
-        setIsPlaying(true)
+        loadingRef.current = true
+        const savedProgress = await getWatchProgress(programId)
+
+        if (savedProgress && savedProgress > 5) {
+          console.log(`Restoring saved position for Freedom School video: ${savedProgress}s`)
+          videoRef.current.currentTime = savedProgress
+          lastSavedTimeRef.current = savedProgress
+        }
       } catch (err) {
-        console.error("Error playing video:", err)
-        setIsPlaying(false)
-        setError("Video playback was blocked. Click to play.")
+        console.error("Error loading saved progress:", err)
       } finally {
-        setIsLoading(false)
+        loadingRef.current = false
       }
     }
-  }
 
-  // Manual play button handler
-  const handleManualPlay = () => {
-    if (error) {
-      setError(null)
-      attemptPlay()
+    loadSavedProgress()
+
+    // Set up continuous progress saving - save every 10 seconds
+    progressSaveIntervalRef.current = setInterval(() => {
+      if (videoRef.current && !videoRef.current.paused && videoRef.current.currentTime > 0) {
+        // Only save if position has changed significantly (more than 3 seconds)
+        if (Math.abs(videoRef.current.currentTime - lastSavedTimeRef.current) > 3) {
+          console.log(`Saving Freedom School video progress: ${Math.round(videoRef.current.currentTime)}s`)
+          saveWatchProgress(programId, videoRef.current.currentTime)
+          lastSavedTimeRef.current = videoRef.current.currentTime
+        }
+      }
+    }, 10000)
+
+    // Set up continuous progress updating (UI) - update 4 times per second
+    progressUpdateIntervalRef.current = setInterval(() => {
+      if (videoRef.current) {
+        setCurrentTime(videoRef.current.currentTime)
+        setProgress((videoRef.current.currentTime / videoRef.current.duration) * 100)
+      }
+    }, 250)
+
+    // Set up playback stall detection
+    playbackCheckIntervalRef.current = setInterval(() => {
+      if (videoRef.current && !videoRef.current.paused && videoRef.current.currentTime > 0) {
+        // If playback time hasn't advanced in 5 seconds and we're not at the end
+        if (
+          videoRef.current.currentTime === lastPlaybackTimeRef.current &&
+          videoRef.current.currentTime < videoRef.current.duration - 5
+        ) {
+          playbackStallCountRef.current += 1
+          console.log(
+            `Playback appears stalled (${playbackStallCountRef.current}), current time: ${videoRef.current.currentTime}s`,
+          )
+
+          // After 3 stall detections, try to nudge playback forward
+          if (playbackStallCountRef.current >= 3) {
+            console.log("Multiple stalls detected, attempting to resume playback")
+            // Try to nudge playback forward
+            const currentPos = videoRef.current.currentTime
+            videoRef.current.currentTime += 0.5
+            videoRef.current.play().catch((e) => {
+              console.error("Failed to resume stalled playback:", e)
+            })
+            playbackStallCountRef.current = 0
+          }
+        } else {
+          // Reset stall count if playback is advancing
+          playbackStallCountRef.current = 0
+          lastPlaybackTimeRef.current = videoRef.current.currentTime
+        }
+      }
+    }, 5000)
+
+    return () => {
+      if (progressSaveIntervalRef.current) {
+        clearInterval(progressSaveIntervalRef.current)
+      }
+      if (progressUpdateIntervalRef.current) {
+        clearInterval(progressUpdateIntervalRef.current)
+      }
+      if (playbackCheckIntervalRef.current) {
+        clearInterval(playbackCheckIntervalRef.current)
+      }
     }
-  }
+  }, [programId, videoUrl])
 
-  // Load the current video
-  useEffect(() => {
-    setIsLoading(true)
-    setError(null)
+  // Handle metadata loaded
+  const handleMetadataLoaded = () => {
+    if (!videoRef.current) return
 
-    if (videoRef.current) {
-      videoRef.current.src = currentVideo.mp4_url
-      videoRef.current.load()
-      attemptPlay()
-    }
-  }, [currentVideo, currentVideoIndex])
+    setDuration(videoRef.current.duration)
+    setIsLoading(false)
+    console.log(`Freedom School video metadata loaded. Duration: ${videoRef.current.duration}s`)
 
-  // Register the Freedom School channel in Supabase if it doesn't exist
-  useEffect(() => {
-    const registerFreedomSchoolChannel = async () => {
+    // Set video to high priority loading
+    if ("priority" in videoRef.current) {
       try {
-        // Check if the Freedom School channel already exists
-        const { data, error } = await supabase.from("channels").select("*").eq("id", FREEDOM_SCHOOL_CHANNEL_ID).single()
-
-        if (error && error.code !== "PGRST116") {
-          console.error("Error checking for Freedom School channel:", error)
-          return
-        }
-
-        // If the channel doesn't exist, create it
-        if (!data) {
-          const { error: insertError } = await supabase.from("channels").insert([
-            {
-              id: FREEDOM_SCHOOL_CHANNEL_ID,
-              name: "Freedom School Channel",
-              slug: "freedom-school",
-              description:
-                "Educational content about the history and tradition of Freedom Schools in African American history",
-              logo_url: "/placeholder.svg?key=p6ovi",
-            },
-          ])
-
-          if (insertError) {
-            console.error("Error creating Freedom School channel:", insertError)
-            return
-          }
-
-          console.log("Freedom School channel created successfully")
-
-          // Add the videos to the programs table
-          for (const video of FREEDOM_SCHOOL_VIDEOS) {
-            const startTime = new Date()
-            startTime.setMinutes(startTime.getMinutes() - Math.floor(Math.random() * 60)) // Random start time in the past hour
-
-            const { error: programError } = await supabase.from("programs").insert([
-              {
-                channel_id: FREEDOM_SCHOOL_CHANNEL_ID,
-                title: video.title,
-                mp4_url: video.mp4_url,
-                start_time: startTime.toISOString(),
-                duration: video.duration,
-              },
-            ])
-
-            if (programError) {
-              console.error(`Error adding program "${video.title}":`, programError)
-            }
-          }
-        }
-      } catch (err) {
-        console.error("Error in registerFreedomSchoolChannel:", err)
+        // @ts-ignore - This is a non-standard but useful attribute
+        videoRef.current.priority = true
+      } catch (e) {
+        // Ignore if not supported
       }
     }
 
-    registerFreedomSchoolChannel()
+    // Increase buffer size if possible
+    try {
+      // @ts-ignore - Non-standard but useful in some browsers
+      if (videoRef.current.bufferSize) videoRef.current.bufferSize = 60
+    } catch (e) {
+      // Ignore if not supported
+    }
+  }
+
+  // Handle play/pause
+  const togglePlay = () => {
+    if (!videoRef.current) return
+
+    if (videoRef.current.paused) {
+      videoRef.current
+        .play()
+        .then(() => {
+          setIsPlaying(true)
+          console.log("Freedom School video playback started")
+        })
+        .catch((err) => {
+          console.error("Error playing video:", err)
+          setError("Failed to play video. Please try again.")
+        })
+    } else {
+      videoRef.current.pause()
+      setIsPlaying(false)
+      console.log("Freedom School video playback paused")
+    }
+  }
+
+  // Handle mute toggle
+  const toggleMute = () => {
+    if (!videoRef.current) return
+
+    videoRef.current.muted = !videoRef.current.muted
+    setIsMuted(videoRef.current.muted)
+  }
+
+  // Handle volume change
+  const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!videoRef.current) return
+
+    const newVolume = Number.parseFloat(e.target.value)
+    videoRef.current.volume = newVolume
+    setVolume(newVolume)
+
+    if (newVolume === 0) {
+      videoRef.current.muted = true
+      setIsMuted(true)
+    } else if (isMuted) {
+      videoRef.current.muted = false
+      setIsMuted(false)
+    }
+  }
+
+  // Handle seeking
+  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!videoRef.current) return
+
+    const seekTime = (Number.parseFloat(e.target.value) / 100) * videoRef.current.duration
+    videoRef.current.currentTime = seekTime
+    setCurrentTime(seekTime)
+    setProgress((seekTime / videoRef.current.duration) * 100)
+
+    // Save position after seeking
+    saveWatchProgress(programId, seekTime).catch((err) => console.error("Error saving watch progress after seek:", err))
+  }
+
+  // Handle fullscreen toggle
+  const toggleFullscreen = () => {
+    if (!containerRef.current) return
+
+    if (!document.fullscreenElement) {
+      containerRef.current.requestFullscreen().catch((err) => {
+        console.error(`Error attempting to enable fullscreen: ${err.message}`)
+      })
+    } else {
+      document.exitFullscreen()
+    }
+  }
+
+  // Update fullscreen state
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement)
+    }
+
+    document.addEventListener("fullscreenchange", handleFullscreenChange)
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange)
+    }
   }, [])
 
+  // Handle video errors with fallback
+  const handleError = () => {
+    if (!videoRef.current || !videoRef.current.error) return
+
+    let errorMessage = "Unknown error"
+    switch (videoRef.current.error.code) {
+      case 1:
+        errorMessage = "Video loading aborted"
+        break
+      case 2:
+        errorMessage = "Network error while loading video"
+        break
+      case 3:
+        errorMessage = "Video decoding failed - format may be unsupported"
+        break
+      case 4:
+        errorMessage = "Video not found or access denied"
+        break
+    }
+
+    console.error(`Freedom School video error: ${errorMessage}`, videoRef.current.error)
+
+    // Only set error if we're not already retrying
+    if (!isRetrying) {
+      setError(`${errorMessage}. Trying alternative source...`)
+
+      // Try the fallback URL if we're not already using it
+      if (videoRef.current.src !== fallbackVideoUrl) {
+        console.log("Switching to fallback video URL")
+        setTimeout(() => {
+          if (videoRef.current) {
+            videoRef.current.src = fallbackVideoUrl
+            videoRef.current.load()
+            setIsRetrying(true)
+          }
+        }, 1000)
+      } else {
+        setError(`${errorMessage}. Please try again later.`)
+      }
+    }
+  }
+
+  // Handle video end
+  const handleEnded = () => {
+    setIsPlaying(false)
+    // Save final position
+    if (videoRef.current) {
+      saveWatchProgress(programId, videoRef.current.duration)
+    }
+  }
+
+  // Format time (MM:SS)
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60)
+    const secs = Math.floor(seconds % 60)
+    return `${mins}:${secs < 10 ? "0" : ""}${secs}`
+  }
+
+  // Restart video
+  const restartVideo = () => {
+    if (!videoRef.current) return
+
+    setError(null)
+    setIsRetrying(true)
+
+    // Try the original URL first
+    videoRef.current.src = stableVideoUrlRef.current
+    videoRef.current.load()
+
+    // Set up a timeout to try the fallback if the original fails
+    setTimeout(() => {
+      if (videoRef.current && videoRef.current.error) {
+        console.log("Original URL failed, trying fallback")
+        videoRef.current.src = fallbackVideoUrl
+        videoRef.current.load()
+      }
+
+      // Attempt to play after loading
+      setTimeout(() => {
+        if (videoRef.current) {
+          videoRef.current
+            .play()
+            .then(() => {
+              setIsPlaying(true)
+              setIsRetrying(false)
+            })
+            .catch((err) => {
+              console.error("Error playing video after restart:", err)
+              setError("Failed to restart video. Please try again.")
+              setIsRetrying(false)
+            })
+        }
+      }, 1000)
+    }, 3000)
+  }
+
+  // Handle stalled playback
+  const handleStalled = () => {
+    console.log("Freedom School video playback stalled, attempting to resume...")
+
+    if (!videoRef.current || loadingRef.current) return
+
+    // Try to resume from the current position
+    const currentPos = videoRef.current.currentTime
+
+    setTimeout(() => {
+      if (videoRef.current && videoRef.current.paused) {
+        videoRef.current.currentTime = currentPos
+        videoRef.current.play().catch((e) => {
+          console.error("Failed to resume after stall:", e)
+        })
+      }
+    }, 1000)
+  }
+
+  // Handle waiting event
+  const handleWaiting = () => {
+    console.log("Freedom School video is buffering...")
+    setIsLoading(true)
+  }
+
+  // Handle playing event
+  const handlePlaying = () => {
+    setIsLoading(false)
+    setIsPlaying(true)
+    setError(null)
+  }
+
   return (
-    <div className="relative rounded-lg overflow-hidden bg-black border border-gray-800 shadow-lg">
-      {/* Video Player */}
-      <div className="relative aspect-video bg-gray-900">
-        {isLoading && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/50">
-            <div className="w-8 h-8 border-4 border-gray-300 border-t-red-600 rounded-full animate-spin"></div>
+    <div ref={containerRef} className="relative w-full aspect-video bg-black rounded-lg overflow-hidden">
+      {/* Video element */}
+      <video
+        ref={videoRef}
+        src={videoUrl}
+        className="w-full h-full"
+        onLoadedMetadata={handleMetadataLoaded}
+        onPlay={() => setIsPlaying(true)}
+        onPause={() => setIsPlaying(false)}
+        onEnded={handleEnded}
+        onError={handleError}
+        onStalled={handleStalled}
+        onWaiting={handleWaiting}
+        onPlaying={handlePlaying}
+        playsInline
+        preload="auto"
+        // Disable any browser features that might cause automatic reloading
+        onSeeking={() => console.log("Video seeking...")}
+        onSeeked={() => console.log("Video seeked")}
+      />
+
+      {/* Loading indicator */}
+      {isLoading && !error && (
+        <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+          <div className="flex flex-col items-center">
+            <RefreshCw className="h-12 w-12 text-red-600 animate-spin mb-4" />
+            <p className="text-white text-lg">Loading video...</p>
           </div>
-        )}
-
-        {error && (
-          <div
-            className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 cursor-pointer"
-            onClick={handleManualPlay}
-          >
-            <AlertCircle className="h-10 w-10 text-red-500 mb-2" />
-            <p className="text-white text-center px-4">{error}</p>
-            <Button variant="outline" size="sm" className="mt-4 bg-red-600 hover:bg-red-700 text-white border-none">
-              Try Again
-            </Button>
-          </div>
-        )}
-
-        <video
-          ref={videoRef}
-          className="w-full h-full object-cover"
-          playsInline
-          muted={isMuted}
-          onEnded={handleVideoEnd}
-          onError={handleVideoError}
-          onLoadedData={handleVideoLoaded}
-          poster={currentVideo.thumbnail}
-          controls={false}
-        >
-          <source src={currentVideo.mp4_url} type="video/mp4" />
-          Your browser does not support the video tag.
-        </video>
-
-        {/* Title Overlay */}
-        <div className="absolute top-0 left-0 right-0 bg-gradient-to-b from-black/80 to-transparent p-3">
-          <h3 className="text-sm md:text-base font-semibold text-white">{currentVideo.title}</h3>
         </div>
+      )}
 
-        {/* Controls Overlay */}
-        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-3 flex justify-between items-center">
-          <Button variant="ghost" size="sm" className="text-white hover:bg-black/50 p-1 h-auto" onClick={toggleMute}>
-            {isMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+      {/* Error overlay */}
+      {error && (
+        <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center p-4 z-20">
+          <p className="text-red-500 mb-4">{error}</p>
+          <Button onClick={restartVideo} variant="destructive" disabled={isRetrying}>
+            {isRetrying ? (
+              <>
+                <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                Retrying...
+              </>
+            ) : (
+              <>
+                <RotateCcw className="mr-2 h-4 w-4" />
+                Restart Video
+              </>
+            )}
           </Button>
+        </div>
+      )}
 
-          <div className="flex space-x-2">
-            <Button variant="ghost" size="sm" className="text-white hover:bg-black/50 p-1 h-auto" onClick={toggleInfo}>
-              <span className="text-xs">Info</span>
-            </Button>
+      {/* Video controls */}
+      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4">
+        {/* Title */}
+        <h3 className="text-white font-medium mb-2 truncate">{title}</h3>
 
-            <Link href={`/watch/${FREEDOM_SCHOOL_CHANNEL_ID}`}>
-              <Button variant="ghost" size="sm" className="text-white hover:bg-black/50 p-1 h-auto">
-                <Maximize className="h-4 w-4" />
-              </Button>
-            </Link>
-          </div>
+        {/* Progress bar */}
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-white text-xs">{formatTime(currentTime)}</span>
+          <input
+            type="range"
+            min="0"
+            max="100"
+            value={progress}
+            onChange={handleSeek}
+            className="w-full h-1 bg-gray-700 rounded-full appearance-none cursor-pointer"
+            style={{
+              background: `linear-gradient(to right, #ef4444 0%, #ef4444 ${progress}%, #4b5563 ${progress}%, #4b5563 100%)`,
+            }}
+          />
+          <span className="text-white text-xs">{formatTime(duration)}</span>
         </div>
 
-        {/* Info Overlay */}
-        {showInfo && (
-          <div className="absolute inset-0 bg-black/80 p-4 overflow-y-auto" onClick={toggleInfo}>
-            <h3 className="text-lg font-bold text-white mb-2">{currentVideo.title}</h3>
-            <p className="text-sm text-gray-300 mb-4">{currentVideo.description}</p>
-            <p className="text-xs text-gray-400 mb-4">
-              Part of our Freedom School educational series exploring the rich tradition of Freedom Schools in African
-              American history.
-            </p>
-            <div className="flex justify-end">
-              <Link href={`/watch/${FREEDOM_SCHOOL_CHANNEL_ID}`}>
-                <Button size="sm" className="bg-red-600 hover:bg-red-700 text-white">
-                  <ExternalLink className="h-3 w-3 mr-1" />
-                  <span className="text-xs">Watch Full Channel</span>
-                </Button>
-              </Link>
+        {/* Controls */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-4">
+            {/* Play/Pause */}
+            <button
+              onClick={togglePlay}
+              className="text-white hover:text-gray-300 focus:outline-none"
+              aria-label={isPlaying ? "Pause" : "Play"}
+            >
+              {isPlaying ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6" />}
+            </button>
+
+            {/* Volume control */}
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={toggleMute}
+                className="text-white hover:text-gray-300 focus:outline-none"
+                aria-label={isMuted ? "Unmute" : "Mute"}
+              >
+                {isMuted || volume === 0 ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
+              </button>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.1"
+                value={volume}
+                onChange={handleVolumeChange}
+                className="w-20 h-1 bg-gray-700 rounded-full appearance-none cursor-pointer md:block hidden"
+              />
             </div>
           </div>
-        )}
-      </div>
 
-      {/* Playlist Preview */}
-      <div className="bg-gray-900 p-3">
-        <h4 className="text-xs font-medium text-gray-400 mb-2">FREEDOM SCHOOL CHANNEL</h4>
-        <div className="flex space-x-2 overflow-x-auto pb-2">
-          {FREEDOM_SCHOOL_VIDEOS.map((video, index) => (
-            <button
-              key={video.id}
-              className={`flex-shrink-0 w-20 h-12 rounded overflow-hidden border-2 ${
-                index === currentVideoIndex ? "border-red-600" : "border-transparent"
-              }`}
-              onClick={() => setCurrentVideoIndex(index)}
-            >
-              <img
-                src={video.thumbnail || "/placeholder.svg"}
-                alt={video.title}
-                className="w-full h-full object-cover"
-              />
-            </button>
-          ))}
+          {/* Fullscreen */}
+          <button
+            onClick={toggleFullscreen}
+            className="text-white hover:text-gray-300 focus:outline-none"
+            aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+          >
+            <Maximize className="h-5 w-5" />
+          </button>
         </div>
       </div>
     </div>
