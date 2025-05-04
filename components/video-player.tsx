@@ -9,12 +9,32 @@ import {
   isLiveChannel,
   getLiveStreamUrl,
   getDirectDownloadUrl,
+  saveWatchProgress,
+  getWatchProgress,
 } from "@/lib/supabase"
 import type { Channel, Program } from "@/types"
-import { Clock, RefreshCw, Info, Play, Volume2, VolumeX, Maximize, Pause, PictureInPicture } from "lucide-react"
+import {
+  RefreshCw,
+  Info,
+  Play,
+  Volume2,
+  VolumeX,
+  Maximize,
+  Pause,
+  PictureInPicture,
+  ChevronRight,
+  ChevronLeft,
+  FastForward,
+  Rewind,
+  Share2,
+  Heart,
+  Clock4,
+} from "lucide-react"
 import { cleanChannelName } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import Link from "next/link"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 
 interface VideoPlayerProps {
   channel: Channel
@@ -42,6 +62,14 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [showControls, setShowControls] = useState(true)
   const [controlsTimeout, setControlsTimeout] = useState<NodeJS.Timeout | null>(null)
+  const [playbackRate, setPlaybackRate] = useState(1)
+  const [isFavorite, setIsFavorite] = useState(false)
+  const [showChannelSwitcher, setShowChannelSwitcher] = useState(false)
+  const [sleepTimerMinutes, setSleepTimerMinutes] = useState<number | null>(null)
+  const [sleepTimerEnd, setSleepTimerEnd] = useState<Date | null>(null)
+  const [showShareOptions, setShowShareOptions] = useState(false)
+  const [showTooltips, setShowTooltips] = useState(true)
+  const [keyboardShortcutsEnabled, setKeyboardShortcutsEnabled] = useState(true)
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const standbyVideoRef = useRef<HTMLVideoElement>(null)
@@ -52,6 +80,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const videoContainerRef = useRef<HTMLDivElement>(null)
   const loadAttemptRef = useRef(0)
   const programChangeTimeRef = useRef<number | null>(null)
+  const sleepTimerRef = useRef<NodeJS.Timeout | null>(null)
   const maxAttempts = 3
   const [videoMetadata, setVideoMetadata] = useState<{ duration: number; loaded: boolean }>({
     duration: 0,
@@ -59,12 +88,100 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   })
   const [lastPlaybackTime, setLastPlaybackTime] = useState<number>(0)
   const playbackCheckRef = useRef<NodeJS.Timeout | null>(null)
+  const progressSaveIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
   const cleanedName = cleanChannelName(channel.name)
 
   // Standby video URL - using a reliable source
   const standbyVideoUrl =
     "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/standby_blacktruthtv-D7yZUERL2zhjE71Llxul69gbPLxGES.mp4"
+
+  // Check if channel is in favorites
+  useEffect(() => {
+    const checkFavorite = () => {
+      const favorites = JSON.parse(localStorage.getItem("favoriteChannels") || "[]")
+      setIsFavorite(favorites.includes(channel.id))
+    }
+
+    checkFavorite()
+  }, [channel.id])
+
+  // Toggle favorite status
+  const toggleFavorite = () => {
+    const favorites = JSON.parse(localStorage.getItem("favoriteChannels") || "[]")
+
+    if (isFavorite) {
+      const newFavorites = favorites.filter((id: string) => id !== channel.id)
+      localStorage.setItem("favoriteChannels", JSON.stringify(newFavorites))
+    } else {
+      favorites.push(channel.id)
+      localStorage.setItem("favoriteChannels", JSON.stringify(favorites))
+    }
+
+    setIsFavorite(!isFavorite)
+  }
+
+  // Set up sleep timer
+  const startSleepTimer = (minutes: number) => {
+    if (sleepTimerRef.current) {
+      clearTimeout(sleepTimerRef.current)
+    }
+
+    setSleepTimerMinutes(minutes)
+    const endTime = new Date(Date.now() + minutes * 60000)
+    setSleepTimerEnd(endTime)
+
+    sleepTimerRef.current = setTimeout(() => {
+      if (videoRef.current) {
+        videoRef.current.pause()
+        setIsPlaying(false)
+      }
+      setSleepTimerMinutes(null)
+      setSleepTimerEnd(null)
+    }, minutes * 60000)
+  }
+
+  // Cancel sleep timer
+  const cancelSleepTimer = () => {
+    if (sleepTimerRef.current) {
+      clearTimeout(sleepTimerRef.current)
+    }
+    setSleepTimerMinutes(null)
+    setSleepTimerEnd(null)
+  }
+
+  // Format remaining sleep time
+  const formatSleepTimeRemaining = (): string => {
+    if (!sleepTimerEnd) return ""
+
+    const now = new Date()
+    const diffMs = sleepTimerEnd.getTime() - now.getTime()
+    if (diffMs <= 0) return "0:00"
+
+    const minutes = Math.floor(diffMs / 60000)
+    const seconds = Math.floor((diffMs % 60000) / 1000)
+    return `${minutes}:${seconds.toString().padStart(2, "0")}`
+  }
+
+  // Share functionality
+  const shareChannel = () => {
+    if (navigator.share) {
+      navigator
+        .share({
+          title: `Watch ${cleanedName}`,
+          text: `I'm watching ${currentProgram?.title || cleanedName}`,
+          url: window.location.href,
+        })
+        .catch((err) => console.error("Error sharing:", err))
+    } else {
+      // Fallback for browsers that don't support Web Share API
+      navigator.clipboard
+        .writeText(window.location.href)
+        .then(() => alert("Link copied to clipboard!"))
+        .catch((err) => console.error("Error copying link:", err))
+    }
+    setShowShareOptions(false)
+  }
 
   // Ensure standby video is always ready
   useEffect(() => {
@@ -75,6 +192,44 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       standbyVideoRef.current.preload = "auto"
     }
   }, [standbyVideoUrl])
+
+  // Save watch progress periodically
+  useEffect(() => {
+    if (!currentProgram) return
+
+    // Try to restore previous watch position
+    const loadSavedProgress = async () => {
+      if (videoRef.current && currentProgram) {
+        try {
+          const savedProgress = await getWatchProgress(currentProgram.id)
+          if (savedProgress && savedProgress > 10 && savedProgress < videoRef.current.duration - 30) {
+            // Only restore if we have a meaningful position (not at the very beginning or end)
+            videoRef.current.currentTime = savedProgress
+            console.log(`Restored watch progress: ${savedProgress}s`)
+          }
+        } catch (err) {
+          console.error("Error loading saved progress:", err)
+        }
+      }
+    }
+
+    loadSavedProgress()
+
+    // Set up interval to save progress
+    progressSaveIntervalRef.current = setInterval(() => {
+      if (videoRef.current && currentProgram && videoRef.current.currentTime > 0) {
+        saveWatchProgress(currentProgram.id, videoRef.current.currentTime).catch((err) =>
+          console.error("Error saving watch progress:", err),
+        )
+      }
+    }, 10000) // Save every 10 seconds
+
+    return () => {
+      if (progressSaveIntervalRef.current) {
+        clearInterval(progressSaveIntervalRef.current)
+      }
+    }
+  }, [currentProgram])
 
   // Prevent context menu on video (right-click)
   const handleContextMenu = (e: React.MouseEvent) => {
@@ -177,6 +332,22 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     }
   }
 
+  // Change playback speed
+  const changePlaybackSpeed = (rate: number) => {
+    if (!videoRef.current) return
+
+    videoRef.current.playbackRate = rate
+    setPlaybackRate(rate)
+  }
+
+  // Skip forward/backward
+  const skipTime = (seconds: number) => {
+    if (!videoRef.current) return
+
+    const newTime = videoRef.current.currentTime + seconds
+    videoRef.current.currentTime = Math.max(0, Math.min(newTime, videoRef.current.duration))
+  }
+
   // Update fullscreen state when it changes
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -188,6 +359,81 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       document.removeEventListener("fullscreenchange", handleFullscreenChange)
     }
   }, [])
+
+  // Handle keyboard shortcuts
+  useEffect(() => {
+    if (!keyboardShortcutsEnabled) return
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger shortcuts if user is typing in an input field
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+
+      if (!videoRef.current || showStandby) return
+
+      switch (e.key.toLowerCase()) {
+        case " ":
+        case "k":
+          e.preventDefault()
+          togglePlay()
+          break
+        case "m":
+          e.preventDefault()
+          toggleMute()
+          break
+        case "f":
+          e.preventDefault()
+          toggleFullscreen()
+          break
+        case "p":
+          e.preventDefault()
+          togglePictureInPicture()
+          break
+        case "arrowleft":
+          e.preventDefault()
+          skipTime(-10)
+          break
+        case "arrowright":
+          e.preventDefault()
+          skipTime(10)
+          break
+        case "arrowup":
+          e.preventDefault()
+          if (videoRef.current.volume < 0.9) {
+            videoRef.current.volume += 0.1
+            setVolume(videoRef.current.volume)
+          }
+          break
+        case "arrowdown":
+          e.preventDefault()
+          if (videoRef.current.volume > 0.1) {
+            videoRef.current.volume -= 0.1
+            setVolume(videoRef.current.volume)
+          }
+          break
+        case "0":
+        case "1":
+        case "2":
+        case "3":
+        case "4":
+        case "5":
+        case "6":
+        case "7":
+        case "8":
+        case "9":
+          // Jump to percentage of video
+          const percent = Number.parseInt(e.key) * 10
+          if (videoRef.current.duration) {
+            videoRef.current.currentTime = (percent / 100) * videoRef.current.duration
+          }
+          break
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown)
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown)
+    }
+  }, [showStandby, keyboardShortcutsEnabled])
 
   // Handle seeking
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -572,7 +818,8 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
               setShowStandby(false)
             } else {
               // If we couldn't get a direct URL, try using the raw mp4_url as a fallback
-              console.log(`No direct URL found for initial program, trying raw mp4_url: ${currentProgram.mp4_url}`)
+              console.log(`No direct URL found for initial  try using the raw mp4_url as a fallback
+              console.log(\`No direct URL found for initial program, trying raw mp4_url: ${currentProgram.mp4_url}`)
 
               // Check if mp4_url is a valid URL or path
               if (
@@ -642,6 +889,12 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       }
       if (controlsTimeout) {
         clearTimeout(controlsTimeout)
+      }
+      if (sleepTimerRef.current) {
+        clearTimeout(sleepTimerRef.current)
+      }
+      if (progressSaveIntervalRef.current) {
+        clearInterval(progressSaveIntervalRef.current)
       }
     }
   }, [channel.id])
@@ -802,23 +1055,77 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-4">
                 {/* Play/Pause button */}
-                <button
-                  onClick={togglePlay}
-                  className="text-white hover:text-gray-300 focus:outline-none"
-                  aria-label={isPlaying ? "Pause" : "Play"}
-                >
-                  {isPlaying ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6" />}
-                </button>
+                <TooltipProvider delayDuration={700}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={togglePlay}
+                        className="text-white hover:text-gray-300 focus:outline-none"
+                        aria-label={isPlaying ? "Pause" : "Play"}
+                      >
+                        {isPlaying ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6" />}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>{isPlaying ? "Pause (k)" : "Play (k)"}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+
+                {/* Skip backward */}
+                <TooltipProvider delayDuration={700}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={() => skipTime(-10)}
+                        className="text-white hover:text-gray-300 focus:outline-none"
+                        aria-label="Skip backward 10 seconds"
+                      >
+                        <Rewind className="h-5 w-5" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Rewind 10s (←)</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+
+                {/* Skip forward */}
+                <TooltipProvider delayDuration={700}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={() => skipTime(10)}
+                        className="text-white hover:text-gray-300 focus:outline-none"
+                        aria-label="Skip forward 10 seconds"
+                      >
+                        <FastForward className="h-5 w-5" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Forward 10s (→)</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
 
                 {/* Volume control */}
                 <div className="flex items-center space-x-2">
-                  <button
-                    onClick={toggleMute}
-                    className="text-white hover:text-gray-300 focus:outline-none"
-                    aria-label={isMuted ? "Unmute" : "Mute"}
-                  >
-                    {isMuted || volume === 0 ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
-                  </button>
+                  <TooltipProvider delayDuration={700}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          onClick={toggleMute}
+                          className="text-white hover:text-gray-300 focus:outline-none"
+                          aria-label={isMuted ? "Unmute" : "Mute"}
+                        >
+                          {isMuted || volume === 0 ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>{isMuted ? "Unmute (m)" : "Mute (m)"}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                   <input
                     type="range"
                     min="0"
@@ -838,28 +1145,163 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
               </div>
 
               <div className="flex items-center space-x-4">
+                {/* Sleep timer */}
+                <DropdownMenu>
+                  <TooltipProvider delayDuration={700}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <DropdownMenuTrigger asChild>
+                          <button className="text-white hover:text-gray-300 focus:outline-none relative">
+                            <Clock4 className="h-5 w-5" />
+                            {sleepTimerMinutes && (
+                              <span className="absolute -top-1 -right-1 bg-red-600 text-white text-xs rounded-full w-3 h-3 flex items-center justify-center"></span>
+                            )}
+                          </button>
+                        </DropdownMenuTrigger>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Sleep Timer</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                  <DropdownMenuContent>
+                    {sleepTimerMinutes ? (
+                      <>
+                        <div className="px-2 py-1 text-sm">Sleep in: {formatSleepTimeRemaining()}</div>
+                        <DropdownMenuItem onClick={cancelSleepTimer}>Cancel Timer</DropdownMenuItem>
+                      </>
+                    ) : (
+                      <>
+                        <DropdownMenuItem onClick={() => startSleepTimer(15)}>15 minutes</DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => startSleepTimer(30)}>30 minutes</DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => startSleepTimer(60)}>60 minutes</DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => startSleepTimer(120)}>2 hours</DropdownMenuItem>
+                      </>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+
+                {/* Playback speed */}
+                <DropdownMenu>
+                  <TooltipProvider delayDuration={700}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <DropdownMenuTrigger asChild>
+                          <button className="text-white hover:text-gray-300 focus:outline-none">
+                            <span className="text-xs font-medium">{playbackRate}x</span>
+                          </button>
+                        </DropdownMenuTrigger>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Playback Speed</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                  <DropdownMenuContent>
+                    <DropdownMenuItem onClick={() => changePlaybackSpeed(0.5)}>0.5x</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => changePlaybackSpeed(0.75)}>0.75x</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => changePlaybackSpeed(1)}>Normal</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => changePlaybackSpeed(1.25)}>1.25x</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => changePlaybackSpeed(1.5)}>1.5x</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => changePlaybackSpeed(2)}>2x</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+
+                {/* Favorite button */}
+                <TooltipProvider delayDuration={700}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={toggleFavorite}
+                        className={`focus:outline-none ${isFavorite ? "text-red-500" : "text-white hover:text-gray-300"}`}
+                        aria-label={isFavorite ? "Remove from favorites" : "Add to favorites"}
+                      >
+                        <Heart className={`h-5 w-5 ${isFavorite ? "fill-current" : ""}`} />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>{isFavorite ? "Remove from favorites" : "Add to favorites"}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+
+                {/* Share button */}
+                <TooltipProvider delayDuration={700}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={shareChannel}
+                        className="text-white hover:text-gray-300 focus:outline-none"
+                        aria-label="Share"
+                      >
+                        <Share2 className="h-5 w-5" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Share</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+
                 {/* Picture-in-Picture button */}
-                <button
-                  onClick={togglePictureInPicture}
-                  className="text-white hover:text-gray-300 focus:outline-none"
-                  aria-label="Toggle picture-in-picture"
-                >
-                  <PictureInPicture className="h-5 w-5" />
-                </button>
+                <TooltipProvider delayDuration={700}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={togglePictureInPicture}
+                        className="text-white hover:text-gray-300 focus:outline-none"
+                        aria-label="Toggle picture-in-picture"
+                      >
+                        <PictureInPicture className="h-5 w-5" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Picture-in-Picture (p)</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
 
                 {/* Fullscreen button */}
-                <button
-                  onClick={toggleFullscreen}
-                  className="text-white hover:text-gray-300 focus:outline-none"
-                  aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
-                >
-                  <Maximize className="h-5 w-5" />
-                </button>
+                <TooltipProvider delayDuration={700}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={toggleFullscreen}
+                        className="text-white hover:text-gray-300 focus:outline-none"
+                        aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+                      >
+                        <Maximize className="h-5 w-5" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Fullscreen (f)</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               </div>
             </div>
           </div>
         )}
       </div>
+
+      {/* Channel switcher - for quick navigation between channels */}
+      {showChannelSwitcher && (
+        <div className="absolute top-1/2 left-0 right-0 transform -translate-y-1/2 flex justify-between px-4 z-30 pointer-events-none">
+          <button
+            className="bg-black/70 rounded-full p-3 text-white hover:bg-black/90 pointer-events-auto"
+            onClick={() => (window.location.href = `/watch/${Number.parseInt(channel.id) - 1}`)}
+            disabled={Number.parseInt(channel.id) <= 1}
+          >
+            <ChevronLeft className="h-8 w-8" />
+          </button>
+          <button
+            className="bg-black/70 rounded-full p-3 text-white hover:bg-black/90 pointer-events-auto"
+            onClick={() => (window.location.href = `/watch/${Number.parseInt(channel.id) + 1}`)}
+          >
+            <ChevronRight className="h-8 w-8" />
+          </button>
+        </div>
+      )}
 
       {/* Standby video container - always rendered but may be hidden */}
       <div
@@ -1104,22 +1546,16 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         </span>
       </div>
 
-      {/* Program info overlay - only visible when showing main video */}
-      {currentProgram && !showStandby && !showControls && (
-        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4 z-10 pointer-events-none">
-          <h3 className="text-lg font-bold mb-1">{currentProgram.title}</h3>
-          <div className="flex items-center text-sm text-gray-300 mb-2">
-            <Clock className="h-3 w-3 mr-1" />
-            <span>
-              {new Date(currentProgram.start_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-            </span>
-          </div>
-
-          <div className="w-full bg-gray-700 rounded-full h-1 mb-4">
-            <div className="bg-red-600 h-1 rounded-full" style={{ width: `${progress}%` }}></div>
-          </div>
+      {/* Sleep timer indicator */}
+      {sleepTimerMinutes && (
+        <div className="absolute top-4 right-20 bg-black/70 px-3 py-1 rounded-md z-10 flex items-center">
+          <Clock4 className="h-3 w-3 mr-1 text-red-500" />
+          <span className="text-xs font-medium">{formatSleepTimeRemaining()}</span>
         </div>
       )}
+
+      {/* Standby video element - always rendered but may be hidden */}
+      <video ref={standbyVideoRef} className="hidden" muted loop playsInline preload="auto" />
     </div>
   )
 }

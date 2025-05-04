@@ -378,3 +378,28 @@ export async function checkRLSStatus(bucketName: string): Promise<{
     }
   }
 }
+
+export async function saveWatchProgress(programId: number, currentTime: number): Promise<void> {
+  try {
+    const userId = "guest" // Replace with actual user ID if available
+    localStorage.setItem(`watch_progress_${userId}_${programId}`, currentTime.toString())
+    console.log(`Saved watch progress for program ${programId}: ${currentTime}s`)
+  } catch (error) {
+    console.error("Error saving watch progress:", error)
+    throw error
+  }
+}
+
+export async function getWatchProgress(programId: number): Promise<number | null> {
+  try {
+    const userId = "guest" // Replace with actual user ID if available
+    const savedProgress = localStorage.getItem(`watch_progress_${userId}_${programId}`)
+    if (savedProgress) {
+      return Number.parseFloat(savedProgress)
+    }
+    return null
+  } catch (error) {
+    console.error("Error getting watch progress:", error)
+    return null
+  }
+}
