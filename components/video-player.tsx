@@ -11,7 +11,7 @@ import {
   getDirectDownloadUrl,
 } from "@/lib/supabase"
 import type { Channel, Program } from "@/types"
-import { Clock, Calendar, RefreshCw, Info, Play } from "lucide-react"
+import { Clock, RefreshCw, Info, Play, Volume2, VolumeX, Maximize, Pause } from "lucide-react"
 import { cleanChannelName } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import Link from "next/link"
@@ -36,12 +36,20 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const [directUrl, setDirectUrl] = useState<string | null>(null)
   const [lastRefreshTime, setLastRefreshTime] = useState<number>(Date.now())
   const [playbackStartTime, setPlaybackStartTime] = useState<number | null>(null)
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [volume, setVolume] = useState(1)
+  const [isMuted, setIsMuted] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [showControls, setShowControls] = useState(true)
+  const [controlsTimeout, setControlsTimeout] = useState<NodeJS.Timeout | null>(null)
+
   const videoRef = useRef<HTMLVideoElement>(null)
   const standbyVideoRef = useRef<HTMLVideoElement>(null)
   const refreshTimerRef = useRef<NodeJS.Timeout | null>(null)
   const errorTimerRef = useRef<NodeJS.Timeout | null>(null)
   const standbyContainerRef = useRef<HTMLDivElement>(null)
   const mainContainerRef = useRef<HTMLDivElement>(null)
+  const videoContainerRef = useRef<HTMLDivElement>(null)
   const loadAttemptRef = useRef(0)
   const programChangeTimeRef = useRef<number | null>(null)
   const maxAttempts = 3
@@ -67,6 +75,112 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       standbyVideoRef.current.preload = "auto"
     }
   }, [standbyVideoUrl])
+
+  // Prevent context menu on video (right-click)
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault()
+    return false
+  }
+
+  // Handle mouse movement to show/hide controls
+  const handleMouseMove = () => {
+    setShowControls(true)
+
+    // Clear any existing timeout
+    if (controlsTimeout) {
+      clearTimeout(controlsTimeout)
+    }
+
+    // Set a new timeout to hide controls after 3 seconds of inactivity
+    const timeout = setTimeout(() => {
+      if (isPlaying) {
+        setShowControls(false)
+      }
+    }, 3000)
+
+    setControlsTimeout(timeout)
+  }
+
+  // Clean up the timeout when component unmounts
+  useEffect(() => {
+    return () => {
+      if (controlsTimeout) {
+        clearTimeout(controlsTimeout)
+      }
+    }
+  }, [controlsTimeout])
+
+  // Toggle play/pause
+  const togglePlay = () => {
+    if (!videoRef.current) return
+
+    if (videoRef.current.paused) {
+      videoRef.current.play()
+      setIsPlaying(true)
+    } else {
+      videoRef.current.pause()
+      setIsPlaying(false)
+    }
+  }
+
+  // Toggle mute
+  const toggleMute = () => {
+    if (!videoRef.current) return
+
+    const newMutedState = !videoRef.current.muted
+    videoRef.current.muted = newMutedState
+    setIsMuted(newMutedState)
+  }
+
+  // Handle volume change
+  const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!videoRef.current) return
+
+    const newVolume = Number.parseFloat(e.target.value)
+    videoRef.current.volume = newVolume
+    setVolume(newVolume)
+
+    if (newVolume === 0) {
+      videoRef.current.muted = true
+      setIsMuted(true)
+    } else if (isMuted) {
+      videoRef.current.muted = false
+      setIsMuted(false)
+    }
+  }
+
+  // Toggle fullscreen
+  const toggleFullscreen = () => {
+    if (!videoContainerRef.current) return
+
+    if (!document.fullscreenElement) {
+      videoContainerRef.current.requestFullscreen().catch((err) => {
+        console.error(`Error attempting to enable fullscreen: ${err.message}`)
+      })
+    } else {
+      document.exitFullscreen()
+    }
+  }
+
+  // Update fullscreen state when it changes
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement)
+    }
+
+    document.addEventListener("fullscreenchange", handleFullscreenChange)
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange)
+    }
+  }, [])
+
+  // Handle seeking
+  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!videoRef.current || !videoMetadata.loaded) return
+
+    const seekTime = (Number.parseFloat(e.target.value) / 100) * videoMetadata.duration
+    videoRef.current.currentTime = seekTime
+  }
 
   // Handle video error with improved error reporting
   const handleVideoError = async (e: React.SyntheticEvent<HTMLVideoElement, Event>) => {
@@ -349,6 +463,12 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const handleVideoStarted = () => {
     console.log("Video started playback")
     setPlaybackStartTime(Date.now())
+    setIsPlaying(true)
+  }
+
+  const handleVideoPaused = () => {
+    setIsPlaying(false)
+    setShowControls(true) // Always show controls when paused
   }
 
   const handleTimeUpdate = () => {
@@ -394,8 +514,16 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   // Handle video end event - load next program if available
   const handleVideoEnded = () => {
     console.log("Video ended, checking for next program")
+    setIsPlaying(false)
     // Force refresh to get the next program
     refreshCurrentProgram(true)
+  }
+
+  // Format time for display (MM:SS)
+  const formatTime = (timeInSeconds: number): string => {
+    const minutes = Math.floor(timeInSeconds / 60)
+    const seconds = Math.floor(timeInSeconds % 60)
+    return `${minutes}:${seconds < 10 ? "0" : ""}${seconds}`
   }
 
   // Update the loadInitialProgram logic in the useEffect
@@ -496,6 +624,9 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       }
       if (playbackCheckRef.current) {
         clearInterval(playbackCheckRef.current)
+      }
+      if (controlsTimeout) {
+        clearTimeout(controlsTimeout)
       }
     }
   }, [channel.id])
@@ -603,7 +734,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
   // Render both videos but control visibility with CSS
   return (
-    <div className="w-full aspect-video bg-black relative">
+    <div className="w-full aspect-video bg-black relative" ref={videoContainerRef} onMouseMove={handleMouseMove}>
       {/* Main video container - always rendered but may be hidden */}
       <div
         ref={mainContainerRef}
@@ -614,15 +745,95 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
           <video
             ref={videoRef}
             autoPlay
-            controls
+            className="w-full h-full"
+            onContextMenu={handleContextMenu}
             onError={handleVideoError}
             onLoadedData={handleVideoLoaded}
             onPlay={handleVideoStarted}
+            onPause={handleVideoPaused}
             onEnded={handleVideoEnded}
-            className="w-full h-full"
             onTimeUpdate={handleTimeUpdate}
             onLoadedMetadata={handleMetadataLoaded}
+            controlsList="nodownload nofullscreen"
+            disablePictureInPicture={false}
+            playsInline
           />
+        )}
+
+        {/* Custom video controls */}
+        {currentProgram && !showStandby && (
+          <div
+            className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4 transition-opacity duration-300 ${
+              showControls ? "opacity-100" : "opacity-0"
+            }`}
+            style={{ zIndex: 20 }}
+          >
+            {/* Progress bar */}
+            <div className="w-full flex items-center mb-2">
+              <input
+                type="range"
+                min="0"
+                max="100"
+                value={progress}
+                onChange={handleSeek}
+                className="w-full h-1 bg-gray-700 rounded-full appearance-none cursor-pointer"
+                style={{
+                  background: `linear-gradient(to right, #ef4444 0%, #ef4444 ${progress}%, #4b5563 ${progress}%, #4b5563 100%)`,
+                }}
+              />
+            </div>
+
+            {/* Controls row */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-4">
+                {/* Play/Pause button */}
+                <button
+                  onClick={togglePlay}
+                  className="text-white hover:text-gray-300 focus:outline-none"
+                  aria-label={isPlaying ? "Pause" : "Play"}
+                >
+                  {isPlaying ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6" />}
+                </button>
+
+                {/* Volume control */}
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={toggleMute}
+                    className="text-white hover:text-gray-300 focus:outline-none"
+                    aria-label={isMuted ? "Unmute" : "Mute"}
+                  >
+                    {isMuted || volume === 0 ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
+                  </button>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.1"
+                    value={volume}
+                    onChange={handleVolumeChange}
+                    className="w-20 h-1 bg-gray-700 rounded-full appearance-none cursor-pointer md:block hidden"
+                  />
+                </div>
+
+                {/* Time display */}
+                <div className="text-white text-sm">
+                  {videoRef.current ? formatTime(videoRef.current.currentTime) : "0:00"} /
+                  {videoMetadata.loaded ? formatTime(videoMetadata.duration) : "0:00"}
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-4">
+                {/* Fullscreen button */}
+                <button
+                  onClick={toggleFullscreen}
+                  className="text-white hover:text-gray-300 focus:outline-none"
+                  aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+                >
+                  <Maximize className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
 
@@ -862,8 +1073,15 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         )}
       </div>
 
+      {/* Watermark - always visible */}
+      <div className="absolute top-4 right-4 bg-black/30 px-2 py-1 rounded-md z-10 pointer-events-none">
+        <span className="text-xs font-medium text-white/70">
+          © {new Date().getFullYear()} {channel.name}
+        </span>
+      </div>
+
       {/* Program info overlay - only visible when showing main video */}
-      {currentProgram && !showStandby && (
+      {currentProgram && !showStandby && !showControls && (
         <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4 z-10 pointer-events-none">
           <h3 className="text-lg font-bold mb-1">{currentProgram.title}</h3>
           <div className="flex items-center text-sm text-gray-300 mb-2">
@@ -876,25 +1094,6 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
           <div className="w-full bg-gray-700 rounded-full h-1 mb-4">
             <div className="bg-red-600 h-1 rounded-full" style={{ width: `${progress}%` }}></div>
           </div>
-
-          {upcomingPrograms.length > 0 && (
-            <div className="hidden md:block">
-              <h4 className="text-sm font-semibold mb-2 flex items-center">
-                <Calendar className="h-3 w-3 mr-1" />
-                Coming Up Next
-              </h4>
-              <div className="flex space-x-4 overflow-x-auto pb-2">
-                {upcomingPrograms.slice(0, 3).map((program, index) => (
-                  <div key={index} className="min-w-[200px] bg-black/50 p-2 rounded">
-                    <p className="font-medium text-sm">{program.title}</p>
-                    <p className="text-xs text-gray-400">
-                      {new Date(program.start_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       )}
     </div>
