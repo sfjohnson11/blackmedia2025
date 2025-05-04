@@ -3,7 +3,18 @@
 import type React from "react"
 import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
-import { Loader2, Play, Pause, Volume2, VolumeX, Maximize, ChevronLeft, AlertTriangle, RefreshCw } from "lucide-react"
+import {
+  Loader2,
+  Play,
+  Pause,
+  Volume2,
+  VolumeX,
+  Maximize,
+  ChevronLeft,
+  AlertTriangle,
+  RefreshCw,
+  Clock,
+} from "lucide-react"
 import {
   getDirectDownloadUrl,
   saveWatchProgress,
@@ -39,12 +50,17 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const [errorDetails, setErrorDetails] = useState<string | null>(null)
   const [retryCount, setRetryCount] = useState(0)
   const [programCheckInterval, setProgramCheckInterval] = useState<NodeJS.Timeout | null>(null)
+  const [hourlyCheckInterval, setHourlyCheckInterval] = useState<NodeJS.Timeout | null>(null)
   const [lastProgramCheck, setLastProgramCheck] = useState<number>(Date.now())
+  const [currentTime, setCurrentTime] = useState<Date>(new Date())
+  const [forceRefreshTriggered, setForceRefreshTriggered] = useState(false)
+  const [scheduledProgramId, setScheduledProgramId] = useState<number | null>(initialProgram?.id || null)
   const maxRetries = 3
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const standbyVideoRef = useRef<HTMLVideoElement>(null)
   const videoContainerRef = useRef<HTMLDivElement>(null)
+  const programSwitchInProgressRef = useRef(false)
 
   const cleanedName = cleanChannelName(channel.name)
 
@@ -58,6 +74,18 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     "https://storage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
     "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
   ]
+
+  // Update current time every second
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date())
+    }, 1000)
+
+    return () => clearInterval(timer)
+  }, [])
+
+  // Format current time for display
+  const formattedTime = currentTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
 
   // Prevent context menu on video (right-click)
   const handleContextMenu = (e: React.MouseEvent) => {
@@ -93,8 +121,11 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       if (programCheckInterval) {
         clearInterval(programCheckInterval)
       }
+      if (hourlyCheckInterval) {
+        clearInterval(hourlyCheckInterval)
+      }
     }
-  }, [controlsTimeout, programCheckInterval])
+  }, [controlsTimeout, programCheckInterval, hourlyCheckInterval])
 
   // Toggle play/pause
   const togglePlay = () => {
@@ -292,8 +323,82 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     }
   }
 
+  // Check if it's time for a scheduled program change
+  const checkForScheduledProgramChange = async () => {
+    // Don't check if we're already in the process of switching programs
+    if (programSwitchInProgressRef.current) {
+      return
+    }
+
+    const now = new Date()
+
+    // Log the current time for debugging
+    console.log(`Checking for scheduled program change at ${now.toLocaleTimeString()}`)
+
+    // Check if we're at the top of the hour (or within 1 minute after)
+    const isTopOfHour = now.getMinutes() === 0 || now.getMinutes() === 1
+
+    // If it's the top of the hour and we haven't triggered a refresh yet
+    if (isTopOfHour && !forceRefreshTriggered) {
+      console.log("Top of the hour detected - forcing program refresh")
+      setForceRefreshTriggered(true)
+
+      // Force a program refresh
+      await forceRefreshProgram()
+    }
+    // Reset the flag when we're no longer at the top of the hour
+    else if (!isTopOfHour && forceRefreshTriggered) {
+      setForceRefreshTriggered(false)
+    }
+  }
+
+  // Force refresh the current program
+  const forceRefreshProgram = async () => {
+    // Set flag to prevent multiple simultaneous program switches
+    programSwitchInProgressRef.current = true
+
+    console.log("Forcing program refresh to check for scheduled changes")
+
+    try {
+      const { program } = await getCurrentProgram(channel.id)
+      const { programs } = await getUpcomingPrograms(channel.id)
+
+      // Update upcoming programs
+      setUpcomingPrograms(programs)
+
+      // If we have a new program, switch to it
+      if (program && (!currentProgram || program.id !== currentProgram.id)) {
+        console.log(`New scheduled program detected: ${program.title} (ID: ${program.id})`)
+        console.log(`Previous program: ${currentProgram?.title || "None"} (ID: ${currentProgram?.id || "None"})`)
+
+        // Save current progress before switching
+        if (currentProgram && videoRef.current) {
+          await saveWatchProgress(currentProgram.id, videoRef.current.currentTime)
+        }
+
+        // Update the scheduled program ID
+        setScheduledProgramId(program.id)
+
+        // Switch to the new program
+        await loadProgram(program)
+      } else {
+        console.log("No program change detected during scheduled check")
+      }
+    } catch (err) {
+      console.error("Error during scheduled program check:", err)
+    } finally {
+      // Clear the flag
+      programSwitchInProgressRef.current = false
+    }
+  }
+
   // Check for program updates
   const checkForProgramUpdates = async () => {
+    // Don't check if we're already in the process of switching programs
+    if (programSwitchInProgressRef.current) {
+      return
+    }
+
     const now = Date.now()
     const timeSinceLastCheck = now - lastProgramCheck
 
@@ -306,17 +411,24 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     console.log("Checking for program updates...")
 
     try {
+      // Set flag to prevent multiple simultaneous program switches
+      programSwitchInProgressRef.current = true
+
       const { program } = await getCurrentProgram(channel.id)
       const { programs } = await getUpcomingPrograms(channel.id)
 
       // If we have a new program, switch to it
       if (program && (!currentProgram || program.id !== currentProgram.id)) {
         console.log(`New program detected: ${program.title} (ID: ${program.id})`)
+        console.log(`Previous program: ${currentProgram?.title || "None"} (ID: ${currentProgram?.id || "None"})`)
 
         // Save current progress before switching
         if (currentProgram && videoRef.current) {
           await saveWatchProgress(currentProgram.id, videoRef.current.currentTime)
         }
+
+        // Update the scheduled program ID
+        setScheduledProgramId(program.id)
 
         // Switch to the new program
         await loadProgram(program)
@@ -327,6 +439,9 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       }
     } catch (err) {
       console.error("Error checking for program updates:", err)
+    } finally {
+      // Clear the flag
+      programSwitchInProgressRef.current = false
     }
   }
 
@@ -413,11 +528,19 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
   // Refresh current program
   const refreshCurrentProgram = async () => {
+    // Don't refresh if we're already in the process of switching programs
+    if (programSwitchInProgressRef.current) {
+      return
+    }
+
     setIsLoading(true)
     setError(null)
     setRetryCount(0)
 
     try {
+      // Set flag to prevent multiple simultaneous program switches
+      programSwitchInProgressRef.current = true
+
       const { program } = await getCurrentProgram(channel.id)
       const { programs } = await getUpcomingPrograms(channel.id)
 
@@ -439,6 +562,11 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
       // If we have a new program, load it
       if (!currentProgram || program.id !== currentProgram.id) {
+        console.log(`New program detected during refresh: ${program.title} (ID: ${program.id})`)
+
+        // Update the scheduled program ID
+        setScheduledProgramId(program.id)
+
         await loadProgram(program)
       } else {
         // Just refresh the current program
@@ -448,6 +576,9 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       console.error(`Error refreshing program for channel ${channel.id}:`, e)
       setError(`Failed to refresh program: ${e}`)
       setIsLoading(false)
+    } finally {
+      // Clear the flag
+      programSwitchInProgressRef.current = false
     }
   }
 
@@ -492,6 +623,9 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
     // Check for a new program
     try {
+      // Set flag to prevent multiple simultaneous program switches
+      programSwitchInProgressRef.current = true
+
       const { program } = await getCurrentProgram(channel.id)
       const { programs } = await getUpcomingPrograms(channel.id)
 
@@ -501,10 +635,18 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       // If we have a new program, load it
       if (program && (!currentProgram || program.id !== currentProgram.id)) {
         console.log(`Loading next program: ${program.title} (ID: ${program.id})`)
+
+        // Update the scheduled program ID
+        setScheduledProgramId(program.id)
+
         await loadProgram(program)
       } else if (programs.length > 0) {
         // If no new current program but we have upcoming programs, load the first one
         console.log(`Loading first upcoming program: ${programs[0].title} (ID: ${programs[0].id})`)
+
+        // Update the scheduled program ID
+        setScheduledProgramId(programs[0].id)
+
         await loadProgram(programs[0])
       } else {
         // No new programs available, refresh to check again
@@ -515,6 +657,9 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       console.error("Error handling video end:", err)
       setLoadError(`Error loading next program: ${err instanceof Error ? err.message : String(err)}`)
       refreshCurrentProgram()
+    } finally {
+      // Clear the flag
+      programSwitchInProgressRef.current = false
     }
   }
 
@@ -537,6 +682,9 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     // If we have an initial program, try to load it
     if (initialProgram) {
       loadProgram(initialProgram)
+
+      // Set the scheduled program ID
+      setScheduledProgramId(initialProgram.id)
     } else {
       // No initial program, refresh to get one
       console.log("No initial program, refreshing...")
@@ -556,9 +704,22 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
     setProgramCheckInterval(checkInterval)
 
+    // Set up hourly check interval - check every 10 seconds for top-of-hour changes
+    const hourlyInterval = setInterval(() => {
+      checkForScheduledProgramChange()
+    }, 10000) // 10 seconds
+
+    setHourlyCheckInterval(hourlyInterval)
+
+    // Force an immediate check
+    checkForScheduledProgramChange()
+
     return () => {
       if (checkInterval) {
         clearInterval(checkInterval)
+      }
+      if (hourlyInterval) {
+        clearInterval(hourlyInterval)
       }
     }
   }, [channel.id])
@@ -575,6 +736,12 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         >
           <ChevronLeft className="h-6 w-6" />
         </button>
+
+        {/* Current time display */}
+        <div className="absolute top-4 right-4 z-10 bg-black/50 px-3 py-1 rounded-full flex items-center">
+          <Clock className="h-4 w-4 mr-1" />
+          <span className="text-sm">{formattedTime}</span>
+        </div>
 
         {/* Loading state */}
         {isLoading && (
