@@ -4,7 +4,6 @@ import type React from "react"
 import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { Loader2, Play, Pause, Volume2, VolumeX, Maximize, ChevronLeft, AlertTriangle, RefreshCw } from "lucide-react"
-import { Progress } from "@/components/ui/progress"
 import {
   getLiveStreamUrl,
   getDirectDownloadUrl,
@@ -758,6 +757,15 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const handleTimeUpdate = () => {
     if (videoRef.current) {
       const currentTime = videoRef.current.currentTime
+      const duration = videoRef.current.duration
+
+      // Update progress percentage for the progress bar
+      if (duration) {
+        const newProgress = (currentTime / duration) * 100
+        setProgress(newProgress)
+        setProgressPercent(newProgress)
+      }
+
       // Only update if time has actually advanced (prevents false stall detection)
       if (currentTime > lastPlaybackTime) {
         setLastPlaybackTime(currentTime)
@@ -938,7 +946,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     if (!currentProgram) return
 
     const progressTimer = setInterval(() => {
-      if (videoRef.current && !videoRef.current.paused) {
+      if (videoRef.current) {
         // Calculate progress based on video element's currentTime and duration
         // This is more accurate than using the database duration
         const { currentTime, duration } = videoRef.current
@@ -1125,11 +1133,10 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         )}
 
         {/* Video element */}
-        <div className="relative w-full aspect-video bg-black">
+        <div className="relative w-full aspect-video bg-black" onMouseMove={handleMouseMove} onClick={togglePlayPause}>
           <video
             ref={videoRef}
             className="w-full h-full"
-            controls
             autoPlay
             playsInline
             onContextMenu={handleContextMenu}
@@ -1244,29 +1251,91 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         </div>
 
         {/* Video controls overlay */}
-        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4">
+        <div
+          className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4"
+          style={{ zIndex: 10 }}
+          onClick={(e) => e.stopPropagation()}
+        >
           {/* Progress bar for non-live videos */}
-          {!isLive && currentProgram && (
+          {!isLive && currentProgram && videoMetadata.loaded && (
             <div className="mb-4">
-              <Progress value={progressPercent} className="h-1" />
+              <input
+                type="range"
+                min="0"
+                max="100"
+                value={progress}
+                onChange={handleSeek}
+                className="w-full h-1 bg-gray-600 rounded-lg appearance-none cursor-pointer"
+                style={{
+                  background: `linear-gradient(to right, #ef4444 0%, #ef4444 ${progress}%, #4b5563 ${progress}%, #4b5563 100%)`,
+                }}
+              />
+              {videoRef.current && (
+                <div className="flex justify-between text-xs text-gray-300 mt-1">
+                  <span>{formatTime(videoRef.current.currentTime || 0)}</span>
+                  <span>{formatTime(videoRef.current.duration || 0)}</span>
+                </div>
+              )}
             </div>
           )}
 
           {/* Control buttons */}
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4">
-              <button onClick={togglePlayPause} className="hover:text-red-500 transition-colors">
+              <button
+                onClick={togglePlayPause}
+                className="hover:text-red-500 transition-colors bg-black/30 p-2 rounded-full"
+              >
                 {isPlaying ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6" />}
               </button>
-              <button onClick={toggleMute} className="hover:text-red-500 transition-colors">
+              <button
+                onClick={toggleMute}
+                className="hover:text-red-500 transition-colors bg-black/30 p-2 rounded-full"
+              >
                 {isMuted ? <VolumeX className="h-6 w-6" /> : <Volume2 className="h-6 w-6" />}
               </button>
-              {isLive && <span className="text-red-500 text-sm font-medium">LIVE</span>}
-              {fallbackMode && <span className="text-yellow-500 text-sm font-medium">FALLBACK MODE</span>}
+
+              {/* Volume slider */}
+              <div className="hidden md:flex items-center">
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={volume}
+                  onChange={handleVolumeChange}
+                  className="w-20 h-1 bg-gray-600 rounded-lg appearance-none cursor-pointer"
+                />
+              </div>
+
+              {isLive && <span className="text-red-500 text-sm font-medium bg-black/30 px-2 py-1 rounded">LIVE</span>}
+              {fallbackMode && (
+                <span className="text-yellow-500 text-sm font-medium bg-black/30 px-2 py-1 rounded">FALLBACK</span>
+              )}
             </div>
-            <button onClick={toggleFullscreen} className="hover:text-red-500 transition-colors">
-              <Maximize className="h-6 w-6" />
-            </button>
+
+            <div className="flex items-center space-x-2">
+              {/* Playback speed (desktop only) */}
+              <div className="hidden md:block">
+                <select
+                  value={playbackRate}
+                  onChange={(e) => changePlaybackSpeed(Number(e.target.value))}
+                  className="bg-black/30 text-white text-sm rounded px-2 py-1"
+                >
+                  <option value="0.5">0.5x</option>
+                  <option value="1">1x</option>
+                  <option value="1.5">1.5x</option>
+                  <option value="2">2x</option>
+                </select>
+              </div>
+
+              <button
+                onClick={toggleFullscreen}
+                className="hover:text-red-500 transition-colors bg-black/30 p-2 rounded-full"
+              >
+                <Maximize className="h-6 w-6" />
+              </button>
+            </div>
           </div>
         </div>
       </div>
