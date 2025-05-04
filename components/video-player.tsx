@@ -666,7 +666,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     ) {
       console.log("Format error detected, trying different MIME type")
 
-      if (videoUrl && tryNextMimeType(videoUrl)) {
+      if (videoUrl && tryNextMimeType(videoUrl, videoRef, setCurrentMimeType, setMimeTypeAttempts, mimeTypeAttempts)) {
         // Successfully tried a different MIME type, wait for result
         return
       }
@@ -1495,68 +1495,21 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
                     errorMessage = videoError.message || `Error code: ${videoError.code}`
                 }
 
-                // For format errors, try different MIME types first
+                // For format errors, try a direct approach
                 if (
                   videoError.code === MediaError.MEDIA_ERR_DECODE ||
                   videoError.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED
                 ) {
-                  console.log("Format error detected, trying different MIME type")
+                  console.log("Format error detected, trying simplified approach")
 
-                  if (videoUrl && tryNextMimeType(videoUrl)) {
-                    // Successfully tried a different MIME type, wait for result
-                    return
-                  }
+                  if (videoUrl) {
+                    // Try with a cache buster
+                    const cacheBustedUrl = `${videoUrl.split("?")[0]}?t=${Date.now()}`
+                    console.log(`Retrying with cache buster: ${cacheBustedUrl}`)
 
-                  // If we've tried all MIME types, try alternative format
-                  if (!formatFallbackAttempted && videoUrl) {
-                    setFormatFallbackAttempted(true)
-                    console.log("Trying alternative format")
-
-                    // Try channel-specific URL first
-                    const channelSpecificUrl = getChannelSpecificUrl(channel.id, videoUrl)
-
-                    if (channelSpecificUrl) {
-                      console.log(`Using channel-specific URL for channel ${channel.id}: ${channelSpecificUrl}`)
-                      setVideoUrl(channelSpecificUrl)
-                      setMimeTypeAttempts([])
-
-                      if (videoRef.current) {
-                        videoRef.current.src = channelSpecificUrl
-                        videoRef.current.load()
-                        return
-                      }
-                    }
-
-                    // Try to get a direct download URL again
-                    if (currentProgram) {
-                      console.log("Trying to get direct download URL again")
-                      getDirectDownloadUrl(currentProgram.mp4_url, channel.id)
-                        .then((url) => {
-                          if (url && videoRef.current) {
-                            console.log(`Got new direct URL: ${url}`)
-                            const cacheBustedUrl = `${url}?t=${Date.now()}`
-                            videoRef.current.src = cacheBustedUrl
-                            videoRef.current.load()
-                          } else {
-                            // Increment attempt counter but don't go to fallback yet
-                            loadAttemptRef.current += 1
-                            console.log(`No direct URL found, attempt ${loadAttemptRef.current} of ${maxAttempts}`)
-
-                            // Only use fallback if we've tried enough times
-                            if (loadAttemptRef.current >= maxAttempts) {
-                              tryFallbackVideo()
-                            }
-                          }
-                        })
-                        .catch((err) => {
-                          console.error("Error getting direct URL:", err)
-                          loadAttemptRef.current += 1
-
-                          // Only use fallback if we've tried enough times
-                          if (loadAttemptRef.current >= maxAttempts) {
-                            tryFallbackVideo()
-                          }
-                        })
+                    if (videoRef.current) {
+                      videoRef.current.src = cacheBustedUrl
+                      videoRef.current.load()
                       return
                     }
                   }
@@ -1566,7 +1519,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
               console.error("Video error:", errorMessage)
               setLoadError(`Error loading video: ${errorMessage}`)
 
-              // Increment attempt counter but don't go to fallback yet
+              // Increment attempt counter
               loadAttemptRef.current += 1
               console.log(`Video error, attempt ${loadAttemptRef.current} of ${maxAttempts}`)
 
@@ -1594,7 +1547,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
               console.log("Video playback has stalled")
             }}
           >
-            {videoUrl && <source src={videoUrl} type={currentMimeType} />}
+            {videoUrl && <source src={videoUrl} type="video/mp4" />}
             Your browser does not support the video tag.
           </video>
 
@@ -1758,32 +1711,25 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 }
 
 // Helper function to try the next MIME type in the list
-const tryNextMimeType = (url: string): boolean => {
-  if (!url) return false
+const tryNextMimeType = (
+  url: string,
+  videoRef: React.RefObject<HTMLVideoElement>,
+  setCurrentMimeType: Function,
+  setMimeTypeAttempts: Function,
+  mimeTypeAttempts: string[],
+): boolean => {
+  if (!url || !videoRef.current) return false
 
-  const allMimeTypes = getAllPossibleMimeTypes(url)
+  // Simplified: just try MP4 format since that's all we're supporting
+  const mimeType = "video/mp4"
 
-  // Get the MIME types we haven't tried yet
-  const remainingMimeTypes = allMimeTypes.filter((mimeType) => !mimeTypeAttempts.includes(mimeType))
+  console.log(`Setting MIME type to: ${mimeType}`)
 
-  if (remainingMimeTypes.length === 0) {
-    console.log("No more MIME types to try")
-    return false
-  }
-
-  // Get the next MIME type to try
-  const nextMimeType = remainingMimeTypes[0]
-
-  console.log(`Trying MIME type: ${nextMimeType}`)
-
-  // Update the state with the new MIME type and the attempted MIME types
-  setCurrentMimeType(nextMimeType)
-  setMimeTypeAttempts((prevAttempts) => [...prevAttempts, nextMimeType])
+  // Update the state with the new MIME type
+  setCurrentMimeType(mimeType)
 
   // Reload the video with the new MIME type
-  if (videoRef.current) {
-    videoRef.current.load()
-  }
+  videoRef.current.load()
 
   return true
 }
