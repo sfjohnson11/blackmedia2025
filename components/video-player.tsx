@@ -36,7 +36,11 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const [showControls, setShowControls] = useState(true)
   const [controlsTimeout, setControlsTimeout] = useState<NodeJS.Timeout | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [showNextProgram, setShowNextProgram] = useState(false)
+  const [errorDetails, setErrorDetails] = useState<string | null>(null)
+  const [retryCount, setRetryCount] = useState(0)
+  const [programCheckInterval, setProgramCheckInterval] = useState<NodeJS.Timeout | null>(null)
+  const [lastProgramCheck, setLastProgramCheck] = useState<number>(Date.now())
+  const maxRetries = 3
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const standbyVideoRef = useRef<HTMLVideoElement>(null)
@@ -47,6 +51,13 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   // Standby video URL
   const standbyVideoUrl =
     "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/standby_blacktruthtv-D7yZUERL2zhjE71Llxul69gbPLxGES.mp4"
+
+  // Fallback video URLs - MP4 only
+  const fallbackVideoUrls = [
+    "https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+    "https://storage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
+    "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
+  ]
 
   // Prevent context menu on video (right-click)
   const handleContextMenu = (e: React.MouseEvent) => {
@@ -79,8 +90,11 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       if (controlsTimeout) {
         clearTimeout(controlsTimeout)
       }
+      if (programCheckInterval) {
+        clearInterval(programCheckInterval)
+      }
     }
-  }, [controlsTimeout])
+  }, [controlsTimeout, programCheckInterval])
 
   // Toggle play/pause
   const togglePlay = () => {
@@ -157,11 +171,69 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     videoRef.current.currentTime = seekTime
   }
 
-  // Handle video error
-  const handleVideoError = () => {
-    console.error("Video error occurred")
-    setLoadError("Error loading video. Please try again.")
+  // Try fallback videos if all else fails
+  const tryFallbackVideo = () => {
+    if (!videoRef.current) return
+
+    console.log("Using fallback video")
+    const fallbackIndex = retryCount % fallbackVideoUrls.length
+    const fallbackUrl = fallbackVideoUrls[fallbackIndex]
+
+    console.log(`Using fallback video #${fallbackIndex + 1}: ${fallbackUrl}`)
+
+    videoRef.current.src = fallbackUrl
+    videoRef.current.load()
+    setVideoUrl(fallbackUrl)
+    setShowStandby(false)
+    setLoadError(`Using fallback video while we try to fix the issue. (Attempt ${retryCount + 1})`)
+    setRetryCount((prev) => prev + 1)
+  }
+
+  // Handle video error with improved error reporting
+  const handleVideoError = (e: React.SyntheticEvent<HTMLVideoElement, Event>) => {
+    const target = e.target as HTMLVideoElement
+    let errorMessage = "Unknown error"
+
+    console.log(`Video error for channel ${channel.id}, currentProgram:`, currentProgram)
+
+    if (target.error) {
+      switch (target.error.code) {
+        case MediaError.MEDIA_ERR_ABORTED:
+          errorMessage = "The fetching process was aborted by the user"
+          break
+        case MediaError.MEDIA_ERR_NETWORK:
+          errorMessage = "Network error - video download failed"
+          break
+        case MediaError.MEDIA_ERR_DECODE:
+          errorMessage = "Video decoding failed - format may be unsupported"
+          break
+        case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
+          errorMessage = "Video not found (404) or access denied"
+          break
+        default:
+          errorMessage = `Error code: ${target.error.code}`
+      }
+
+      if (target.error.message) {
+        errorMessage += ` - ${target.error.message}`
+      }
+    }
+
+    console.error("Error loading video:", errorMessage)
+    if (target.src) {
+      console.error("Failed URL:", target.src)
+    }
+
+    setErrorDetails(errorMessage)
+    setLoadError(`Error loading video: ${errorMessage}`)
     setIsLoading(false)
+
+    // If we've tried a few times with the original video, use a fallback
+    if (retryCount >= maxRetries) {
+      tryFallbackVideo()
+    } else {
+      setRetryCount((prev) => prev + 1)
+    }
   }
 
   // Function to retry playing the current video
@@ -170,6 +242,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
     setIsLoading(true)
     setLoadError(null)
+    setErrorDetails(null)
 
     try {
       // Try to get a direct download URL
@@ -177,43 +250,178 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
       if (url) {
         console.log(`Retrying with direct URL: ${url}`)
-        videoRef.current.src = url
+
+        // Add cache-busting parameter
+        const cacheBustedUrl = `${url}?t=${Date.now()}`
+
+        videoRef.current.src = cacheBustedUrl
         videoRef.current.load()
-        setVideoUrl(url)
+        setVideoUrl(cacheBustedUrl)
         setShowStandby(false)
       } else {
         console.error("Could not find a working URL")
         setLoadError("Could not find a working URL for this video")
-        setShowStandby(true)
-        if (standbyVideoRef.current) {
-          standbyVideoRef.current.play().catch((e) => {
-            console.error("Failed to play standby video:", e)
-          })
+
+        // Try the raw mp4_url as a fallback
+        if (currentProgram.mp4_url) {
+          console.log(`Trying raw mp4_url: ${currentProgram.mp4_url}`)
+          videoRef.current.src = currentProgram.mp4_url
+          videoRef.current.load()
+          setVideoUrl(currentProgram.mp4_url)
+        } else {
+          setShowStandby(true)
+          if (standbyVideoRef.current) {
+            standbyVideoRef.current.play().catch((e) => {
+              console.error("Failed to play standby video:", e)
+            })
+          }
         }
       }
     } catch (err) {
       console.error("Error in retry:", err)
       setLoadError(`Retry failed: ${err instanceof Error ? err.message : String(err)}`)
+
+      // If retry fails, try fallback video
+      if (retryCount >= maxRetries) {
+        tryFallbackVideo()
+      } else {
+        setRetryCount((prev) => prev + 1)
+      }
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  // Check for program updates
+  const checkForProgramUpdates = async () => {
+    const now = Date.now()
+    const timeSinceLastCheck = now - lastProgramCheck
+
+    // Only check every 30 seconds to avoid too many API calls
+    if (timeSinceLastCheck < 30000) {
+      return
+    }
+
+    setLastProgramCheck(now)
+    console.log("Checking for program updates...")
+
+    try {
+      const { program } = await getCurrentProgram(channel.id)
+      const { programs } = await getUpcomingPrograms(channel.id)
+
+      // If we have a new program, switch to it
+      if (program && (!currentProgram || program.id !== currentProgram.id)) {
+        console.log(`New program detected: ${program.title} (ID: ${program.id})`)
+
+        // Save current progress before switching
+        if (currentProgram && videoRef.current) {
+          await saveWatchProgress(currentProgram.id, videoRef.current.currentTime)
+        }
+
+        // Switch to the new program
+        await loadProgram(program)
+        setUpcomingPrograms(programs)
+      } else {
+        // Just update the upcoming programs list
+        setUpcomingPrograms(programs)
+      }
+    } catch (err) {
+      console.error("Error checking for program updates:", err)
+    }
+  }
+
+  // Load a specific program
+  const loadProgram = async (program: Program) => {
+    console.log(`Loading program: ${program.title} (ID: ${program.id})`)
+
+    setIsLoading(true)
+    setCurrentProgram(program)
+    setRetryCount(0)
+    setLoadError(null)
+    setErrorDetails(null)
+
+    if (!videoRef.current) {
+      setIsLoading(false)
+      return
+    }
+
+    try {
+      // Get a direct URL
+      const url = await getDirectDownloadUrl(program.mp4_url, channel.id)
+
+      if (url) {
+        console.log(`Found direct URL: ${url}`)
+
+        // Add cache-busting parameter
+        const cacheBustedUrl = `${url}?t=${Date.now()}`
+
+        videoRef.current.src = cacheBustedUrl
+        videoRef.current.load()
+        setVideoUrl(cacheBustedUrl)
+        setShowStandby(false)
+
+        // Try to restore previous watch position
+        const savedProgress = await getWatchProgress(program.id)
+        if (savedProgress && savedProgress > 10) {
+          videoRef.current.currentTime = savedProgress
+          console.log(`Restored watch progress: ${savedProgress}s`)
+        }
+
+        // Auto-play the new program
+        try {
+          await videoRef.current.play()
+          setIsPlaying(true)
+        } catch (playError) {
+          console.error("Error auto-playing new program:", playError)
+        }
+      } else {
+        // Try the raw mp4_url as a fallback
+        console.log(`No direct URL found, trying raw mp4_url: ${program.mp4_url}`)
+
+        if (program.mp4_url) {
+          videoRef.current.src = program.mp4_url
+          videoRef.current.load()
+          setVideoUrl(program.mp4_url)
+          setShowStandby(false)
+
+          // Auto-play the new program
+          try {
+            await videoRef.current.play()
+            setIsPlaying(true)
+          } catch (playError) {
+            console.error("Error auto-playing new program:", playError)
+          }
+        } else {
+          console.error("No mp4_url available for this program")
+          setLoadError("No video URL available for this program")
+          setShowStandby(true)
+        }
+      }
+    } catch (err) {
+      console.error("Error loading program:", err)
+      setLoadError(`Error loading video: ${err instanceof Error ? err.message : String(err)}`)
+
+      if (retryCount >= maxRetries) {
+        tryFallbackVideo()
+      } else {
+        setRetryCount((prev) => prev + 1)
+      }
     } finally {
       setIsLoading(false)
     }
   }
 
   // Refresh current program
-  const refreshCurrentProgram = async (forceRefresh = false) => {
+  const refreshCurrentProgram = async () => {
     setIsLoading(true)
     setError(null)
+    setRetryCount(0)
 
     try {
       const { program } = await getCurrentProgram(channel.id)
       const { programs } = await getUpcomingPrograms(channel.id)
 
-      // Only update the current program if it's different or this is a forced refresh
-      if (forceRefresh || program?.id !== currentProgram?.id) {
-        console.log(`Program change: ${currentProgram?.title} -> ${program?.title}`)
-        setCurrentProgram(program)
-      }
-
+      // Update upcoming programs list
       setUpcomingPrograms(programs)
 
       // If no program exists, show standby
@@ -229,49 +437,16 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         return
       }
 
-      // For regular channels, try to get a direct download URL
-      if (program && videoRef.current) {
-        try {
-          // Get a direct URL
-          const url = await getDirectDownloadUrl(program.mp4_url, channel.id)
-
-          if (url) {
-            console.log(`Found direct URL: ${url}`)
-            videoRef.current.src = url
-            videoRef.current.load()
-            setShowStandby(false)
-            setVideoUrl(url)
-          } else {
-            // If we couldn't get a direct URL, try using the raw mp4_url as a fallback
-            console.log(`No direct URL found, trying raw mp4_url as fallback: ${program.mp4_url}`)
-
-            // Check if mp4_url is a valid URL or path
-            if (program.mp4_url && (program.mp4_url.startsWith("http") || program.mp4_url.includes("/"))) {
-              videoRef.current.src = program.mp4_url
-              videoRef.current.load()
-              setShowStandby(false)
-              setVideoUrl(program.mp4_url)
-            } else {
-              console.error("Could not find a working URL and mp4_url is not usable")
-              setLoadError("Could not find a working URL for this video")
-              setShowStandby(true)
-              if (standbyVideoRef.current) {
-                standbyVideoRef.current.play().catch((e) => {
-                  console.error("Failed to play standby video:", e)
-                })
-              }
-            }
-          }
-        } catch (err) {
-          console.error("Error getting direct URL:", err)
-          setLoadError("Error loading video. Please try again.")
-          setShowStandby(true)
-        }
+      // If we have a new program, load it
+      if (!currentProgram || program.id !== currentProgram.id) {
+        await loadProgram(program)
+      } else {
+        // Just refresh the current program
+        await loadProgram(program)
       }
     } catch (e) {
       console.error(`Error refreshing program for channel ${channel.id}:`, e)
       setError(`Failed to refresh program: ${e}`)
-    } finally {
       setIsLoading(false)
     }
   }
@@ -306,17 +481,40 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     }
   }
 
-  // Handle video end event - show upcoming program info
-  const handleVideoEnded = () => {
-    console.log("Video ended, showing upcoming program info")
-    setIsPlaying(false)
+  // Handle video end event - automatically switch to next program
+  const handleVideoEnded = async () => {
+    console.log("Video ended, checking for next program")
 
-    // Show the next program info if available
-    if (upcomingPrograms.length > 0) {
-      setShowNextProgram(true)
-    } else {
-      // If no upcoming programs, refresh to check for new content
-      refreshCurrentProgram(true)
+    // Save final watch progress
+    if (currentProgram && videoRef.current) {
+      await saveWatchProgress(currentProgram.id, videoRef.current.duration || 0)
+    }
+
+    // Check for a new program
+    try {
+      const { program } = await getCurrentProgram(channel.id)
+      const { programs } = await getUpcomingPrograms(channel.id)
+
+      // Update upcoming programs list
+      setUpcomingPrograms(programs)
+
+      // If we have a new program, load it
+      if (program && (!currentProgram || program.id !== currentProgram.id)) {
+        console.log(`Loading next program: ${program.title} (ID: ${program.id})`)
+        await loadProgram(program)
+      } else if (programs.length > 0) {
+        // If no new current program but we have upcoming programs, load the first one
+        console.log(`Loading first upcoming program: ${programs[0].title} (ID: ${programs[0].id})`)
+        await loadProgram(programs[0])
+      } else {
+        // No new programs available, refresh to check again
+        console.log("No next program available, refreshing...")
+        refreshCurrentProgram()
+      }
+    } catch (err) {
+      console.error("Error handling video end:", err)
+      setLoadError(`Error loading next program: ${err instanceof Error ? err.message : String(err)}`)
+      refreshCurrentProgram()
     }
   }
 
@@ -333,45 +531,16 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
   // Initial setup
   useEffect(() => {
+    console.log("Initial setup for channel:", channel.id)
+    console.log("Initial program:", initialProgram)
+
     // If we have an initial program, try to load it
-    if (currentProgram && videoRef.current) {
-      const loadInitialProgram = async () => {
-        setIsLoading(true)
-
-        try {
-          // Get a direct URL
-          const url = await getDirectDownloadUrl(currentProgram.mp4_url, channel.id)
-
-          if (url) {
-            console.log(`Found direct URL for initial program: ${url}`)
-            videoRef.current.src = url
-            videoRef.current.load()
-            setVideoUrl(url)
-
-            // Try to restore previous watch position
-            const savedProgress = await getWatchProgress(currentProgram.id)
-            if (savedProgress && savedProgress > 10) {
-              videoRef.current.currentTime = savedProgress
-              console.log(`Restored watch progress: ${savedProgress}s`)
-            }
-          } else {
-            console.log(`No direct URL found, trying raw mp4_url: ${currentProgram.mp4_url}`)
-            videoRef.current.src = currentProgram.mp4_url
-            videoRef.current.load()
-            setVideoUrl(currentProgram.mp4_url)
-          }
-        } catch (err) {
-          console.error("Error loading initial program:", err)
-          setLoadError("Error loading video. Please try again.")
-        } finally {
-          setIsLoading(false)
-        }
-      }
-
-      loadInitialProgram()
+    if (initialProgram) {
+      loadProgram(initialProgram)
     } else {
       // No initial program, refresh to get one
-      refreshCurrentProgram(true)
+      console.log("No initial program, refreshing...")
+      refreshCurrentProgram()
     }
 
     // Set up standby video
@@ -380,15 +549,19 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       standbyVideoRef.current.load()
     }
 
-    // Check for program updates every 5 minutes
-    const refreshTimer = setInterval(() => {
-      refreshCurrentProgram(false)
-    }, 300000) // 5 minutes
+    // Set up program check interval - check every minute
+    const checkInterval = setInterval(() => {
+      checkForProgramUpdates()
+    }, 60000) // 1 minute
+
+    setProgramCheckInterval(checkInterval)
 
     return () => {
-      clearInterval(refreshTimer)
+      if (checkInterval) {
+        clearInterval(checkInterval)
+      }
     }
-  }, [channel.id, currentProgram])
+  }, [channel.id])
 
   // Render
   return (
@@ -421,40 +594,12 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
               <button
                 onClick={() => {
                   setError(null)
-                  refreshCurrentProgram(true)
+                  refreshCurrentProgram()
                 }}
                 className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition-colors"
               >
                 Try Again
               </button>
-            </div>
-          </div>
-        )}
-
-        {/* Next program info overlay */}
-        {showNextProgram && upcomingPrograms.length > 0 && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-20">
-            <div className="text-center p-6 bg-gray-900 rounded-lg max-w-md">
-              <h3 className="text-xl font-bold mb-2">Coming Up Next</h3>
-              <p className="text-lg mb-4">{upcomingPrograms[0].title}</p>
-              <p className="text-sm mb-6 text-gray-400">This program will start at the top of the next hour</p>
-              <div className="flex justify-center space-x-4">
-                <button
-                  onClick={() => {
-                    setShowNextProgram(false)
-                    refreshCurrentProgram(true)
-                  }}
-                  className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition-colors"
-                >
-                  Check for New Content
-                </button>
-                <button
-                  onClick={() => setShowNextProgram(false)}
-                  className="bg-gray-700 text-white px-4 py-2 rounded hover:bg-gray-600 transition-colors"
-                >
-                  Close
-                </button>
-              </div>
             </div>
           </div>
         )}
@@ -468,12 +613,18 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
             playsInline
             onContextMenu={handleContextMenu}
             onLoadStart={() => setIsLoading(true)}
-            onCanPlay={() => setIsLoading(false)}
+            onCanPlay={() => {
+              console.log("Video can play now")
+              setIsLoading(false)
+              setLoadError(null)
+            }}
             onError={handleVideoError}
             onTimeUpdate={handleTimeUpdate}
             onPlay={handleVideoStarted}
             onPause={handleVideoPaused}
             onEnded={handleVideoEnded}
+            onWaiting={() => console.log("Video is waiting/buffering")}
+            onStalled={() => console.log("Video playback has stalled")}
           >
             {videoUrl && <source src={videoUrl} type="video/mp4" />}
             Your browser does not support the video tag.
@@ -496,12 +647,29 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
               <div className="bg-gray-900 p-4 rounded-lg max-w-md text-center">
                 <AlertTriangle className="h-8 w-8 text-yellow-500 mx-auto mb-2" />
                 <p className="text-white mb-4">{loadError}</p>
-                <button
-                  className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded flex items-center mx-auto"
-                  onClick={retryPlayback}
-                >
-                  <RefreshCw className="h-4 w-4 mr-2" /> Try Again
-                </button>
+                {errorDetails && (
+                  <p className="text-gray-400 text-sm mb-4 max-w-xs mx-auto overflow-auto">Details: {errorDetails}</p>
+                )}
+                <div className="flex flex-wrap justify-center gap-3">
+                  <button
+                    className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded flex items-center"
+                    onClick={retryPlayback}
+                  >
+                    <RefreshCw className="h-4 w-4 mr-2" /> Try Again
+                  </button>
+                  <button
+                    className="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded"
+                    onClick={tryFallbackVideo}
+                  >
+                    Try Fallback Video
+                  </button>
+                  <button
+                    className="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded"
+                    onClick={refreshCurrentProgram}
+                  >
+                    Refresh Program
+                  </button>
+                </div>
               </div>
             </div>
           )}
