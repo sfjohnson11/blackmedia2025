@@ -205,25 +205,43 @@ export async function checkUrlExists(url: string): Promise<boolean> {
   }
 }
 
-// Update the getDirectDownloadUrl function to be more reliable
-export async function getDirectDownloadUrl(mp4Url: string, channelId: string): Promise<string | null> {
-  console.log(`Getting direct download URL for: ${mp4Url}, channel: ${channelId}`)
+// Add a more robust getDirectDownloadUrl function that handles errors better
+export async function getDirectDownloadUrl(url: string | null, channelId: number): Promise<string | null> {
+  if (!url) return null
 
-  // If it's already a full URL, try to use it directly
-  if (mp4Url.startsWith("http")) {
-    console.log(`Using direct URL: ${mp4Url}`)
-    return mp4Url
+  console.log(`Getting direct download URL for ${url} (Channel ID: ${channelId})`)
+
+  try {
+    // First check if the URL is already a direct URL (no transformation needed)
+    if (
+      url.includes("storage.googleapis.com") ||
+      url.includes("blob.vercel-storage.com") ||
+      url.includes("cloudfront.net")
+    ) {
+      console.log(`URL is already a direct URL: ${url}`)
+      return url
+    }
+
+    // For Supabase storage URLs, get a direct download URL
+    if (url.includes("supabase.co") && url.includes("storage/v1/object/public")) {
+      console.log(`URL is a Supabase storage URL: ${url}`)
+      return url
+    }
+
+    // For YouTube URLs, we can't use them directly
+    if (url.includes("youtube.com") || url.includes("youtu.be")) {
+      console.log(`YouTube URL detected, cannot use directly: ${url}`)
+      return null
+    }
+
+    // For other URLs, try to use them directly
+    console.log(`Using URL directly: ${url}`)
+    return url
+  } catch (error) {
+    console.error(`Error getting direct download URL for ${url}:`, error)
+    // Return the original URL as a fallback
+    return url
   }
-
-  // Extract just the filename without path if it contains slashes
-  const baseFileName = mp4Url.split("/").pop() || mp4Url
-
-  // First try the specific pattern that we know works
-  const channelUrl = constructChannelVideoUrl(channelId, baseFileName)
-  console.log(`Trying channel-specific URL pattern: ${channelUrl}`)
-
-  // Return the constructed URL without checking - we'll let the video element handle errors
-  return channelUrl
 }
 
 export async function listBuckets() {

@@ -212,12 +212,28 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
     console.log(`Using fallback video #${fallbackIndex + 1}: ${fallbackUrl}`)
 
+    // Add crossOrigin attribute to help with CORS issues
+    videoRef.current.crossOrigin = "anonymous"
+
     videoRef.current.src = fallbackUrl
     videoRef.current.load()
     setVideoUrl(fallbackUrl)
     setShowStandby(false)
     setLoadError(`Using fallback video while we try to fix the issue. (Attempt ${retryCount + 1})`)
     setRetryCount((prev) => prev + 1)
+
+    // Try to play the fallback video
+    videoRef.current.play().catch((err) => {
+      console.error("Error playing fallback video:", err)
+
+      // If fallback also fails, show standby
+      setShowStandby(true)
+      if (standbyVideoRef.current) {
+        standbyVideoRef.current.play().catch((e) => {
+          console.error("Failed to play standby video:", e)
+        })
+      }
+    })
   }
 
   // Handle video error with improved error reporting
@@ -226,6 +242,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     let errorMessage = "Unknown error"
 
     console.log(`Video error for channel ${channel.id}, currentProgram:`, currentProgram)
+    console.log("Video source that failed:", target.src)
 
     if (target.error) {
       switch (target.error.code) {
@@ -259,11 +276,35 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     setLoadError(`Error loading video: ${errorMessage}`)
     setIsLoading(false)
 
+    // If this is the first error, try with crossOrigin attribute
+    if (retryCount === 0) {
+      console.log("First error, trying with crossOrigin attribute")
+      if (videoRef.current && videoUrl) {
+        videoRef.current.crossOrigin = "anonymous"
+        videoRef.current.src = videoUrl
+        videoRef.current.load()
+        videoRef.current.play().catch((err) => {
+          console.error("Error playing with crossOrigin:", err)
+          setRetryCount((prev) => prev + 1)
+        })
+      }
+    }
     // If we've tried a few times with the original video, use a fallback
-    if (retryCount >= maxRetries) {
+    else if (retryCount >= maxRetries) {
       tryFallbackVideo()
     } else {
       setRetryCount((prev) => prev + 1)
+    }
+  }
+
+  // Function to check if a URL is accessible
+  const isUrlAccessible = async (url: string): Promise<boolean> => {
+    try {
+      const response = await fetch(url, { method: "HEAD", mode: "no-cors" })
+      return true // If no error is thrown, assume it's accessible
+    } catch (error) {
+      console.error(`URL ${url} is not accessible:`, error)
+      return false
     }
   }
 
@@ -461,14 +502,13 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     }
 
     try {
-      // Get a direct URL
-      const url = await getDirectDownloadUrl(program.mp4_url, channel.id)
-
-      if (url) {
-        console.log(`Found direct URL: ${url}`)
+      // First try the direct mp4_url without going through getDirectDownloadUrl
+      // This can help bypass potential issues with URL transformation
+      if (program.mp4_url) {
+        console.log(`Trying direct mp4_url first: ${program.mp4_url}`)
 
         // Add cache-busting parameter
-        const cacheBustedUrl = `${url}?t=${Date.now()}`
+        const cacheBustedUrl = `${program.mp4_url}${program.mp4_url.includes("?") ? "&" : "?"}t=${Date.now()}`
 
         videoRef.current.src = cacheBustedUrl
         videoRef.current.load()
@@ -486,18 +526,34 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         try {
           await videoRef.current.play()
           setIsPlaying(true)
+          return // If successful, return early
         } catch (playError) {
-          console.error("Error auto-playing new program:", playError)
+          console.error("Error auto-playing with direct URL:", playError)
+          // Continue to try alternative methods
         }
-      } else {
-        // Try the raw mp4_url as a fallback
-        console.log(`No direct URL found, trying raw mp4_url: ${program.mp4_url}`)
+      }
 
-        if (program.mp4_url) {
-          videoRef.current.src = program.mp4_url
+      // If direct URL didn't work, try to get a transformed URL
+      try {
+        const url = await getDirectDownloadUrl(program.mp4_url, channel.id)
+
+        if (url) {
+          console.log(`Found transformed URL: ${url}`)
+
+          // Add cache-busting parameter
+          const cacheBustedUrl = `${url}${url.includes("?") ? "&" : "?"}t=${Date.now()}`
+
+          videoRef.current.src = cacheBustedUrl
           videoRef.current.load()
-          setVideoUrl(program.mp4_url)
+          setVideoUrl(cacheBustedUrl)
           setShowStandby(false)
+
+          // Try to restore previous watch position
+          const savedProgress = await getWatchProgress(program.id)
+          if (savedProgress && savedProgress > 10) {
+            videoRef.current.currentTime = savedProgress
+            console.log(`Restored watch progress: ${savedProgress}s`)
+          }
 
           // Auto-play the new program
           try {
@@ -507,10 +563,14 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
             console.error("Error auto-playing new program:", playError)
           }
         } else {
-          console.error("No mp4_url available for this program")
-          setLoadError("No video URL available for this program")
-          setShowStandby(true)
+          throw new Error("Could not get a valid URL from getDirectDownloadUrl")
         }
+      } catch (urlError) {
+        console.error("Error getting transformed URL:", urlError)
+
+        // If we already tried the direct URL above, we'll try fallback videos
+        console.log("All URL methods failed, trying fallback videos")
+        tryFallbackVideo()
       }
     } catch (err) {
       console.error("Error loading program:", err)
@@ -778,6 +838,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
             className="w-full h-full"
             autoPlay
             playsInline
+            crossOrigin="anonymous"
             onContextMenu={handleContextMenu}
             onLoadStart={() => setIsLoading(true)}
             onCanPlay={() => {
