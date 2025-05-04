@@ -16,7 +16,7 @@ export function getNewsItems(): string[] {
 
   try {
     const storedNews = localStorage.getItem(NEWS_STORAGE_KEY)
-    // Force refresh by clearing any cached values
+    // Parse stored news or use defaults
     return storedNews ? JSON.parse(storedNews) : DEFAULT_NEWS
   } catch (error) {
     console.error("Error loading news items:", error)
@@ -29,6 +29,12 @@ export function saveNewsItems(news: string[]): void {
   if (typeof window === "undefined") return
 
   try {
+    // Validate news is an array
+    if (!Array.isArray(news)) {
+      console.error("Invalid news format, expected array")
+      return
+    }
+
     // Clear existing items first
     localStorage.removeItem(NEWS_STORAGE_KEY)
     // Then save the new items

@@ -1,50 +1,30 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { NewsTicker } from "@/components/news-ticker"
-import { getNewsItems, saveNewsItems } from "@/lib/news-data"
+import { NewsTicker } from "./news-ticker"
+import { getNewsItems } from "@/lib/news-data"
 
-interface BreakingNewsProps {
-  isAdmin?: boolean
-}
-
-export function BreakingNews({ isAdmin = false }: BreakingNewsProps) {
+export function BreakingNews() {
   const [newsItems, setNewsItems] = useState<string[]>([])
-  const [isLoaded, setIsLoaded] = useState(false)
 
   useEffect(() => {
-    // Load news items on client side and set up refresh interval
-    const loadNews = () => {
+    try {
       const items = getNewsItems()
-      setNewsItems(items)
-      setIsLoaded(true)
+      setNewsItems(items || [])
+    } catch (error) {
+      console.error("Error loading news items:", error)
+      setNewsItems([])
     }
-
-    // Load initially
-    loadNews()
-
-    // Set up refresh interval (every 30 seconds)
-    const refreshInterval = setInterval(loadNews, 30000)
-
-    return () => clearInterval(refreshInterval)
   }, [])
 
-  const handleUpdateNews = (updatedNews: string[]) => {
-    saveNewsItems(updatedNews)
-    setNewsItems(updatedNews)
+  // Don't render if there are no news items
+  if (!newsItems || newsItems.length === 0) {
+    return null
   }
 
-  // Don't render until client-side data is loaded
-  if (!isLoaded) return null
-
   return (
-    <div className="w-full z-20 relative">
-      <NewsTicker
-        news={newsItems}
-        isAdmin={isAdmin}
-        onUpdateNews={handleUpdateNews}
-        speed={15} // Time in seconds each news item is displayed
-      />
+    <div className="bg-red-600 text-white w-full z-20">
+      <NewsTicker news={newsItems} />
     </div>
   )
 }

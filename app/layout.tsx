@@ -3,7 +3,6 @@ import "./globals.css"
 import { Inter } from "next/font/google"
 import { Navbar } from "@/components/navbar"
 import { Footer } from "@/components/footer"
-import { BreakingNews } from "@/components/breaking-news"
 
 const inter = Inter({ subsets: ["latin"] })
 
@@ -22,12 +21,7 @@ export default function RootLayout({
     <html lang="en">
       <body className={`${inter.className} bg-black text-white min-h-screen flex flex-col`}>
         <Navbar />
-        <div className="mt-16">
-          {" "}
-          {/* Add margin-top to push content below fixed navbar */}
-          <BreakingNews />
-        </div>
-        <main className="flex-grow">{children}</main>
+        <main className="flex-grow pt-16">{children}</main>
         <Footer />
       </body>
     </html>

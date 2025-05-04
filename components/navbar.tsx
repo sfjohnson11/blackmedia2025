@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react"
 import Link from "next/link"
 import { Search, Bell, User, Heart, Menu, X } from "lucide-react"
+import { SearchOverlay } from "./search-overlay"
 
 export function Navbar() {
   const [isScrolled, setIsScrolled] = useState(false)
@@ -41,8 +42,14 @@ export function Navbar() {
             <Link href="/browse" className="text-white hover:text-gray-300">
               Browse
             </Link>
-            <Link href="/donate" className="text-white hover:text-gray-300 flex items-center">
-              <Heart className="h-4 w-4 mr-1 text-red-500" />
+            <Link href="/favorites" className="text-white hover:text-gray-300">
+              <Heart className="h-4 w-4 mr-1 inline text-red-500" />
+              Favorites
+            </Link>
+            <Link href="/history" className="text-white hover:text-gray-300">
+              Continue Watching
+            </Link>
+            <Link href="/donate" className="text-white hover:text-gray-300">
               Donate
             </Link>
           </nav>
@@ -96,8 +103,14 @@ export function Navbar() {
             <Link href="/browse" className="text-white hover:text-gray-300 py-2">
               Browse
             </Link>
-            <Link href="/donate" className="text-white hover:text-gray-300 py-2 flex items-center">
+            <Link href="/favorites" className="text-white hover:text-gray-300 py-2 flex items-center">
               <Heart className="h-4 w-4 mr-2 text-red-500" />
+              Favorites
+            </Link>
+            <Link href="/history" className="text-white hover:text-gray-300 py-2">
+              Continue Watching
+            </Link>
+            <Link href="/donate" className="text-white hover:text-gray-300 py-2">
               Donate
             </Link>
           </nav>
@@ -105,24 +118,7 @@ export function Navbar() {
       )}
 
       {/* Search overlay */}
-      {searchOpen && (
-        <div className="absolute top-full left-0 right-0 bg-black border-t border-gray-800 p-4 z-40">
-          <div className="max-w-3xl mx-auto relative">
-            <input
-              type="text"
-              placeholder="Search for channels or programs..."
-              className="w-full bg-gray-900 border border-gray-700 rounded-md py-2 px-4 pr-10 text-white"
-              autoFocus
-            />
-            <button
-              className="absolute right-3 top-2.5 text-gray-400 hover:text-white"
-              onClick={() => setSearchOpen(false)}
-            >
-              <X className="h-5 w-5" />
-            </button>
-          </div>
-        </div>
-      )}
+      {searchOpen && <SearchOverlay onClose={() => setSearchOpen(false)} />}
     </header>
   )
 }

@@ -2,6 +2,7 @@ import { supabase } from "@/lib/supabase"
 import type { Channel, Program } from "@/types"
 import { ChannelCarousel } from "@/components/channel-carousel"
 import { FeaturedChannel } from "@/components/featured-channel"
+import { BreakingNews } from "@/components/breaking-news"
 import Link from "next/link"
 
 async function getChannels() {
@@ -84,47 +85,55 @@ export default async function Home() {
   )
 
   return (
-    <div>
-      {/* Featured Channel Hero */}
-      <FeaturedChannel channel={featuredChannel} />
+    <div className="flex flex-col">
+      {/* Breaking News component - positioned below navbar */}
+      <div className="w-full">
+        <BreakingNews />
+      </div>
 
-      {/* Channel Rows */}
-      <section className="px-4 md:px-10 pb-10 -mt-16 relative z-10">
-        {/* Popular Channels - with auto-scroll enabled */}
-        <ChannelCarousel
-          title="Popular Channels"
-          channels={popularChannels}
-          autoScroll={true}
-          autoScrollInterval={6000}
-        />
+      {/* Main content with proper spacing */}
+      <div>
+        {/* Featured Channel Hero */}
+        <FeaturedChannel channel={featuredChannel} />
 
-        {/* News Channels - only show if we have some */}
-        {newsChannels.length > 0 && (
-          <ChannelCarousel title="News" channels={newsChannels} autoScroll={true} autoScrollInterval={8000} />
-        )}
-
-        {/* Entertainment Channels - only show if we have some */}
-        {entertainmentChannels.length > 0 && (
+        {/* Channel Rows */}
+        <section className="px-4 md:px-10 pb-10 -mt-16 relative z-10">
+          {/* Popular Channels - with auto-scroll enabled */}
           <ChannelCarousel
-            title="Entertainment"
-            channels={entertainmentChannels}
+            title="Popular Channels"
+            channels={popularChannels}
             autoScroll={true}
-            autoScrollInterval={7000}
+            autoScrollInterval={6000}
           />
-        )}
 
-        {/* More Channels */}
-        {remainingChannels.length > 0 && (
-          <ChannelCarousel title="More Channels" channels={remainingChannels} autoScroll={false} />
-        )}
+          {/* News Channels - only show if we have some */}
+          {newsChannels.length > 0 && (
+            <ChannelCarousel title="News" channels={newsChannels} autoScroll={true} autoScrollInterval={8000} />
+          )}
 
-        {/* All Channels Link */}
-        <div className="flex justify-center mt-8">
-          <Link href="/channels" className="text-gray-400 hover:text-white transition-colors">
-            View All Channels
-          </Link>
-        </div>
-      </section>
+          {/* Entertainment Channels - only show if we have some */}
+          {entertainmentChannels.length > 0 && (
+            <ChannelCarousel
+              title="Entertainment"
+              channels={entertainmentChannels}
+              autoScroll={true}
+              autoScrollInterval={7000}
+            />
+          )}
+
+          {/* More Channels */}
+          {remainingChannels.length > 0 && (
+            <ChannelCarousel title="More Channels" channels={remainingChannels} autoScroll={false} />
+          )}
+
+          {/* All Channels Link */}
+          <div className="flex justify-center mt-8">
+            <Link href="/channels" className="text-gray-400 hover:text-white transition-colors">
+              View All Channels
+            </Link>
+          </div>
+        </section>
+      </div>
     </div>
   )
 }

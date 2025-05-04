@@ -5,7 +5,7 @@ import { Pause, Play, Edit } from "lucide-react"
 import { Button } from "@/components/ui/button"
 
 interface NewsTickerProps {
-  news: string[]
+  news?: string[] // Make news optional
   speed?: number
   backgroundColor?: string
   textColor?: string
@@ -14,7 +14,7 @@ interface NewsTickerProps {
 }
 
 export function NewsTicker({
-  news,
+  news = [], // Provide default empty array
   speed = 30,
   backgroundColor = "bg-red-600",
   textColor = "text-white",
@@ -24,20 +24,27 @@ export function NewsTicker({
   const [isPaused, setIsPaused] = useState(false)
   const [currentNewsIndex, setCurrentNewsIndex] = useState(0)
   const [isEditing, setIsEditing] = useState(false)
-  const [editableNews, setEditableNews] = useState<string[]>(news)
+  const [editableNews, setEditableNews] = useState<string[]>(news || []) // Ensure we have an array
   const [newNewsItem, setNewNewsItem] = useState("")
   const tickerRef = useRef<HTMLDivElement>(null)
 
+  // Update editableNews when news prop changes
+  useEffect(() => {
+    if (news && news.length > 0) {
+      setEditableNews(news)
+    }
+  }, [news])
+
   // Auto-rotate news items
   useEffect(() => {
-    if (isPaused || news.length <= 1) return
+    if (isPaused || !editableNews || editableNews.length <= 1) return
 
     const interval = setInterval(() => {
-      setCurrentNewsIndex((prevIndex) => (prevIndex + 1) % news.length)
+      setCurrentNewsIndex((prevIndex) => (prevIndex + 1) % editableNews.length)
     }, speed * 1000) // Convert to milliseconds
 
     return () => clearInterval(interval)
-  }, [isPaused, news, speed])
+  }, [isPaused, editableNews, speed])
 
   // Handle saving edited news
   const handleSaveNews = () => {
@@ -69,7 +76,7 @@ export function NewsTicker({
   }
 
   // If there are no news items, don't render anything
-  if (news.length === 0) return null
+  if (!editableNews || editableNews.length === 0) return null
 
   return (
     <div className={`w-full ${backgroundColor} relative overflow-hidden shadow-md`}>
@@ -84,7 +91,7 @@ export function NewsTicker({
             ref={tickerRef}
             className={`whitespace-nowrap ${textColor} font-medium text-sm md:text-base transition-transform duration-1000 ease-in-out`}
           >
-            {news[currentNewsIndex]}
+            {editableNews[currentNewsIndex]}
           </div>
         </div>
 
