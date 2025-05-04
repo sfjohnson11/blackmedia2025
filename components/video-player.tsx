@@ -11,7 +11,7 @@ import {
   getDirectDownloadUrl,
 } from "@/lib/supabase"
 import type { Channel, Program } from "@/types"
-import { Clock, RefreshCw, Info, Play, Volume2, VolumeX, Maximize, Pause } from "lucide-react"
+import { Clock, RefreshCw, Info, Play, Volume2, VolumeX, Maximize, Pause, PictureInPicture } from "lucide-react"
 import { cleanChannelName } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import Link from "next/link"
@@ -159,6 +159,21 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       })
     } else {
       document.exitFullscreen()
+    }
+  }
+
+  // Toggle Picture-in-Picture
+  const togglePictureInPicture = async () => {
+    if (!videoRef.current) return
+
+    try {
+      if (document.pictureInPictureElement) {
+        await document.exitPictureInPicture()
+      } else {
+        await videoRef.current.requestPictureInPicture()
+      }
+    } catch (err) {
+      console.error("Error toggling picture-in-picture:", err)
     }
   }
 
@@ -823,6 +838,15 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
               </div>
 
               <div className="flex items-center space-x-4">
+                {/* Picture-in-Picture button */}
+                <button
+                  onClick={togglePictureInPicture}
+                  className="text-white hover:text-gray-300 focus:outline-none"
+                  aria-label="Toggle picture-in-picture"
+                >
+                  <PictureInPicture className="h-5 w-5" />
+                </button>
+
                 {/* Fullscreen button */}
                 <button
                   onClick={toggleFullscreen}
