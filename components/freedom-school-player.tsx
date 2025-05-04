@@ -1,5 +1,7 @@
 "use client"
 
+import type React from "react"
+
 import { useEffect, useRef, useState } from "react"
 import { supabase } from "@/lib/supabase"
 import { Button } from "@/components/ui/button"
@@ -45,6 +47,7 @@ export function FreedomSchoolPlayer() {
   const [isLoading, setIsLoading] = useState(true)
 
   const currentVideo = FREEDOM_SCHOOL_VIDEOS[currentVideoIndex]
+  const videoUrl = currentVideo.mp4_url
 
   // Handle video end - play the next video in the loop
   const handleVideoEnd = () => {
@@ -66,9 +69,22 @@ export function FreedomSchoolPlayer() {
   }
 
   // Handle video errors
-  const handleVideoError = () => {
-    setError("Unable to play this video. Please try another one.")
-    setIsLoading(false)
+  const handleVideoError = (e: React.SyntheticEvent<HTMLVideoElement, Event>) => {
+    console.error("Video error occurred:", e)
+
+    // If we have a video element and a source URL, try reloading with a different approach
+    if (videoRef.current && videoUrl) {
+      console.log("Attempting to reload video with fallback method")
+
+      // Try direct assignment without URL checking
+      videoRef.current.src = videoUrl
+
+      // Force load and play
+      videoRef.current.load()
+      videoRef.current.play().catch((err) => {
+        console.error("Failed to play video after fallback:", err)
+      })
+    }
   }
 
   // Handle video loaded

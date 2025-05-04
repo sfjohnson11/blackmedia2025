@@ -121,40 +121,73 @@ export const getLiveStreamUrl = (channelId: string): string | null => {
   return null
 }
 
-// Update the checkUrlExists function to be more reliable
+// Update the checkUrlExists function to handle CORS errors gracefully
 export async function checkUrlExists(url: string): Promise<boolean> {
   try {
-    // Add a cache-busting parameter to avoid cached responses
-    const checkUrl = `${url}?t=${Date.now()}`
-    console.log(`Checking if URL exists: ${checkUrl}`)
+    // For client-side requests, we can't reliably use fetch for cross-origin HEAD requests
+    // due to CORS restrictions. Instead, we'll assume URLs are valid by default
+    // and only mark them as invalid if they have obvious issues.
 
-    // Try with a timeout to avoid hanging requests
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 5000) // 5 second timeout
-
-    const response = await fetch(checkUrl, {
-      method: "HEAD",
-      headers: {
-        "Cache-Control": "no-cache",
-        Pragma: "no-cache",
-      },
-      signal: controller.signal,
-    })
-
-    clearTimeout(timeoutId)
-
-    // Log the response status for debugging
-    console.log(`URL check for ${url}: status ${response.status}`)
-
-    // Consider 200-299 as success
-    return response.status >= 200 && response.status < 300
-  } catch (error) {
-    if (error.name === "AbortError") {
-      console.error("URL check timed out:", url)
-    } else {
-      console.error("Error checking URL:", url, error)
+    // Basic URL validation
+    if (!url || !url.match(/^https?:\/\//i)) {
+      console.log(`Invalid URL format: ${url}`)
+      return false
     }
-    return false
+
+    // Check for common video extensions
+    const hasVideoExtension = /(\.mp4|\.m3u8|\.webm|\.mov|\.avi)($|\?)/i.test(url)
+
+    // For m3u8 streams, assume they're valid without checking
+    if (url.includes(".m3u8")) {
+      console.log(`Assuming m3u8 stream is valid: ${url}`)
+      return true
+    }
+
+    // For Supabase storage URLs, assume they're valid
+    if (url.includes("supabase.co/storage/v1/object")) {
+      console.log(`Assuming Supabase storage URL is valid: ${url}`)
+      return true
+    }
+
+    // For test streams, assume they're valid
+    if (url.includes("test-streams.mux.dev")) {
+      console.log(`Assuming test stream is valid: ${url}`)
+      return true
+    }
+
+    // For other URLs, we'll try a simple image request which is less likely to be blocked
+    // This is just a heuristic and won't actually validate the video content
+    if (typeof window !== "undefined" && !hasVideoExtension) {
+      return new Promise((resolve) => {
+        const img = new Image()
+        const timeoutId = setTimeout(() => {
+          console.log(`URL check timed out: ${url}`)
+          resolve(true) // Assume valid on timeout
+        }, 3000)
+
+        img.onload = () => {
+          clearTimeout(timeoutId)
+          console.log(`URL appears valid: ${url}`)
+          resolve(true)
+        }
+
+        img.onerror = () => {
+          clearTimeout(timeoutId)
+          console.log(`URL check failed: ${url}`)
+          resolve(false)
+        }
+
+        img.src = url
+      })
+    }
+
+    // Default to assuming the URL is valid
+    console.log(`Assuming URL is valid without checking: ${url}`)
+    return true
+  } catch (error) {
+    console.error("Error checking URL:", url, error)
+    // In case of errors, assume the URL might be valid
+    return true
   }
 }
 

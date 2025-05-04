@@ -689,6 +689,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
             console.log(`Error getting direct URL, trying raw mp4_url as last resort: ${program.mp4_url}`)
             videoRef.current.src = program.mp4_url
             videoRef.current.load()
+            setShowStandby(false)
           } else {
             setShowStandby(true)
 
