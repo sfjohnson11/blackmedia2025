@@ -34,6 +34,8 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const [attemptedUrls, setAttemptedUrls] = useState<string[]>([])
   const [showDebugInfo, setShowDebugInfo] = useState(false)
   const [directUrl, setDirectUrl] = useState<string | null>(null)
+  const [lastRefreshTime, setLastRefreshTime] = useState<number>(Date.now())
+  const [playbackStartTime, setPlaybackStartTime] = useState<number | null>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const standbyVideoRef = useRef<HTMLVideoElement>(null)
   const refreshTimerRef = useRef<NodeJS.Timeout | null>(null)
@@ -41,6 +43,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const standbyContainerRef = useRef<HTMLDivElement>(null)
   const mainContainerRef = useRef<HTMLDivElement>(null)
   const loadAttemptRef = useRef(0)
+  const programChangeTimeRef = useRef<number | null>(null)
   const maxAttempts = 3
 
   const cleanedName = cleanChannelName(channel.name)
@@ -172,15 +175,52 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   }
 
   // Update the refreshCurrentProgram function to handle errors better and provide fallbacks
-  const refreshCurrentProgram = async () => {
+  const refreshCurrentProgram = async (forceRefresh = false) => {
+    // Only refresh if:
+    // 1. This is a forced refresh, OR
+    // 2. At least 5 minutes have passed since the last refresh AND no video is currently playing
+    const now = Date.now()
+    const timeSinceLastRefresh = now - lastRefreshTime
+    const isActivelyPlaying = videoRef.current && !videoRef.current.paused && videoRef.current.currentTime > 0
+
+    // Don't refresh if video is actively playing and this isn't forced
+    if (!forceRefresh && isActivelyPlaying && timeSinceLastRefresh < 300000) {
+      console.log(
+        `Skipping refresh - video is actively playing (${Math.round(timeSinceLastRefresh / 1000)}s since last refresh)`,
+      )
+      return
+    }
+
     setIsLoading(true)
     setError(null)
+    setLastRefreshTime(now)
 
     try {
       const { program } = await getCurrentProgram(channel.id)
       const { programs } = await getUpcomingPrograms(channel.id)
 
-      setCurrentProgram(program)
+      // Only update the current program if it's different or this is a forced refresh
+      if (forceRefresh || program?.id !== currentProgram?.id) {
+        console.log(`Program change: ${currentProgram?.title} -> ${program?.title}`)
+        setCurrentProgram(program)
+        programChangeTimeRef.current = now
+
+        // If actively playing a video and the program changed,
+        // consider if we should continue playing current video
+        if (isActivelyPlaying && !forceRefresh) {
+          const currentTime = videoRef.current?.currentTime || 0
+          const duration = videoRef.current?.duration || 0
+
+          // If more than 20% into the video but less than 90%, keep playing current video
+          if (currentTime > duration * 0.2 && currentTime < duration * 0.9) {
+            console.log(`Continuing to play current video (${Math.round(currentTime)}s of ${Math.round(duration)}s)`)
+            setIsLoading(false)
+            setUpcomingPrograms(programs)
+            return
+          }
+        }
+      }
+
       setUpcomingPrograms(programs)
 
       // If no program exists, show standby
@@ -296,7 +336,20 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
   const handleVideoLoaded = () => {
     console.log("Video loaded successfully")
+    setPlaybackStartTime(Date.now())
     setShowStandby(false)
+  }
+
+  const handleVideoStarted = () => {
+    console.log("Video started playback")
+    setPlaybackStartTime(Date.now())
+  }
+
+  // Handle video end event - load next program if available
+  const handleVideoEnded = () => {
+    console.log("Video ended, checking for next program")
+    // Force refresh to get the next program
+    refreshCurrentProgram(true)
   }
 
   // Update the loadInitialProgram logic in the useEffect
@@ -305,7 +358,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     // Initial setup
     if (!currentProgram) {
       console.log(`No initial program for channel ${channel.id}, refreshing...`)
-      refreshCurrentProgram()
+      refreshCurrentProgram(true)
     } else {
       // If we have an initial program, try to load it
       const loadInitialProgram = async () => {
@@ -381,10 +434,12 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       loadInitialProgram()
     }
 
-    // Set up periodic refresh (every minute)
+    // Set up periodic refresh, but at a lower frequency (every 5 minutes instead of every minute)
+    // This prevents disrupting playback too often
     refreshTimerRef.current = setInterval(() => {
-      refreshCurrentProgram()
-    }, 60000)
+      // Use a non-forced refresh to check for schedule changes without interrupting playback
+      refreshCurrentProgram(false)
+    }, 300000) // 5 minutes = 300,000 ms
 
     return () => {
       if (refreshTimerRef.current) {
@@ -401,13 +456,32 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     if (!currentProgram) return
 
     const progressTimer = setInterval(() => {
-      const { progressPercent, isFinished } = calculateProgramProgress(currentProgram)
+      if (videoRef.current && !videoRef.current.paused) {
+        // Calculate progress based on video element's currentTime and duration
+        // This is more accurate than using the database duration
+        const { currentTime, duration } = videoRef.current
 
-      if (isFinished) {
-        // Time to refresh and get the next program
-        refreshCurrentProgram()
+        if (duration > 0) {
+          const progressPercent = (currentTime / duration) * 100
+          setProgress(progressPercent)
+
+          // Only check for program completion if we're near the end
+          // This prevents unnecessary refreshes
+          if (progressPercent > 98) {
+            console.log("Near end of video, preparing to check for next program")
+          }
+        }
       } else {
-        setProgress(progressPercent)
+        // Fallback to using the database duration if video isn't playing
+        const { progressPercent, isFinished } = calculateProgramProgress(currentProgram)
+
+        if (isFinished) {
+          // Time to refresh and get the next program
+          console.log("Program finished based on scheduled time, refreshing...")
+          refreshCurrentProgram(true)
+        } else {
+          setProgress(progressPercent)
+        }
       }
     }, 1000)
 
@@ -420,6 +494,21 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       loadAttemptRef.current = 0
       setAttemptedUrls([])
       setErrorDetails(null)
+
+      // Don't reload the video if we're actively playing and the program just changed
+      // (prevent interruptions during viewing)
+      const isActivelyPlaying = !videoRef.current.paused && videoRef.current.currentTime > 0
+
+      // Only reload if:
+      // 1. Not actively playing, OR
+      // 2. This is a forced program change (programChangeTimeRef was just updated)
+      const shouldReload =
+        !isActivelyPlaying || (programChangeTimeRef.current && Date.now() - programChangeTimeRef.current < 2000)
+
+      if (!shouldReload) {
+        console.log("Program changed but keeping current video playback to avoid interruption")
+        return
+      }
 
       const loadProgram = async () => {
         try {
@@ -479,6 +568,8 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
             controls
             onError={handleVideoError}
             onLoadedData={handleVideoLoaded}
+            onPlay={handleVideoStarted}
+            onEnded={handleVideoEnded}
             className="w-full h-full"
           />
         )}
@@ -592,6 +683,24 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
               <span>{channel.id}</span>
             </div>
 
+            <div className="mb-2">
+              <span className="text-blue-400">Playback Status: </span>
+              <span>
+                {videoRef.current?.paused ? "Paused" : "Playing"}
+                {videoRef.current
+                  ? ` (${Math.round(videoRef.current.currentTime)}s / ${Math.round(videoRef.current.duration || 0)}s)`
+                  : ""}
+              </span>
+            </div>
+
+            <div className="mb-2">
+              <span className="text-blue-400">Last Refresh: </span>
+              <span>{new Date(lastRefreshTime).toLocaleTimeString()}</span>
+              <button onClick={() => refreshCurrentProgram(true)} className="ml-2 text-green-400 hover:underline">
+                Force Refresh
+              </button>
+            </div>
+
             {currentProgram && (
               <div className="mb-2">
                 <span className="text-blue-400">Program: </span>
@@ -647,7 +756,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
                 Retry Playback
               </button>
               <button
-                onClick={() => refreshCurrentProgram()}
+                onClick={() => refreshCurrentProgram(true)}
                 className="bg-green-600 hover:bg-green-700 text-white text-xs px-2 py-1 rounded"
               >
                 Refresh Program
