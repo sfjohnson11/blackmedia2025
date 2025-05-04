@@ -3,7 +3,7 @@
 import type React from "react"
 import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
-import { Loader2, Play, Pause, Volume2, VolumeX, Maximize, ChevronLeft, AlertTriangle } from "lucide-react"
+import { Loader2, Play, Pause, Volume2, VolumeX, Maximize, ChevronLeft, AlertTriangle, RefreshCw } from "lucide-react"
 import { Progress } from "@/components/ui/progress"
 import {
   getLiveStreamUrl,
@@ -37,7 +37,6 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const [error, setError] = useState<string | null>(null)
   const [showStandby, setShowStandby] = useState(false)
   const [errorDetails, setErrorDetails] = useState<string | null>(null)
-  // Fix: Initialize isRetrying with false instead of referencing itself
   const [isRetrying, setIsRetrying] = useState(false)
   const [attemptedUrls, setAttemptedUrls] = useState<string[]>([])
   const [showDebugInfo, setShowDebugInfo] = useState(false)
@@ -60,6 +59,8 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const [loadTimeout, setLoadTimeout] = useState<NodeJS.Timeout | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [savedProgress, setSavedProgress] = useState<number | null>(null)
+  const [fallbackMode, setFallbackMode] = useState(false)
+  const [retryCount, setRetryCount] = useState(0)
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const standbyVideoRef = useRef<HTMLVideoElement>(null)
@@ -84,7 +85,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const lastPlaybackTimeRef = useRef<number>(0)
   const stallDetectionRef = useRef<NodeJS.Timeout | null>(null)
   const retryCountRef = useRef<number>(0)
-  const maxRetries = 3
+  const maxRetries = 5
 
   // Track if component is mounted to prevent state updates after unmount
   const isMountedRef = useRef(true)
@@ -100,6 +101,13 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   // Standby video URL - using a reliable source
   const standbyVideoUrl =
     "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/standby_blacktruthtv-D7yZUERL2zhjE71Llxul69gbPLxGES.mp4"
+
+  // Fallback video URLs for testing
+  const fallbackVideoUrls = [
+    "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8", // HLS stream
+    "https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4", // MP4 video
+    "https://storage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4", // Another MP4 video
+  ]
 
   // Check if channel is in favorites
   useEffect(() => {
@@ -207,7 +215,12 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       if (videoRef.current && currentProgram) {
         try {
           const savedProgressValue = await getWatchProgress(currentProgram.id)
-          if (savedProgressValue && savedProgressValue > 10 && savedProgressValue < videoRef.current.duration - 30) {
+          if (
+            savedProgressValue &&
+            savedProgressValue > 10 &&
+            videoRef.current.duration &&
+            savedProgressValue < videoRef.current.duration - 30
+          ) {
             // Only restore if we have a meaningful position (not at the very beginning or end)
             videoRef.current.currentTime = savedProgressValue
             setSavedProgress(savedProgressValue)
@@ -276,7 +289,10 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     if (!videoRef.current) return
 
     if (videoRef.current.paused) {
-      videoRef.current.play()
+      videoRef.current.play().catch((err) => {
+        console.error("Error playing video:", err)
+        setLoadError(`Error playing video: ${err.message || "Unknown error"}`)
+      })
       setIsPlaying(true)
     } else {
       videoRef.current.pause()
@@ -823,6 +839,9 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
               videoRef.current.src = urlWithCacheBust
               videoRef.current.load()
               setShowStandby(false)
+
+              // Set the videoUrl state so it's available for the render
+              setVideoUrl(urlWithCacheBust)
             } else {
               // If we couldn't get a direct URL, try using the raw mp4_url as a fallback
               console.log(`No direct URL found for initial program, trying raw mp4_url: ${currentProgram.mp4_url}`)
@@ -838,6 +857,9 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
                 videoRef.current.src = currentProgram.mp4_url
                 videoRef.current.load()
                 setShowStandby(false)
+
+                // Set the videoUrl state so it's available for the render
+                setVideoUrl(currentProgram.mp4_url)
               } else {
                 console.error("Could not find a working URL for initial program and mp4_url is not usable")
                 setErrorDetails("Could not find a working URL for this video")
@@ -860,6 +882,9 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
               )
               videoRef.current.src = currentProgram.mp4_url
               videoRef.current.load()
+
+              // Set the videoUrl state so it's available for the render
+              setVideoUrl(currentProgram.mp4_url)
             } else {
               setShowStandby(true)
 
@@ -902,8 +927,11 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       if (progressSaveIntervalRef.current) {
         clearInterval(progressSaveIntervalRef.current)
       }
+      if (loadTimeout) {
+        clearTimeout(loadTimeout)
+      }
     }
-  }, [channel.id])
+  }, [channel.id, currentProgram])
 
   // Effect to update progress for current program
   useEffect(() => {
@@ -979,6 +1007,9 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
             videoRef.current!.src = urlWithCacheBust
             videoRef.current!.load()
             setShowStandby(false)
+
+            // Set the videoUrl state so it's available for the render
+            setVideoUrl(urlWithCacheBust)
           } else {
             console.error("Could not find a working URL for program")
             setErrorDetails("Could not find a working URL for this video")
@@ -1006,65 +1037,22 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     }
   }, [currentProgram, channel.id])
 
-  // New useEffect to handle video URL resolution
-  useEffect(() => {
-    let isMounted = true
+  // Try fallback videos if all else fails
+  const tryFallbackVideo = () => {
+    if (!videoRef.current) return
 
-    async function resolveVideoUrl() {
-      if (!currentProgram?.mp4_url) {
-        console.log("No video URL available")
-        setVideoUrl(null)
-        setIsLoading(false)
-        return
-      }
+    setRetryCount((prev) => prev + 1)
+    const fallbackIndex = retryCount % fallbackVideoUrls.length
+    const fallbackUrl = fallbackVideoUrls[fallbackIndex]
 
-      setIsLoading(true)
-      console.log(`Resolving video URL for program: ${currentProgram.title}`)
+    console.log(`Trying fallback video #${fallbackIndex + 1}: ${fallbackUrl}`)
 
-      try {
-        // First try to get a direct download URL
-        const directUrl = await getDirectDownloadUrl(currentProgram.mp4_url, channel.id)
-        console.log(`Resolved URL: ${directUrl || "Failed to resolve"}`)
-
-        if (isMounted) {
-          if (directUrl) {
-            setVideoUrl(directUrl)
-            setLoadError(null)
-          } else {
-            // If we couldn't resolve the URL, try using the original URL as fallback
-            console.log(`Using original URL as fallback: ${currentProgram.mp4_url}`)
-            setVideoUrl(currentProgram.mp4_url)
-          }
-          setIsLoading(false)
-        }
-      } catch (error) {
-        console.error("Error resolving video URL:", error)
-        if (isMounted) {
-          // Even if there's an error, try to use the original URL
-          setVideoUrl(currentProgram.mp4_url)
-          setIsLoading(false)
-        }
-      }
-    }
-
-    resolveVideoUrl()
-
-    // Set a timeout to prevent infinite loading
-    if (loadTimeout) clearTimeout(loadTimeout)
-    const timeout = setTimeout(() => {
-      if (isLoading) {
-        console.log("Video load timed out")
-        setIsLoading(false)
-        setLoadError("Video is taking too long to load. Please try again or check your connection.")
-      }
-    }, 15000) // 15 seconds timeout
-    setLoadTimeout(timeout)
-
-    return () => {
-      isMounted = false
-      if (loadTimeout) clearTimeout(loadTimeout)
-    }
-  }, [currentProgram, channel.id])
+    videoRef.current.src = fallbackUrl
+    videoRef.current.load()
+    setVideoUrl(fallbackUrl)
+    setFallbackMode(true)
+    setLoadError(`Using fallback video while we try to fix the issue. (Attempt ${retryCount + 1})`)
+  }
 
   const handleBack = () => {
     router.back()
@@ -1073,7 +1061,10 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const togglePlayPause = () => {
     if (videoRef.current) {
       if (videoRef.current.paused) {
-        videoRef.current.play()
+        videoRef.current.play().catch((err) => {
+          console.error("Error playing video:", err)
+          setLoadError(`Error playing video: ${err.message || "Unknown error"}`)
+        })
         setIsPlaying(true)
       } else {
         videoRef.current.pause()
@@ -1084,7 +1075,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
   // Render both videos but control visibility with CSS
   return (
-    <div className="relative bg-black">
+    <div className="relative bg-black" ref={videoContainerRef}>
       {/* Video container */}
       <div className="relative w-full aspect-video">
         {/* Back button */}
@@ -1098,7 +1089,10 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         {/* Loading state */}
         {isLoading && (
           <div className="absolute inset-0 flex items-center justify-center bg-black">
-            <Loader2 className="h-12 w-12 text-red-600 animate-spin" />
+            <div className="flex flex-col items-center">
+              <Loader2 className="h-12 w-12 text-red-600 animate-spin mb-2" />
+              <p className="text-white">Loading video...</p>
+            </div>
           </div>
         )}
 
@@ -1131,80 +1125,102 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         )}
 
         {/* Video element */}
-        {videoUrl && (
-          <div className="relative w-full aspect-video bg-black">
-            <video
-              ref={videoRef}
-              className="w-full h-full"
-              controls
-              autoPlay
-              playsInline
-              onLoadStart={() => {
-                console.log("Video load started")
-                setIsLoading(true)
-              }}
-              onCanPlay={() => {
-                console.log("Video can play now")
-                setIsLoading(false)
-                setLoadError(null)
+        <div className="relative w-full aspect-video bg-black">
+          <video
+            ref={videoRef}
+            className="w-full h-full"
+            controls
+            autoPlay
+            playsInline
+            onContextMenu={handleContextMenu}
+            onLoadStart={() => {
+              console.log("Video load started")
+              setIsLoading(true)
+            }}
+            onCanPlay={() => {
+              console.log("Video can play now")
+              setIsLoading(false)
+              setLoadError(null)
 
-                // If we have saved progress, seek to it
-                if (savedProgress && videoRef.current) {
-                  console.log(`Seeking to saved position: ${savedProgress}s`)
-                  videoRef.current.currentTime = savedProgress
-                }
-              }}
-              onError={(e) => {
-                const error = e.currentTarget.error
-                console.error("Video error:", error?.message || "Unknown error", error?.code)
-                setLoadError(`Error loading video: ${error?.message || "Unknown error"}`)
+              // If we have saved progress, seek to it
+              if (savedProgress && videoRef.current) {
+                console.log(`Seeking to saved position: ${savedProgress}s`)
+                videoRef.current.currentTime = savedProgress
+              }
+            }}
+            onError={(e) => {
+              console.error("Video error:", e)
 
-                // Try to recover by using the original URL if we're not already using it
-                if (videoUrl !== currentProgram?.mp4_url && currentProgram?.mp4_url) {
-                  console.log("Trying original URL as fallback")
-                  setVideoUrl(currentProgram.mp4_url)
-                } else if (!isRetrying) {
-                  setIsRetrying(true)
-                  console.log("Retrying video load")
-                  setTimeout(() => {
-                    if (videoRef.current) {
-                      videoRef.current.load()
-                      setTimeout(() => setIsRetrying(false), 2000)
-                    }
-                  }, 1000)
+              // Try to extract error details
+              let errorMessage = "Unknown error"
+              const target = e.currentTarget
+
+              if (target.error) {
+                console.error("Video error details:", {
+                  code: target.error.code,
+                  message: target.error.message,
+                  name: target.error.name,
+                })
+
+                errorMessage = target.error.message || `Error code: ${target.error.code}`
+              }
+
+              setLoadError(`Error loading video: ${errorMessage}`)
+
+              // If we've tried a few times with the normal URLs, try a fallback
+              if (retryCount < 3) {
+                setRetryCount((prev) => prev + 1)
+                console.log(`Retrying video load (attempt ${retryCount + 1})`)
+
+                if (videoRef.current) {
+                  // Try reloading with a cache buster
+                  const currentSrc = videoRef.current.src.split("?")[0]
+                  videoRef.current.src = `${currentSrc}?t=${Date.now()}`
+                  videoRef.current.load()
                 }
-              }}
-              onTimeUpdate={handleTimeUpdate}
-              onWaiting={() => {
-                console.log("Video is waiting/buffering")
-              }}
-              onStalled={() => {
-                console.log("Video playback has stalled")
-              }}
-            >
+              } else {
+                // After 3 retries, try a fallback video
+                tryFallbackVideo()
+              }
+            }}
+            onTimeUpdate={handleTimeUpdate}
+            onLoadedMetadata={handleMetadataLoaded}
+            onPlay={handleVideoStarted}
+            onPause={handleVideoPaused}
+            onEnded={handleVideoEnded}
+            onWaiting={() => {
+              console.log("Video is waiting/buffering")
+            }}
+            onStalled={() => {
+              console.log("Video playback has stalled")
+            }}
+          >
+            {videoUrl && (
               <source
                 src={videoUrl}
-                type={videoUrl?.includes(".m3u8") ? "application/vnd.apple.mpegurl" : "video/mp4"}
+                type={videoUrl.includes(".m3u8") ? "application/vnd.apple.mpegurl" : "video/mp4"}
               />
-              Your browser does not support the video tag.
-            </video>
-
-            {isLoading && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50">
-                <div className="flex flex-col items-center">
-                  <Loader2 className="h-12 w-12 text-red-600 animate-spin mb-2" />
-                  <p className="text-white">Loading video...</p>
-                </div>
-              </div>
             )}
+            Your browser does not support the video tag.
+          </video>
 
-            {loadError && !isLoading && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-70">
-                <div className="bg-gray-900 p-4 rounded-lg max-w-md text-center">
-                  <AlertTriangle className="h-8 w-8 text-yellow-500 mx-auto mb-2" />
-                  <p className="text-white mb-4">{loadError}</p>
+          {isLoading && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50">
+              <div className="flex flex-col items-center">
+                <Loader2 className="h-12 w-12 text-red-600 animate-spin mb-2" />
+                <p className="text-white">Loading video...</p>
+              </div>
+            </div>
+          )}
+
+          {loadError && !isLoading && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-70">
+              <div className="bg-gray-900 p-4 rounded-lg max-w-md text-center">
+                <AlertTriangle className="h-8 w-8 text-yellow-500 mx-auto mb-2" />
+                <p className="text-white mb-4">{loadError}</p>
+                <div className="flex justify-center space-x-3">
                   <button
-                    className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded"
+                    className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded flex items-center"
                     onClick={() => {
                       if (videoRef.current) {
                         setIsLoading(true)
@@ -1213,13 +1229,19 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
                       }
                     }}
                   >
-                    Try Again
+                    <RefreshCw className="h-4 w-4 mr-2" /> Try Again
+                  </button>
+                  <button
+                    className="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded"
+                    onClick={tryFallbackVideo}
+                  >
+                    Try Fallback Video
                   </button>
                 </div>
               </div>
-            )}
-          </div>
-        )}
+            </div>
+          )}
+        </div>
 
         {/* Video controls overlay */}
         <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4">
@@ -1240,6 +1262,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
                 {isMuted ? <VolumeX className="h-6 w-6" /> : <Volume2 className="h-6 w-6" />}
               </button>
               {isLive && <span className="text-red-500 text-sm font-medium">LIVE</span>}
+              {fallbackMode && <span className="text-yellow-500 text-sm font-medium">FALLBACK MODE</span>}
             </div>
             <button onClick={toggleFullscreen} className="hover:text-red-500 transition-colors">
               <Maximize className="h-6 w-6" />
@@ -1252,6 +1275,11 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       {currentProgram && (
         <div className="bg-black p-4">
           <h2 className="text-xl font-bold">{currentProgram.title}</h2>
+          {fallbackMode && (
+            <p className="text-yellow-500 text-sm mt-1">
+              Using fallback video. The original content will be restored when available.
+            </p>
+          )}
         </div>
       )}
     </div>
