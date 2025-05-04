@@ -60,6 +60,9 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const [savedProgress, setSavedProgress] = useState<number | null>(null)
   const [fallbackMode, setFallbackMode] = useState(false)
   const [retryCount, setRetryCount] = useState(0)
+  const [scheduledProgramId, setScheduledProgramId] = useState<number | null>(initialProgram?.id || null)
+  const [lastProgramCheck, setLastProgramCheck] = useState<number>(Date.now())
+  const [programSwitchInProgress, setProgramSwitchInProgress] = useState(false)
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const standbyVideoRef = useRef<HTMLVideoElement>(null)
@@ -85,6 +88,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const stallDetectionRef = useRef<NodeJS.Timeout | null>(null)
   const retryCountRef = useRef<number>(0)
   const maxRetries = 5
+  const programCheckIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
   // Track if component is mounted to prevent state updates after unmount
   const isMountedRef = useRef(true)
@@ -110,7 +114,8 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
   // Add this function near the top of the component, with the other utility functions
   const shouldDisableAutoRefresh = (duration: number): boolean => {
-    // If video is longer than 5 minutes (300 seconds), disable auto refresh
+    // We no longer disable auto refresh completely, but we'll use this to determine
+    // how frequently to check for program changes
     return duration > 300
   }
 
@@ -582,27 +587,107 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     }
   }
 
-  // Update the refreshCurrentProgram function to handle errors better and provide fallbacks
-  const refreshCurrentProgram = async (forceRefresh = false) => {
-    // Only refresh if:
-    // 1. This is a forced refresh (like at the end of a video), OR
-    // 2. No video is currently playing
-    const now = Date.now()
-    const timeSinceLastRefresh = now - lastRefreshTime
-    const isActivelyPlaying = videoRef.current && !videoRef.current.paused && videoRef.current.currentTime > 0
-    const videoDuration = videoRef.current?.duration || 0
-
-    // IMPORTANT: Never refresh during active playback unless explicitly forced
-    if (!forceRefresh && isActivelyPlaying) {
-      console.log(
-        `Skipping refresh - video is actively playing (${Math.round(videoRef.current?.currentTime || 0)}s / ${Math.round(videoDuration)}s)`,
-      )
+  // New function to check if the scheduled program has changed
+  const checkProgramSchedule = async () => {
+    if (programSwitchInProgress) {
+      console.log("Program switch already in progress, skipping check")
       return
     }
 
-    // For longer videos (>5 minutes), completely disable auto-refresh
-    if (!forceRefresh && videoDuration > 300 && isActivelyPlaying) {
-      console.log(`Skipping refresh - long video detected (${Math.round(videoDuration)}s)`)
+    try {
+      const now = Date.now()
+      const timeSinceLastCheck = now - lastProgramCheck
+
+      // Only check every 30 seconds to avoid too many API calls
+      if (timeSinceLastCheck < 30000) {
+        return
+      }
+
+      setLastProgramCheck(now)
+
+      const { program } = await getCurrentProgram(channel.id)
+
+      if (!program) {
+        console.log("No program found in schedule check")
+        return
+      }
+
+      // If the scheduled program has changed
+      if (program.id !== scheduledProgramId) {
+        console.log(`Schedule change detected: Current ID=${scheduledProgramId}, New ID=${program.id}`)
+        console.log(`Current program: ${currentProgram?.title}, New program: ${program.title}`)
+
+        // Save current playback position before switching
+        if (currentProgram && videoRef.current) {
+          await saveWatchProgress(currentProgram.id, videoRef.current.currentTime)
+        }
+
+        // Update the scheduled program ID
+        setScheduledProgramId(program.id)
+
+        // Switch to the new program
+        setProgramSwitchInProgress(true)
+        await switchToProgram(program)
+        setProgramSwitchInProgress(false)
+      }
+    } catch (error) {
+      console.error("Error checking program schedule:", error)
+    }
+  }
+
+  // New function to switch to a specific program
+  const switchToProgram = async (program: Program) => {
+    console.log(`Switching to program: ${program.title} (ID: ${program.id})`)
+
+    if (!videoRef.current) return
+
+    setIsLoading(true)
+    setCurrentProgram(program)
+
+    try {
+      const url = await getDirectDownloadUrl(program.mp4_url, channel.id)
+
+      if (url) {
+        console.log(`Found direct URL for new program: ${url}`)
+        setDirectUrl(url)
+
+        // Add cache-busting parameter
+        const urlWithCacheBust = `${url}?t=${Date.now()}`
+
+        // Update video source and load the new video
+        videoRef.current.src = urlWithCacheBust
+        videoRef.current.load()
+        setVideoUrl(urlWithCacheBust)
+        setShowStandby(false)
+
+        // Auto-play the new program
+        try {
+          await videoRef.current.play()
+          setIsPlaying(true)
+        } catch (playError) {
+          console.error("Error auto-playing new program:", playError)
+        }
+      } else {
+        console.error("Could not find a working URL for new program")
+        setErrorDetails("Could not find a working URL for this video")
+        setShowStandby(true)
+      }
+    } catch (error) {
+      console.error("Error switching to new program:", error)
+      setShowStandby(true)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  // Update the refreshCurrentProgram function to handle errors better and provide fallbacks
+  const refreshCurrentProgram = async (forceRefresh = false) => {
+    const now = Date.now()
+    const timeSinceLastRefresh = now - lastRefreshTime
+
+    // If a refresh was recently performed, don't do it again
+    if (!forceRefresh && timeSinceLastRefresh < 10000) {
+      console.log("Skipping refresh - too soon since last refresh")
       return
     }
 
@@ -614,26 +699,16 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       const { program } = await getCurrentProgram(channel.id)
       const { programs } = await getUpcomingPrograms(channel.id)
 
+      // Update the scheduled program ID
+      if (program) {
+        setScheduledProgramId(program.id)
+      }
+
       // Only update the current program if it's different or this is a forced refresh
       if (forceRefresh || program?.id !== currentProgram?.id) {
         console.log(`Program change: ${currentProgram?.title} -> ${program?.title}`)
         setCurrentProgram(program)
         programChangeTimeRef.current = now
-
-        // If actively playing a video and the program changed,
-        // consider if we should continue playing current video
-        if (isActivelyPlaying && !forceRefresh) {
-          const currentTime = videoRef.current?.currentTime || 0
-          const duration = videoRef.current?.duration || 0
-
-          // If more than 20% into the video but less than 90%, keep playing current video
-          if (currentTime > duration * 0.2 && currentTime < duration * 0.9) {
-            console.log(`Continuing to play current video (${Math.round(currentTime)}s of ${Math.round(duration)}s)`)
-            setIsLoading(false)
-            setUpcomingPrograms(programs)
-            return
-          }
-        }
       }
 
       setUpcomingPrograms(programs)
@@ -686,6 +761,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
             videoRef.current.src = urlWithCacheBust
             videoRef.current.load()
             setShowStandby(false)
+            setVideoUrl(urlWithCacheBust)
           } else {
             // If we couldn't get a direct URL, try using the raw mp4_url as a fallback
             console.log(`No direct URL found, trying raw mp4_url as fallback: ${program.mp4_url}`)
@@ -703,6 +779,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
               videoRef.current.src = urlWithCacheBust
               videoRef.current.load()
               setShowStandby(false)
+              setVideoUrl(urlWithCacheBust)
             } else {
               console.error("Could not find a working URL and mp4_url is not usable")
               setErrorDetails("Could not find a working URL for this video")
@@ -724,6 +801,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
             videoRef.current.src = program.mp4_url
             videoRef.current.load()
             setShowStandby(false)
+            setVideoUrl(program.mp4_url)
           } else {
             setShowStandby(true)
 
@@ -795,17 +873,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         loaded: true,
       })
 
-      // For videos longer than 5 minutes, completely disable stall detection
-      // This prevents unnecessary interruptions
-      if (videoRef.current.duration > 300) {
-        console.log("Long video detected, disabling stall detection")
-        if (playbackCheckRef.current) {
-          clearInterval(playbackCheckRef.current)
-        }
-        return
-      }
-
-      // Set up playback monitoring to detect stalls, but only for shorter videos
+      // Set up playback monitoring to detect stalls, but with less aggressive checking
       if (playbackCheckRef.current) {
         clearInterval(playbackCheckRef.current)
       }
@@ -846,10 +914,13 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   // Update the loadInitialProgram logic in the useEffect
   // Effect to handle initial setup and periodic refresh
   useEffect(() => {
+    let initialLoad = false // Flag to track initial load
+
     // Initial setup
     if (!currentProgram) {
       console.log(`No initial program for channel ${channel.id}, refreshing...`)
       refreshCurrentProgram(true)
+      initialLoad = true
     } else {
       // If we have an initial program, try to load it
       const loadInitialProgram = async () => {
@@ -932,23 +1003,26 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       }
 
       loadInitialProgram()
+      initialLoad = true
     }
 
-    // Set up periodic refresh, but at a MUCH lower frequency (every 15 minutes instead of every 5)
-    // This prevents disrupting playback too often
+    // Set up program schedule checking at regular intervals (every 2 minutes)
+    programCheckIntervalRef.current = setInterval(() => {
+      checkProgramSchedule()
+    }, 120000) // 2 minutes = 120,000 ms
+
+    // Set up periodic refresh, but at a lower frequency (every 10 minutes)
+    // This is a backup in case the program schedule check fails
     refreshTimerRef.current = setInterval(() => {
-      // Only refresh if video is NOT playing or is paused
-      if (!videoRef.current || videoRef.current.paused) {
-        console.log("Periodic refresh triggered while video is not playing")
-        refreshCurrentProgram(false)
-      } else {
-        console.log("Skipping periodic refresh because video is playing")
-      }
-    }, 900000) // 15 minutes = 900,000 ms (increased from 5 minutes)
+      refreshCurrentProgram(false)
+    }, 600000) // 10 minutes = 600,000 ms
 
     return () => {
       if (refreshTimerRef.current) {
         clearInterval(refreshTimerRef.current)
+      }
+      if (programCheckIntervalRef.current) {
+        clearInterval(programCheckIntervalRef.current)
       }
       if (errorTimerRef.current) {
         clearTimeout(errorTimerRef.current)
@@ -1374,6 +1448,9 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       {currentProgram && (
         <div className="bg-black p-4">
           <h2 className="text-xl font-bold">{currentProgram.title}</h2>
+          {scheduledProgramId !== currentProgram.id && (
+            <p className="text-yellow-500 text-sm mt-1">New program scheduled. Will update shortly.</p>
+          )}
           {fallbackMode && (
             <p className="text-yellow-500 text-sm mt-1">
               Using fallback video. The original content will be restored when available.
