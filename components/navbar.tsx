@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react"
 import Link from "next/link"
-import { Search, Bell, User, Heart, Menu, X } from "lucide-react"
+import { Search, Bell, User, Heart, Menu, X, BookOpen } from "lucide-react"
 import { SearchOverlay } from "./search-overlay"
 
 export function Navbar() {
@@ -43,14 +43,23 @@ export function Navbar() {
               Browse
             </Link>
             <Link href="/favorites" className="text-white hover:text-gray-300">
-              <Heart className="h-4 w-4 mr-1 inline text-red-500" />
-              Favorites
+              <span className="flex items-center">
+                <Heart className="h-4 w-4 mr-1 text-red-500" />
+                Favorites
+              </span>
             </Link>
             <Link href="/history" className="text-white hover:text-gray-300">
               Continue Watching
             </Link>
+            <Link href="/freedom-school" className="text-white hover:text-gray-300 flex items-center">
+              <BookOpen className="h-4 w-4 mr-1 text-yellow-500" />
+              Freedom School
+            </Link>
             <Link href="/donate" className="text-white hover:text-gray-300">
-              Donate
+              <span className="flex items-center">
+                <Heart className="h-4 w-4 mr-1 text-red-500" />
+                Donate
+              </span>
             </Link>
           </nav>
         </div>
@@ -110,7 +119,12 @@ export function Navbar() {
             <Link href="/history" className="text-white hover:text-gray-300 py-2">
               Continue Watching
             </Link>
-            <Link href="/donate" className="text-white hover:text-gray-300 py-2">
+            <Link href="/freedom-school" className="text-white hover:text-gray-300 py-2 flex items-center">
+              <BookOpen className="h-4 w-4 mr-2 text-yellow-500" />
+              Freedom School
+            </Link>
+            <Link href="/donate" className="text-white hover:text-gray-300 py-2 flex items-center">
+              <Heart className="h-4 w-4 mr-2 text-red-500" />
               Donate
             </Link>
           </nav>
