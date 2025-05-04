@@ -833,11 +833,17 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
         // Switch to the new program
         setProgramSwitchInProgress(true)
-        await switchToProgram(program)
-        setProgramSwitchInProgress(false)
+        try {
+          await switchToProgram(program)
+        } catch (error) {
+          console.error("Error during program switch:", error)
+        } finally {
+          setProgramSwitchInProgress(false)
+        }
       }
     } catch (error) {
       console.error("Error checking program schedule:", error)
+      setProgramSwitchInProgress(false)
     }
   }
 
@@ -872,18 +878,38 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         const urlWithCacheBust = `${finalUrl}?t=${Date.now()}`
 
         // Update video source and load the new video
-        videoRef.current.src = urlWithCacheBust
-        videoRef.current.load()
         setVideoUrl(urlWithCacheBust)
         setShowStandby(false)
 
-        // Auto-play the new program
-        try {
-          await videoRef.current.play()
-          setIsPlaying(true)
-        } catch (playError) {
-          console.error("Error auto-playing new program:", playError)
-          // Don't throw an error here, just log it and continue
+        // Instead of immediately playing, we'll set up a one-time event listener
+        // that will play the video once it's ready
+        const playWhenReady = () => {
+          if (videoRef.current) {
+            videoRef.current
+              .play()
+              .then(() => {
+                setIsPlaying(true)
+                console.log("Successfully started playback of new program")
+              })
+              .catch((playError) => {
+                console.error("Error auto-playing new program:", playError)
+                // Still mark as not loading even if play fails
+                setIsLoading(false)
+              })
+          }
+          // Remove the event listener after it fires once
+          if (videoRef.current) {
+            videoRef.current.removeEventListener("canplay", playWhenReady)
+          }
+        }
+
+        // Add the event listener before changing the source
+        if (videoRef.current) {
+          videoRef.current.addEventListener("canplay", playWhenReady)
+
+          // Now update the source and load
+          videoRef.current.src = urlWithCacheBust
+          videoRef.current.load()
         }
       } else {
         console.error("Could not find a working URL for new program")
@@ -894,11 +920,11 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
             console.error("Failed to play standby video:", e)
           })
         }
+        setIsLoading(false)
       }
     } catch (error) {
       console.error("Error switching to new program:", error)
       tryFallbackVideo()
-    } finally {
       setIsLoading(false)
     }
   }
