@@ -17,11 +17,13 @@ export default function NotificationsPage() {
             <h1 className="text-3xl font-bold">Notifications</h1>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm">
+            {/* Changed from variant="outline" to variant="secondary" for better visibility */}
+            <Button variant="secondary" size="sm" className="bg-gray-700 hover:bg-gray-600 text-white">
               <Settings className="h-4 w-4 mr-2" />
               Settings
             </Button>
-            <Button variant="outline" size="sm">
+            {/* Changed from variant="outline" to variant="secondary" for better visibility */}
+            <Button variant="secondary" size="sm" className="bg-gray-700 hover:bg-gray-600 text-white">
               <Trash2 className="h-4 w-4 mr-2" />
               Clear All
             </Button>
