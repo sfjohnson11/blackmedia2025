@@ -63,6 +63,8 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const [scheduledProgramId, setScheduledProgramId] = useState<number | null>(initialProgram?.id || null)
   const [lastProgramCheck, setLastProgramCheck] = useState<number>(Date.now())
   const [programSwitchInProgress, setProgramSwitchInProgress] = useState(false)
+  const [videoFormat, setVideoFormat] = useState<string | null>(null)
+  const [formatFallbackAttempted, setFormatFallbackAttempted] = useState(false)
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const standbyVideoRef = useRef<HTMLVideoElement>(null)
@@ -117,6 +119,76 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     // We no longer disable auto refresh completely, but we'll use this to determine
     // how frequently to check for program changes
     return duration > 300
+  }
+
+  // Helper function to detect video format from URL
+  const detectVideoFormat = (url: string): string => {
+    if (!url) return "unknown"
+
+    const lowerUrl = url.toLowerCase()
+
+    if (lowerUrl.includes(".m3u8")) return "hls"
+    if (lowerUrl.includes(".mpd")) return "dash"
+    if (lowerUrl.includes(".mp4")) return "mp4"
+    if (lowerUrl.includes(".webm")) return "webm"
+    if (lowerUrl.includes(".mov")) return "mov"
+    if (lowerUrl.includes(".avi")) return "avi"
+    if (lowerUrl.includes(".mkv")) return "mkv"
+    if (lowerUrl.includes(".flv")) return "flv"
+
+    // Try to guess from path components
+    if (lowerUrl.includes("/hls/")) return "hls"
+    if (lowerUrl.includes("/dash/")) return "dash"
+
+    return "unknown"
+  }
+
+  // Helper function to get MIME type from URL
+  const getMimeType = (url: string): string => {
+    const format = detectVideoFormat(url)
+
+    switch (format) {
+      case "hls":
+        return "application/vnd.apple.mpegurl"
+      case "dash":
+        return "application/dash+xml"
+      case "mp4":
+        return "video/mp4"
+      case "webm":
+        return "video/webm"
+      case "mov":
+        return "video/quicktime"
+      case "avi":
+        return "video/x-msvideo"
+      case "mkv":
+        return "video/x-matroska"
+      case "flv":
+        return "video/x-flv"
+      default:
+        return "video/mp4" // Default to mp4 as a safe choice
+    }
+  }
+
+  // Helper function to try alternative format for the same video
+  const tryAlternativeFormat = async (originalUrl: string): Promise<string | null> => {
+    if (!originalUrl) return null
+
+    // If it's an m3u8 file, try mp4 instead
+    if (originalUrl.includes(".m3u8")) {
+      return originalUrl.replace(".m3u8", ".mp4")
+    }
+
+    // If it's an mp4 file, try m3u8 instead
+    if (originalUrl.includes(".mp4")) {
+      return originalUrl.replace(".mp4", ".m3u8")
+    }
+
+    // Try adding or removing trailing slash
+    if (originalUrl.endsWith("/")) {
+      return originalUrl.slice(0, -1)
+    } else {
+      return `${originalUrl}/`
+    }
   }
 
   // Check if channel is in favorites
@@ -645,6 +717,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
     setIsLoading(true)
     setCurrentProgram(program)
+    setFormatFallbackAttempted(false)
 
     try {
       const url = await getDirectDownloadUrl(program.mp4_url, channel.id)
@@ -652,6 +725,11 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       if (url) {
         console.log(`Found direct URL for new program: ${url}`)
         setDirectUrl(url)
+
+        // Detect video format
+        const format = detectVideoFormat(url)
+        setVideoFormat(format)
+        console.log(`Detected video format: ${format}`)
 
         // Add cache-busting parameter
         const urlWithCacheBust = `${url}?t=${Date.now()}`
@@ -762,6 +840,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       if (program && videoRef.current) {
         loadAttemptRef.current = 0
         setAttemptedUrls([])
+        setFormatFallbackAttempted(false)
 
         try {
           // First, try to get a direct URL
@@ -771,6 +850,11 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
             console.log(`Found direct URL: ${url}`)
             setDirectUrl(url)
             setAttemptedUrls([url])
+
+            // Detect video format
+            const format = detectVideoFormat(url)
+            setVideoFormat(format)
+            console.log(`Detected video format: ${format}`)
 
             // Add cache-busting parameter
             const urlWithCacheBust = `${url}?t=${Date.now()}`
@@ -787,6 +871,11 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
             if (program.mp4_url && (program.mp4_url.startsWith("http") || program.mp4_url.includes("/"))) {
               setDirectUrl(program.mp4_url)
               setAttemptedUrls([program.mp4_url])
+
+              // Detect video format
+              const format = detectVideoFormat(program.mp4_url)
+              setVideoFormat(format)
+              console.log(`Detected video format: ${format}`)
 
               // Add cache-busting parameter if it's a URL
               const urlWithCacheBust = program.mp4_url.startsWith("http")
@@ -928,6 +1017,38 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     return `${minutes}:${seconds < 10 ? "0" : ""}${seconds}`
   }
 
+  // Try alternative format when a format error occurs
+  const tryFormatFallback = async () => {
+    if (!videoUrl || !videoRef.current || formatFallbackAttempted) return false
+
+    setFormatFallbackAttempted(true)
+    console.log("Trying format fallback for video URL:", videoUrl)
+
+    try {
+      const alternativeUrl = await tryAlternativeFormat(videoUrl)
+      if (alternativeUrl) {
+        console.log("Found alternative format URL:", alternativeUrl)
+
+        // Detect video format
+        const format = detectVideoFormat(alternativeUrl)
+        setVideoFormat(format)
+        console.log(`Detected alternative video format: ${format}`)
+
+        // Add cache-busting parameter
+        const urlWithCacheBust = `${alternativeUrl}?t=${Date.now()}`
+
+        videoRef.current.src = urlWithCacheBust
+        videoRef.current.load()
+        setVideoUrl(urlWithCacheBust)
+        return true
+      }
+    } catch (error) {
+      console.error("Error trying format fallback:", error)
+    }
+
+    return false
+  }
+
   // Update the loadInitialProgram logic in the useEffect
   // Effect to handle initial setup and periodic refresh
   useEffect(() => {
@@ -944,6 +1065,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         if (videoRef.current) {
           loadAttemptRef.current = 0
           setAttemptedUrls([])
+          setFormatFallbackAttempted(false)
 
           try {
             // First try to get a direct URL
@@ -953,6 +1075,11 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
               console.log(`Found direct URL for initial program: ${url}`)
               setDirectUrl(url)
               setAttemptedUrls([url])
+
+              // Detect video format
+              const format = detectVideoFormat(url)
+              setVideoFormat(format)
+              console.log(`Detected video format: ${format}`)
 
               // Add cache-busting parameter
               const urlWithCacheBust = `${url}?t=${Date.now()}`
@@ -974,6 +1101,11 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
               ) {
                 setDirectUrl(currentProgram.mp4_url)
                 setAttemptedUrls([currentProgram.mp4_url])
+
+                // Detect video format
+                const format = detectVideoFormat(currentProgram.mp4_url)
+                setVideoFormat(format)
+                console.log(`Detected video format: ${format}`)
 
                 videoRef.current.src = currentProgram.mp4_url
                 videoRef.current.load()
@@ -1105,6 +1237,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       loadAttemptRef.current = 0
       setAttemptedUrls([])
       setErrorDetails(null)
+      setFormatFallbackAttempted(false)
 
       // Don't reload the video if we're actively playing and the program just changed
       // (prevent interruptions during viewing)
@@ -1129,6 +1262,11 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
             console.log(`Found direct URL for program: ${url}`)
             setDirectUrl(url)
             setAttemptedUrls([url])
+
+            // Detect video format
+            const format = detectVideoFormat(url)
+            setVideoFormat(format)
+            console.log(`Detected video format: ${format}`)
 
             // Add cache-busting parameter
             const urlWithCacheBust = `${url}?t=${Date.now()}`
@@ -1297,13 +1435,28 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
                     errorMessage = "Network error occurred while loading"
                     break
                   case MediaError.MEDIA_ERR_DECODE:
-                    errorMessage = "Media decoding error"
+                    errorMessage = "Media decoding error - format may be unsupported"
                     break
                   case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
                     errorMessage = "Video format not supported"
                     break
                   default:
                     errorMessage = videoError.message || `Error code: ${videoError.code}`
+                }
+
+                // For format errors, try alternative format
+                if (
+                  videoError.code === MediaError.MEDIA_ERR_DECODE ||
+                  videoError.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED
+                ) {
+                  console.log("Format error detected, trying alternative format")
+                  tryFormatFallback().then((success) => {
+                    if (!success) {
+                      console.log("Format fallback failed, trying fallback video")
+                      tryFallbackVideo()
+                    }
+                  })
+                  return
                 }
               }
 
@@ -1338,12 +1491,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
               console.log("Video playback has stalled")
             }}
           >
-            {videoUrl && (
-              <source
-                src={videoUrl}
-                type={videoUrl.includes(".m3u8") ? "application/vnd.apple.mpegurl" : "video/mp4"}
-              />
-            )}
+            {videoUrl && <source src={videoUrl} type={getMimeType(videoUrl)} />}
             Your browser does not support the video tag.
           </video>
 
@@ -1492,6 +1640,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       {currentProgram && (
         <div className="bg-black p-4">
           <h2 className="text-xl font-bold">{currentProgram.title}</h2>
+          {videoFormat && <p className="text-gray-400 text-sm mt-1">Format: {videoFormat}</p>}
           {scheduledProgramId !== currentProgram.id && (
             <p className="text-yellow-500 text-sm mt-1">New program scheduled. Will update shortly.</p>
           )}
