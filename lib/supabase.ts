@@ -593,8 +593,10 @@ export async function getWatchProgress(programId: number): Promise<number | null
   }
 }
 
-// New function to disable automatic refresh for long videos
+// This is a critical fix for the video restart issue
+// Add this function to completely disable any automatic refresh for videos longer than 5 minutes
 export function shouldDisableAutoRefresh(duration: number): boolean {
-  // If video is longer than 10 minutes, disable auto refresh
-  return duration > 600
+  // If video is longer than 5 minutes (300 seconds), disable auto refresh
+  // This will prevent the 5-minute restart issue
+  return duration > 300
 }

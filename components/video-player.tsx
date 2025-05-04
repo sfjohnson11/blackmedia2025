@@ -2,39 +2,21 @@
 
 import type React from "react"
 import { useState, useEffect, useRef } from "react"
+import { useRouter } from "next/navigation"
+import { Loader2, Play, Pause, Volume2, VolumeX, Maximize, ChevronLeft } from "lucide-react"
+import { Progress } from "@/components/ui/progress"
 import {
-  getCurrentProgram,
-  getUpcomingPrograms,
-  calculateProgramProgress,
-  isLiveChannel,
   getLiveStreamUrl,
   getDirectDownloadUrl,
+  calculateProgramProgress,
   saveWatchProgress,
   getWatchProgress,
+  getCurrentProgram,
+  getUpcomingPrograms,
+  isLiveChannel,
 } from "@/lib/supabase"
 import type { Channel, Program } from "@/types"
-import {
-  RefreshCw,
-  Info,
-  Play,
-  Volume2,
-  VolumeX,
-  Maximize,
-  Pause,
-  PictureInPicture,
-  ChevronRight,
-  ChevronLeft,
-  FastForward,
-  Rewind,
-  Share2,
-  Heart,
-  Clock4,
-} from "lucide-react"
 import { cleanChannelName } from "@/lib/utils"
-import { Button } from "@/components/ui/button"
-import Link from "next/link"
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 
 interface VideoPlayerProps {
   channel: Channel
@@ -43,22 +25,26 @@ interface VideoPlayerProps {
 }
 
 export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initialUpcoming }: VideoPlayerProps) {
+  const router = useRouter()
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [isMuted, setIsMuted] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
   const [currentProgram, setCurrentProgram] = useState<Program | null>(initialProgram)
   const [upcomingPrograms, setUpcomingPrograms] = useState<Program[]>(initialUpcoming)
+  const [videoUrl, setVideoUrl] = useState<string | null>(null)
   const [progress, setProgress] = useState(0)
-  const [isLoading, setIsLoading] = useState(false)
+  const [progressPercent, setProgressPercent] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [showStandby, setShowStandby] = useState(false)
   const [errorDetails, setErrorDetails] = useState<string | null>(null)
-  const [isRetrying, setIsRetrying] = useState(false)
+  const [isRetrying, setIsRetrying] = useState(isRetrying)
   const [attemptedUrls, setAttemptedUrls] = useState<string[]>([])
   const [showDebugInfo, setShowDebugInfo] = useState(false)
   const [directUrl, setDirectUrl] = useState<string | null>(null)
   const [lastRefreshTime, setLastRefreshTime] = useState<number>(Date.now())
   const [playbackStartTime, setPlaybackStartTime] = useState<number | null>(null)
-  const [isPlaying, setIsPlaying] = useState(false)
+  const [isLive, setIsLive] = useState(false)
   const [volume, setVolume] = useState(1)
-  const [isMuted, setIsMuted] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [showControls, setShowControls] = useState(true)
   const [controlsTimeout, setControlsTimeout] = useState<NodeJS.Timeout | null>(null)
@@ -89,6 +75,21 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const [lastPlaybackTime, setLastPlaybackTime] = useState<number>(0)
   const playbackCheckRef = useRef<NodeJS.Timeout | null>(null)
   const progressSaveIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const progressIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const refreshIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const lastPlaybackTimeRef = useRef<number>(0)
+  const stallDetectionRef = useRef<NodeJS.Timeout | null>(null)
+  const retryCountRef = useRef<number>(0)
+  const maxRetries = 3
+
+  // Track if component is mounted to prevent state updates after unmount
+  const isMountedRef = useRef(true)
+
+  // Track the last time we saved progress
+  const lastProgressSaveRef = useRef<number>(0)
+
+  // Track if we're currently in a retry loop
+  const isRetryingRef = useRef(false)
 
   const cleanedName = cleanChannelName(channel.name)
 
@@ -1001,562 +1002,124 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     }
   }, [currentProgram, channel.id])
 
+  const handleBack = () => {
+    router.back()
+  }
+
+  const togglePlayPause = () => {
+    if (videoRef.current) {
+      if (videoRef.current.paused) {
+        videoRef.current.play()
+        setIsPlaying(true)
+      } else {
+        videoRef.current.pause()
+        setIsPlaying(false)
+      }
+    }
+  }
+
   // Render both videos but control visibility with CSS
   return (
-    <div className="w-full aspect-video bg-black relative" ref={videoContainerRef} onMouseMove={handleMouseMove}>
-      {/* Main video container - always rendered but may be hidden */}
-      <div
-        ref={mainContainerRef}
-        className={`absolute inset-0 transition-opacity duration-500 ${showStandby ? "opacity-0" : "opacity-100"}`}
-        style={{ zIndex: showStandby ? 1 : 2 }}
-      >
-        {currentProgram && (
+    <div className="relative bg-black">
+      {/* Video container */}
+      <div className="relative w-full aspect-video">
+        {/* Back button */}
+        <button
+          onClick={handleBack}
+          className="absolute top-4 left-4 z-10 bg-black/50 p-2 rounded-full hover:bg-black/70 transition-colors"
+        >
+          <ChevronLeft className="h-6 w-6" />
+        </button>
+
+        {/* Loading state */}
+        {isLoading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black">
+            <Loader2 className="h-12 w-12 text-red-600 animate-spin" />
+          </div>
+        )}
+
+        {/* Error state */}
+        {error && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black">
+            <div className="text-center p-4">
+              <p className="text-red-500 mb-4">{error}</p>
+              <button
+                onClick={() => {
+                  setError(null)
+                  setIsLoading(true)
+
+                  // Try reloading the video
+                  if (videoRef.current && videoUrl) {
+                    videoRef.current.load()
+                    videoRef.current.play().catch((err) => {
+                      console.error("Error during retry:", err)
+                      setError("Unable to play this video. Please try again later.")
+                      setIsLoading(false)
+                    })
+                  }
+                }}
+                className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition-colors"
+              >
+                Try Again
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Video element */}
+        {videoUrl && (
           <video
             ref={videoRef}
-            autoPlay
+            src={videoUrl}
             className="w-full h-full"
-            onContextMenu={handleContextMenu}
+            autoPlay
+            playsInline
+            muted={isMuted}
+            onLoadStart={() => setIsLoading(true)}
+            onCanPlay={() => setIsLoading(false)}
+            onEnded={handleVideoEnded}
             onError={handleVideoError}
-            onLoadedData={handleVideoLoaded}
+            onLoadedMetadata={handleMetadataLoaded}
             onPlay={handleVideoStarted}
             onPause={handleVideoPaused}
-            onEnded={handleVideoEnded}
             onTimeUpdate={handleTimeUpdate}
-            onLoadedMetadata={handleMetadataLoaded}
-            controlsList="nodownload nofullscreen"
-            disablePictureInPicture={false}
-            playsInline
+            onLoadedData={handleVideoLoaded}
           />
         )}
 
-        {/* Custom video controls */}
-        {currentProgram && !showStandby && (
-          <div
-            className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4 transition-opacity duration-300 ${
-              showControls ? "opacity-100" : "opacity-0"
-            }`}
-            style={{ zIndex: 20 }}
-          >
-            {/* Progress bar */}
-            <div className="w-full flex items-center mb-2">
-              <input
-                type="range"
-                min="0"
-                max="100"
-                value={progress}
-                onChange={handleSeek}
-                className="w-full h-1 bg-gray-700 rounded-full appearance-none cursor-pointer"
-                style={{
-                  background: `linear-gradient(to right, #ef4444 0%, #ef4444 ${progress}%, #4b5563 ${progress}%, #4b5563 100%)`,
-                }}
-              />
+        {/* Video controls overlay */}
+        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4">
+          {/* Progress bar for non-live videos */}
+          {!isLive && currentProgram && (
+            <div className="mb-4">
+              <Progress value={progressPercent} className="h-1" />
             </div>
+          )}
 
-            {/* Controls row */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-4">
-                {/* Play/Pause button */}
-                <TooltipProvider delayDuration={700}>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        onClick={togglePlay}
-                        className="text-white hover:text-gray-300 focus:outline-none"
-                        aria-label={isPlaying ? "Pause" : "Play"}
-                      >
-                        {isPlaying ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6" />}
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>{isPlaying ? "Pause (k)" : "Play (k)"}</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-
-                {/* Skip backward */}
-                <TooltipProvider delayDuration={700}>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        onClick={() => skipTime(-10)}
-                        className="text-white hover:text-gray-300 focus:outline-none"
-                        aria-label="Skip backward 10 seconds"
-                      >
-                        <Rewind className="h-5 w-5" />
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>Rewind 10s (←)</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-
-                {/* Skip forward */}
-                <TooltipProvider delayDuration={700}>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        onClick={() => skipTime(10)}
-                        className="text-white hover:text-gray-300 focus:outline-none"
-                        aria-label="Skip forward 10 seconds"
-                      >
-                        <FastForward className="h-5 w-5" />
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>Forward 10s (→)</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-
-                {/* Volume control */}
-                <div className="flex items-center space-x-2">
-                  <TooltipProvider delayDuration={700}>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button
-                          onClick={toggleMute}
-                          className="text-white hover:text-gray-300 focus:outline-none"
-                          aria-label={isMuted ? "Unmute" : "Mute"}
-                        >
-                          {isMuted || volume === 0 ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>{isMuted ? "Unmute (m)" : "Mute (m)"}</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                  <input
-                    type="range"
-                    min="0"
-                    max="1"
-                    step="0.1"
-                    value={volume}
-                    onChange={handleVolumeChange}
-                    className="w-20 h-1 bg-gray-700 rounded-full appearance-none cursor-pointer md:block hidden"
-                  />
-                </div>
-
-                {/* Time display */}
-                <div className="text-white text-sm">
-                  {videoRef.current ? formatTime(videoRef.current.currentTime) : "0:00"} /
-                  {videoMetadata.loaded ? formatTime(videoMetadata.duration) : "0:00"}
-                </div>
-              </div>
-
-              <div className="flex items-center space-x-4">
-                {/* Sleep timer */}
-                <DropdownMenu>
-                  <TooltipProvider delayDuration={700}>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <DropdownMenuTrigger asChild>
-                          <button className="text-white hover:text-gray-300 focus:outline-none relative">
-                            <Clock4 className="h-5 w-5" />
-                            {sleepTimerMinutes && (
-                              <span className="absolute -top-1 -right-1 bg-red-600 text-white text-xs rounded-full w-3 h-3 flex items-center justify-center"></span>
-                            )}
-                          </button>
-                        </DropdownMenuTrigger>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>Sleep Timer</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                  <DropdownMenuContent>
-                    {sleepTimerMinutes ? (
-                      <>
-                        <div className="px-2 py-1 text-sm">Sleep in: {formatSleepTimeRemaining()}</div>
-                        <DropdownMenuItem onClick={cancelSleepTimer}>Cancel Timer</DropdownMenuItem>
-                      </>
-                    ) : (
-                      <>
-                        <DropdownMenuItem onClick={() => startSleepTimer(15)}>15 minutes</DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => startSleepTimer(30)}>30 minutes</DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => startSleepTimer(60)}>60 minutes</DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => startSleepTimer(120)}>2 hours</DropdownMenuItem>
-                      </>
-                    )}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-
-                {/* Playback speed */}
-                <DropdownMenu>
-                  <TooltipProvider delayDuration={700}>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <DropdownMenuTrigger asChild>
-                          <button className="text-white hover:text-gray-300 focus:outline-none">
-                            <span className="text-xs font-medium">{playbackRate}x</span>
-                          </button>
-                        </DropdownMenuTrigger>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>Playback Speed</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                  <DropdownMenuContent>
-                    <DropdownMenuItem onClick={() => changePlaybackSpeed(0.5)}>0.5x</DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => changePlaybackSpeed(0.75)}>0.75x</DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => changePlaybackSpeed(1)}>Normal</DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => changePlaybackSpeed(1.25)}>1.25x</DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => changePlaybackSpeed(1.5)}>1.5x</DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => changePlaybackSpeed(2)}>2x</DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-
-                {/* Favorite button */}
-                <TooltipProvider delayDuration={700}>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        onClick={toggleFavorite}
-                        className={`focus:outline-none ${isFavorite ? "text-red-500" : "text-white hover:text-gray-300"}`}
-                        aria-label={isFavorite ? "Remove from favorites" : "Add to favorites"}
-                      >
-                        <Heart className={`h-5 w-5 ${isFavorite ? "fill-current" : ""}`} />
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>{isFavorite ? "Remove from favorites" : "Add to favorites"}</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-
-                {/* Share button */}
-                <TooltipProvider delayDuration={700}>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        onClick={shareChannel}
-                        className="text-white hover:text-gray-300 focus:outline-none"
-                        aria-label="Share"
-                      >
-                        <Share2 className="h-5 w-5" />
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>Share</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-
-                {/* Picture-in-Picture button */}
-                <TooltipProvider delayDuration={700}>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        onClick={togglePictureInPicture}
-                        className="text-white hover:text-gray-300 focus:outline-none"
-                        aria-label="Toggle picture-in-picture"
-                      >
-                        <PictureInPicture className="h-5 w-5" />
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>Picture-in-Picture (p)</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-
-                {/* Fullscreen button */}
-                <TooltipProvider delayDuration={700}>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        onClick={toggleFullscreen}
-                        className="text-white hover:text-gray-300 focus:outline-none"
-                        aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
-                      >
-                        <Maximize className="h-5 w-5" />
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>Fullscreen (f)</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              </div>
+          {/* Control buttons */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-4">
+              <button onClick={togglePlayPause} className="hover:text-red-500 transition-colors">
+                {isPlaying ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6" />}
+              </button>
+              <button onClick={toggleMute} className="hover:text-red-500 transition-colors">
+                {isMuted ? <VolumeX className="h-6 w-6" /> : <Volume2 className="h-6 w-6" />}
+              </button>
+              {isLive && <span className="text-red-500 text-sm font-medium">LIVE</span>}
             </div>
+            <button onClick={toggleFullscreen} className="hover:text-red-500 transition-colors">
+              <Maximize className="h-6 w-6" />
+            </button>
           </div>
-        )}
+        </div>
       </div>
 
-      {/* Channel switcher - for quick navigation between channels */}
-      {showChannelSwitcher && (
-        <div className="absolute top-1/2 left-0 right-0 transform -translate-y-1/2 flex justify-between px-4 z-30 pointer-events-none">
-          <button
-            className="bg-black/70 rounded-full p-3 text-white hover:bg-black/90 pointer-events-auto"
-            onClick={() => (window.location.href = `/watch/${Number.parseInt(channel.id) - 1}`)}
-            disabled={Number.parseInt(channel.id) <= 1}
-          >
-            <ChevronLeft className="h-8 w-8" />
-          </button>
-          <button
-            className="bg-black/70 rounded-full p-3 text-white hover:bg-black/90 pointer-events-auto"
-            onClick={() => (window.location.href = `/watch/${Number.parseInt(channel.id) + 1}`)}
-          >
-            <ChevronRight className="h-8 w-8" />
-          </button>
+      {/* Current program info */}
+      {currentProgram && (
+        <div className="bg-black p-4">
+          <h2 className="text-xl font-bold">{currentProgram.title}</h2>
         </div>
       )}
-
-      {/* Standby video container - always rendered but may be hidden */}
-      <div
-        ref={standbyContainerRef}
-        className={`absolute inset-0 transition-opacity duration-500 ${showStandby ? "opacity-100" : "opacity-0"}`}
-        style={{ zIndex: showStandby ? 2 : 1 }}
-      >
-        {/* Standby content */}
-        <div className="absolute inset-0 bg-gradient-to-b from-gray-900 to-black flex flex-col items-center justify-center">
-          <div className="text-center max-w-2xl px-4">
-            <h2 className="text-3xl font-bold mb-4">
-              Channel {channel.id}: {cleanedName}
-            </h2>
-
-            <div className="bg-black/40 p-6 rounded-lg mb-8">
-              <div className="flex items-center justify-center mb-4">
-                <div className="w-16 h-16 rounded-full bg-red-600 flex items-center justify-center">
-                  <Play className="h-8 w-8 text-white" />
-                </div>
-              </div>
-
-              <p className="text-xl mb-4">Content for this channel is currently unavailable.</p>
-
-              <p className="text-gray-400 mb-6">
-                We're working on adding videos for this channel. Please check back later or try another channel.
-              </p>
-
-              {currentProgram && (
-                <div className="mb-6">
-                  <h3 className="font-semibold mb-2">Scheduled Program:</h3>
-                  <p className="text-white">{currentProgram.title}</p>
-                  <p className="text-sm text-gray-400">
-                    {new Date(currentProgram.start_time).toLocaleTimeString([], {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                      hour12: true,
-                    })}
-                  </p>
-                </div>
-              )}
-
-              <div className="flex justify-center space-x-4">
-                <Button onClick={retryPlayback} disabled={isRetrying} className="bg-red-600 hover:bg-red-700">
-                  {isRetrying ? (
-                    <>
-                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                      Retrying...
-                    </>
-                  ) : (
-                    <>
-                      <RefreshCw className="h-4 w-4 mr-2" />
-                      Retry Playback
-                    </>
-                  )}
-                </Button>
-
-                <Button onClick={() => (window.location.href = "/channels")} variant="outline">
-                  Browse Channels
-                </Button>
-              </div>
-            </div>
-
-            {upcomingPrograms.length > 0 && (
-              <div className="mt-4">
-                <h3 className="text-xl font-semibold mb-4">Coming Up Next:</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {upcomingPrograms.slice(0, 4).map((program, index) => (
-                    <div key={index} className="bg-gray-800/50 p-3 rounded-lg">
-                      <p className="font-medium">{program.title}</p>
-                      <p className="text-sm text-gray-400">
-                        {new Date(program.start_time).toLocaleTimeString([], {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                          hour12: true,
-                        })}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Debug info button */}
-        <button
-          onClick={() => setShowDebugInfo(!showDebugInfo)}
-          className="absolute top-4 right-4 bg-black/70 p-2 rounded-md z-10 text-gray-400 hover:text-white"
-          aria-label="Toggle debug info"
-        >
-          <Info className="h-4 w-4" />
-        </button>
-
-        {/* Update the debug info panel to show more details */}
-        {showDebugInfo && (
-          <div className="absolute bottom-4 left-4 right-4 bg-black/80 p-4 rounded-lg z-10 text-xs overflow-auto max-h-[50vh]">
-            <h4 className="font-bold mb-2">Video Debug Info:</h4>
-            {errorDetails && (
-              <div className="mb-2">
-                <span className="text-red-400">Error: </span>
-                <span>{errorDetails}</span>
-              </div>
-            )}
-
-            <div className="mb-2">
-              <span className="text-blue-400">Channel ID: </span>
-              <span>{channel.id}</span>
-            </div>
-
-            <div className="mb-2">
-              <span className="text-blue-400">Playback Status: </span>
-              <span>
-                {videoRef.current?.paused ? "Paused" : "Playing"}
-                {videoRef.current
-                  ? ` (${Math.round(videoRef.current.currentTime)}s / ${Math.round(videoRef.current.duration || 0)}s)`
-                  : ""}
-              </span>
-            </div>
-            <div className="mb-2">
-              <span className="text-blue-400">Video Duration: </span>
-              <span>
-                {videoMetadata.loaded
-                  ? `${Math.round(videoMetadata.duration)}s (${Math.floor(videoMetadata.duration / 60)}:${String(Math.round(videoMetadata.duration % 60)).padStart(2, "0")})`
-                  : "Unknown"}
-              </span>
-            </div>
-
-            <div className="mb-2">
-              <span className="text-blue-400">Last Refresh: </span>
-              <span>{new Date(lastRefreshTime).toLocaleTimeString()}</span>
-              <button onClick={() => refreshCurrentProgram(true)} className="ml-2 text-green-400 hover:underline">
-                Force Refresh
-              </button>
-            </div>
-
-            {currentProgram && (
-              <div className="mb-2">
-                <span className="text-blue-400">Program: </span>
-                <span>
-                  {currentProgram.title} (ID: {currentProgram.id})
-                </span>
-                <div className="ml-4 mt-1">
-                  <span className="text-blue-400">MP4 URL from DB: </span>
-                  <span className="break-all">{currentProgram.mp4_url}</span>
-                  <button
-                    onClick={() => window.open(currentProgram.mp4_url, "_blank")}
-                    className="ml-2 text-blue-400 hover:underline"
-                  >
-                    Test
-                  </button>
-                </div>
-                {directUrl && (
-                  <div className="ml-4 mt-1">
-                    <span className="text-green-400">Direct URL: </span>
-                    <span className="break-all">{directUrl}</span>
-                    <button
-                      onClick={() => window.open(directUrl, "_blank")}
-                      className="ml-2 text-green-400 hover:underline"
-                    >
-                      Test
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {attemptedUrls.length > 0 && (
-              <div>
-                <span className="text-blue-400">Attempted URLs:</span>
-                <ul className="ml-4 mt-1">
-                  {attemptedUrls.map((url, index) => (
-                    <li key={index} className="break-all">
-                      {index + 1}. {url}
-                      <button onClick={() => window.open(url, "_blank")} className="ml-2 text-blue-400 hover:underline">
-                        Test
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            <div className="mt-2 pt-2 border-t border-gray-700 flex gap-2 flex-wrap">
-              <button
-                onClick={retryPlayback}
-                className="bg-blue-600 hover:bg-blue-700 text-white text-xs px-2 py-1 rounded"
-              >
-                Retry Playback
-              </button>
-              <button
-                onClick={() => refreshCurrentProgram(true)}
-                className="bg-green-600 hover:bg-green-700 text-white text-xs px-2 py-1 rounded"
-              >
-                Refresh Program
-              </button>
-              <button
-                onClick={() =>
-                  navigator.clipboard.writeText(
-                    JSON.stringify(
-                      {
-                        channel: channel.id,
-                        program: currentProgram?.id,
-                        url: currentProgram?.mp4_url,
-                        directUrl: directUrl,
-                        attempts: attemptedUrls,
-                      },
-                      null,
-                      2,
-                    ),
-                  )
-                }
-                className="bg-gray-600 hover:bg-gray-700 text-white text-xs px-2 py-1 rounded"
-              >
-                Copy Debug Info
-              </button>
-              <Link
-                href="/debug/video-test"
-                className="bg-green-600 hover:bg-green-700 text-white text-xs px-2 py-1 rounded"
-              >
-                Open URL Tester
-              </Link>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Channel name overlay - always visible */}
-      <div className="absolute top-4 left-4 bg-black/70 px-3 py-1 rounded-md z-10 flex items-center">
-        <span className="text-sm font-medium">{cleanedName}</span>
-        {isLiveChannel(channel.id) && (
-          <span className="ml-2 bg-red-600 text-white text-xs px-1.5 py-0.5 rounded-sm flex items-center">
-            <span className="w-2 h-2 bg-white rounded-full mr-1 animate-pulse"></span>
-            LIVE
-          </span>
-        )}
-      </div>
-
-      {/* Watermark - always visible */}
-      <div className="absolute top-4 right-4 bg-black/30 px-2 py-1 rounded-md z-10 pointer-events-none">
-        <span className="text-xs font-medium text-white/70">
-          © {new Date().getFullYear()} {channel.name}
-        </span>
-      </div>
-
-      {/* Sleep timer indicator */}
-      {sleepTimerMinutes && (
-        <div className="absolute top-4 right-20 bg-black/70 px-3 py-1 rounded-md z-10 flex items-center">
-          <Clock4 className="h-3 w-3 mr-1 text-red-500" />
-          <span className="text-xs font-medium">{formatSleepTimeRemaining()}</span>
-        </div>
-      )}
-
-      {/* Standby video element - always rendered but may be hidden */}
-      <video ref={standbyVideoRef} className="hidden" muted loop playsInline preload="auto" />
     </div>
   )
 }
