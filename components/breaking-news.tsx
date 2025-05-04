@@ -23,7 +23,7 @@ export function BreakingNews() {
   }
 
   return (
-    <div className="bg-red-600 text-white w-full z-20">
+    <div className="bg-red-600 text-white w-full z-20 mt-16">
       <NewsTicker news={newsItems} />
     </div>
   )

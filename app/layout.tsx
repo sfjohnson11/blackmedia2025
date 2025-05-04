@@ -21,6 +21,7 @@ export default function RootLayout({
     <html lang="en">
       <body className={`${inter.className} bg-black text-white min-h-screen flex flex-col`}>
         <Navbar />
+        {/* Add padding-top to account for fixed navbar */}
         <main className="flex-grow pt-16">{children}</main>
         <Footer />
       </body>

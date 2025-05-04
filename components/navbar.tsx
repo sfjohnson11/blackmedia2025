@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react"
 import Link from "next/link"
-import { Search, Bell, User, Heart, Menu, X, BookOpen } from "lucide-react"
+import { Search, Bell, User, Heart, Menu, X, BookOpen, Library, Clock } from "lucide-react"
 import { SearchOverlay } from "./search-overlay"
 
 export function Navbar() {
@@ -34,13 +34,19 @@ export function Navbar() {
           </Link>
           <nav className="hidden md:flex space-x-4">
             <Link href="/" className="text-white hover:text-gray-300">
-              Home
+              <span className="flex items-center">Home</span>
             </Link>
             <Link href="/channels" className="text-white hover:text-gray-300">
-              Channels
+              <span className="flex items-center">Channels</span>
             </Link>
             <Link href="/browse" className="text-white hover:text-gray-300">
-              Browse
+              <span className="flex items-center">Browse</span>
+            </Link>
+            <Link href="/library" className="text-white hover:text-gray-300">
+              <span className="flex items-center">
+                <Library className="h-4 w-4 mr-1 text-blue-400" />
+                Library
+              </span>
             </Link>
             <Link href="/favorites" className="text-white hover:text-gray-300">
               <span className="flex items-center">
@@ -49,11 +55,16 @@ export function Navbar() {
               </span>
             </Link>
             <Link href="/history" className="text-white hover:text-gray-300">
-              Continue Watching
+              <span className="flex items-center">
+                <Clock className="h-4 w-4 mr-1 text-green-400" />
+                Continue
+              </span>
             </Link>
-            <Link href="/freedom-school" className="text-white hover:text-gray-300 flex items-center">
-              <BookOpen className="h-4 w-4 mr-1 text-yellow-500" />
-              Freedom School
+            <Link href="/freedom-school" className="text-white hover:text-gray-300">
+              <span className="flex items-center">
+                <BookOpen className="h-4 w-4 mr-1 text-yellow-500" />
+                Freedom
+              </span>
             </Link>
             <Link href="/donate" className="text-white hover:text-gray-300">
               <span className="flex items-center">
@@ -104,28 +115,43 @@ export function Navbar() {
         <div className="md:hidden bg-black border-t border-gray-800 py-4 px-4">
           <nav className="flex flex-col space-y-4">
             <Link href="/" className="text-white hover:text-gray-300 py-2">
-              Home
+              <span className="flex items-center">Home</span>
             </Link>
             <Link href="/channels" className="text-white hover:text-gray-300 py-2">
-              Channels
+              <span className="flex items-center">Channels</span>
             </Link>
             <Link href="/browse" className="text-white hover:text-gray-300 py-2">
-              Browse
+              <span className="flex items-center">Browse</span>
             </Link>
-            <Link href="/favorites" className="text-white hover:text-gray-300 py-2 flex items-center">
-              <Heart className="h-4 w-4 mr-2 text-red-500" />
-              Favorites
+            <Link href="/library" className="text-white hover:text-gray-300 py-2">
+              <span className="flex items-center">
+                <Library className="h-4 w-4 mr-2 text-blue-400" />
+                Library
+              </span>
+            </Link>
+            <Link href="/favorites" className="text-white hover:text-gray-300 py-2">
+              <span className="flex items-center">
+                <Heart className="h-4 w-4 mr-2 text-red-500" />
+                Favorites
+              </span>
             </Link>
             <Link href="/history" className="text-white hover:text-gray-300 py-2">
-              Continue Watching
+              <span className="flex items-center">
+                <Clock className="h-4 w-4 mr-2 text-green-400" />
+                Continue Watching
+              </span>
             </Link>
-            <Link href="/freedom-school" className="text-white hover:text-gray-300 py-2 flex items-center">
-              <BookOpen className="h-4 w-4 mr-2 text-yellow-500" />
-              Freedom School
+            <Link href="/freedom-school" className="text-white hover:text-gray-300 py-2">
+              <span className="flex items-center">
+                <BookOpen className="h-4 w-4 mr-2 text-yellow-500" />
+                Freedom School
+              </span>
             </Link>
-            <Link href="/donate" className="text-white hover:text-gray-300 py-2 flex items-center">
-              <Heart className="h-4 w-4 mr-2 text-red-500" />
-              Donate
+            <Link href="/donate" className="text-white hover:text-gray-300 py-2">
+              <span className="flex items-center">
+                <Heart className="h-4 w-4 mr-2 text-red-500" />
+                Donate
+              </span>
             </Link>
           </nav>
         </div>

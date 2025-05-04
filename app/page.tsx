@@ -86,10 +86,8 @@ export default async function Home() {
 
   return (
     <div className="flex flex-col">
-      {/* Breaking News component - positioned below navbar */}
-      <div className="w-full">
-        <BreakingNews />
-      </div>
+      {/* Breaking News component - no need for margin-top here as it's handled in the component */}
+      <BreakingNews />
 
       {/* Main content with proper spacing */}
       <div>
