@@ -108,6 +108,12 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     "https://storage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4", // Another MP4 video
   ]
 
+  // Add this function near the top of the component, with the other utility functions
+  const shouldDisableAutoRefresh = (duration: number): boolean => {
+    // If video is longer than 5 minutes (300 seconds), disable auto refresh
+    return duration > 300
+  }
+
   // Check if channel is in favorites
   useEffect(() => {
     const checkFavorite = () => {
@@ -579,17 +585,24 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   // Update the refreshCurrentProgram function to handle errors better and provide fallbacks
   const refreshCurrentProgram = async (forceRefresh = false) => {
     // Only refresh if:
-    // 1. This is a forced refresh, OR
-    // 2. At least 5 minutes have passed since the last refresh AND no video is currently playing
+    // 1. This is a forced refresh (like at the end of a video), OR
+    // 2. No video is currently playing
     const now = Date.now()
     const timeSinceLastRefresh = now - lastRefreshTime
     const isActivelyPlaying = videoRef.current && !videoRef.current.paused && videoRef.current.currentTime > 0
+    const videoDuration = videoRef.current?.duration || 0
 
-    // Don't refresh if video is actively playing and this isn't forced
-    if (!forceRefresh && isActivelyPlaying && timeSinceLastRefresh < 300000) {
+    // IMPORTANT: Never refresh during active playback unless explicitly forced
+    if (!forceRefresh && isActivelyPlaying) {
       console.log(
-        `Skipping refresh - video is actively playing (${Math.round(timeSinceLastRefresh / 1000)}s since last refresh)`,
+        `Skipping refresh - video is actively playing (${Math.round(videoRef.current?.currentTime || 0)}s / ${Math.round(videoDuration)}s)`,
       )
+      return
+    }
+
+    // For longer videos (>5 minutes), completely disable auto-refresh
+    if (!forceRefresh && videoDuration > 300 && isActivelyPlaying) {
+      console.log(`Skipping refresh - long video detected (${Math.round(videoDuration)}s)`)
       return
     }
 
@@ -773,6 +786,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     }
   }
 
+  // Find the handleMetadataLoaded function and replace the playback monitoring part with this:
   const handleMetadataLoaded = () => {
     if (videoRef.current) {
       console.log(`Video metadata loaded. Duration: ${videoRef.current.duration}s`)
@@ -781,7 +795,17 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         loaded: true,
       })
 
-      // Set up playback monitoring to detect stalls
+      // For videos longer than 5 minutes, completely disable stall detection
+      // This prevents unnecessary interruptions
+      if (videoRef.current.duration > 300) {
+        console.log("Long video detected, disabling stall detection")
+        if (playbackCheckRef.current) {
+          clearInterval(playbackCheckRef.current)
+        }
+        return
+      }
+
+      // Set up playback monitoring to detect stalls, but only for shorter videos
       if (playbackCheckRef.current) {
         clearInterval(playbackCheckRef.current)
       }
@@ -789,8 +813,9 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       playbackCheckRef.current = setInterval(() => {
         if (videoRef.current && !videoRef.current.paused) {
           const currentTime = videoRef.current.currentTime
-          // If playback hasn't advanced in 10 seconds and we're not at the end
-          if (currentTime === lastPlaybackTime && currentTime < videoRef.current.duration - 5) {
+          // Only consider it stalled if it hasn't moved for 20 seconds (increased from 10)
+          // and we're not at the end of the video
+          if (currentTime === lastPlaybackTime && currentTime < videoRef.current.duration - 10) {
             console.log("Playback appears stalled, attempting to resume")
             // Try to nudge playback forward
             videoRef.current.currentTime += 0.1
@@ -799,7 +824,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
             })
           }
         }
-      }, 10000) // Check every 10 seconds
+      }, 20000) // Check every 20 seconds (increased from 10 seconds)
     }
   }
 
@@ -909,12 +934,17 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       loadInitialProgram()
     }
 
-    // Set up periodic refresh, but at a lower frequency (every 5 minutes instead of every minute)
+    // Set up periodic refresh, but at a MUCH lower frequency (every 15 minutes instead of every 5)
     // This prevents disrupting playback too often
     refreshTimerRef.current = setInterval(() => {
-      // Use a non-forced refresh to check for schedule changes without interrupting playback
-      refreshCurrentProgram(false)
-    }, 300000) // 5 minutes = 300,000 ms
+      // Only refresh if video is NOT playing or is paused
+      if (!videoRef.current || videoRef.current.paused) {
+        console.log("Periodic refresh triggered while video is not playing")
+        refreshCurrentProgram(false)
+      } else {
+        console.log("Skipping periodic refresh because video is playing")
+      }
+    }, 900000) // 15 minutes = 900,000 ms (increased from 5 minutes)
 
     return () => {
       if (refreshTimerRef.current) {
