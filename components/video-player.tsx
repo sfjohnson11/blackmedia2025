@@ -45,6 +45,12 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const loadAttemptRef = useRef(0)
   const programChangeTimeRef = useRef<number | null>(null)
   const maxAttempts = 3
+  const [videoMetadata, setVideoMetadata] = useState<{ duration: number; loaded: boolean }>({
+    duration: 0,
+    loaded: false,
+  })
+  const [lastPlaybackTime, setLastPlaybackTime] = useState<number>(0)
+  const playbackCheckRef = useRef<NodeJS.Timeout | null>(null)
 
   const cleanedName = cleanChannelName(channel.name)
 
@@ -345,6 +351,46 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     setPlaybackStartTime(Date.now())
   }
 
+  const handleTimeUpdate = () => {
+    if (videoRef.current) {
+      const currentTime = videoRef.current.currentTime
+      // Only update if time has actually advanced (prevents false stall detection)
+      if (currentTime > lastPlaybackTime) {
+        setLastPlaybackTime(currentTime)
+      }
+    }
+  }
+
+  const handleMetadataLoaded = () => {
+    if (videoRef.current) {
+      console.log(`Video metadata loaded. Duration: ${videoRef.current.duration}s`)
+      setVideoMetadata({
+        duration: videoRef.current.duration,
+        loaded: true,
+      })
+
+      // Set up playback monitoring to detect stalls
+      if (playbackCheckRef.current) {
+        clearInterval(playbackCheckRef.current)
+      }
+
+      playbackCheckRef.current = setInterval(() => {
+        if (videoRef.current && !videoRef.current.paused) {
+          const currentTime = videoRef.current.currentTime
+          // If playback hasn't advanced in 10 seconds and we're not at the end
+          if (currentTime === lastPlaybackTime && currentTime < videoRef.current.duration - 5) {
+            console.log("Playback appears stalled, attempting to resume")
+            // Try to nudge playback forward
+            videoRef.current.currentTime += 0.1
+            videoRef.current.play().catch((e) => {
+              console.error("Failed to resume stalled playback:", e)
+            })
+          }
+        }
+      }, 10000) // Check every 10 seconds
+    }
+  }
+
   // Handle video end event - load next program if available
   const handleVideoEnded = () => {
     console.log("Video ended, checking for next program")
@@ -447,6 +493,9 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       }
       if (errorTimerRef.current) {
         clearTimeout(errorTimerRef.current)
+      }
+      if (playbackCheckRef.current) {
+        clearInterval(playbackCheckRef.current)
       }
     }
   }, [channel.id])
@@ -571,6 +620,8 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
             onPlay={handleVideoStarted}
             onEnded={handleVideoEnded}
             className="w-full h-full"
+            onTimeUpdate={handleTimeUpdate}
+            onLoadedMetadata={handleMetadataLoaded}
           />
         )}
       </div>
@@ -690,6 +741,14 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
                 {videoRef.current
                   ? ` (${Math.round(videoRef.current.currentTime)}s / ${Math.round(videoRef.current.duration || 0)}s)`
                   : ""}
+              </span>
+            </div>
+            <div className="mb-2">
+              <span className="text-blue-400">Video Duration: </span>
+              <span>
+                {videoMetadata.loaded
+                  ? `${Math.round(videoMetadata.duration)}s (${Math.floor(videoMetadata.duration / 60)}:${String(Math.round(videoMetadata.duration % 60)).padStart(2, "0")})`
+                  : "Unknown"}
               </span>
             </div>
 
