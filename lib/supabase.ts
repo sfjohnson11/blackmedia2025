@@ -379,27 +379,168 @@ export async function checkRLSStatus(bucketName: string): Promise<{
   }
 }
 
+// CRITICAL FIX: Completely rewritten watch progress functions to prevent video restarts
+// Use IndexedDB instead of localStorage for more reliable storage
+const DB_NAME = "videoProgressDB"
+const STORE_NAME = "watchProgress"
+let dbPromise: Promise<IDBDatabase> | null = null
+
+// Initialize the database
+function initDB(): Promise<IDBDatabase> {
+  if (!dbPromise) {
+    dbPromise = new Promise((resolve, reject) => {
+      const request = indexedDB.open(DB_NAME, 1)
+
+      request.onerror = (event) => {
+        console.error("IndexedDB error:", event)
+        reject("Could not open IndexedDB")
+      }
+
+      request.onsuccess = (event) => {
+        resolve(request.result)
+      }
+
+      request.onupgradeneeded = (event) => {
+        const db = request.result
+        if (!db.objectStoreNames.contains(STORE_NAME)) {
+          db.createObjectStore(STORE_NAME, { keyPath: "id" })
+        }
+      }
+    })
+  }
+  return dbPromise
+}
+
+// Save watch progress to IndexedDB
 export async function saveWatchProgress(programId: number, currentTime: number): Promise<void> {
   try {
-    const userId = "guest" // Replace with actual user ID if available
-    localStorage.setItem(`watch_progress_${userId}_${programId}`, currentTime.toString())
-    console.log(`Saved watch progress for program ${programId}: ${currentTime}s`)
+    // Don't save progress if it's very close to the beginning (less than 5 seconds)
+    if (currentTime < 5) return
+
+    const db = await initDB()
+    const tx = db.transaction(STORE_NAME, "readwrite")
+    const store = tx.objectStore(STORE_NAME)
+
+    // Create a unique ID that includes user info if available
+    const userId = localStorage.getItem("userId") || "guest"
+    const id = `${userId}_${programId}`
+
+    // Save with timestamp to track when it was last updated
+    await store.put({
+      id,
+      programId,
+      currentTime,
+      timestamp: Date.now(),
+      userId,
+    })
+
+    console.log(`Saved watch progress for program ${programId}: ${currentTime}s (in IndexedDB)`)
+
+    // Also save a backup in localStorage in case IndexedDB fails
+    try {
+      localStorage.setItem(
+        `watch_progress_backup_${id}`,
+        JSON.stringify({
+          currentTime,
+          timestamp: Date.now(),
+        }),
+      )
+    } catch (err) {
+      // Ignore localStorage errors
+    }
+
+    return new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve()
+      tx.onerror = (event) => reject(event)
+    })
   } catch (error) {
-    console.error("Error saving watch progress:", error)
-    throw error
+    console.error("Error saving watch progress to IndexedDB:", error)
+
+    // Fallback to localStorage
+    try {
+      const userId = localStorage.getItem("userId") || "guest"
+      const id = `${userId}_${programId}`
+      localStorage.setItem(`watch_progress_${id}`, currentTime.toString())
+      console.log(`Saved watch progress to localStorage as fallback: ${currentTime}s`)
+    } catch (err) {
+      console.error("Error saving to localStorage fallback:", err)
+    }
   }
 }
 
+// Get watch progress from IndexedDB
 export async function getWatchProgress(programId: number): Promise<number | null> {
   try {
-    const userId = "guest" // Replace with actual user ID if available
-    const savedProgress = localStorage.getItem(`watch_progress_${userId}_${programId}`)
-    if (savedProgress) {
-      return Number.parseFloat(savedProgress)
-    }
-    return null
+    const db = await initDB()
+    const tx = db.transaction(STORE_NAME, "readonly")
+    const store = tx.objectStore(STORE_NAME)
+
+    const userId = localStorage.getItem("userId") || "guest"
+    const id = `${userId}_${programId}`
+
+    return new Promise((resolve, reject) => {
+      const request = store.get(id)
+
+      request.onsuccess = () => {
+        if (request.result) {
+          console.log(`Retrieved watch progress from IndexedDB: ${request.result.currentTime}s`)
+          resolve(request.result.currentTime)
+        } else {
+          // Try localStorage fallback
+          try {
+            const savedProgress = localStorage.getItem(`watch_progress_${id}`)
+            if (savedProgress) {
+              const time = Number.parseFloat(savedProgress)
+              console.log(`Retrieved watch progress from localStorage fallback: ${time}s`)
+              resolve(time)
+            } else {
+              resolve(null)
+            }
+          } catch (err) {
+            console.error("Error getting from localStorage fallback:", err)
+            resolve(null)
+          }
+        }
+      }
+
+      request.onerror = (event) => {
+        console.error("Error getting watch progress:", event)
+
+        // Try localStorage fallback
+        try {
+          const savedProgress = localStorage.getItem(`watch_progress_${id}`)
+          if (savedProgress) {
+            resolve(Number.parseFloat(savedProgress))
+          } else {
+            resolve(null)
+          }
+        } catch (err) {
+          console.error("Error getting from localStorage fallback:", err)
+          resolve(null)
+        }
+      }
+    })
   } catch (error) {
-    console.error("Error getting watch progress:", error)
+    console.error("Error accessing IndexedDB:", error)
+
+    // Fallback to localStorage
+    try {
+      const userId = localStorage.getItem("userId") || "guest"
+      const id = `${userId}_${programId}`
+      const savedProgress = localStorage.getItem(`watch_progress_${id}`)
+      if (savedProgress) {
+        return Number.parseFloat(savedProgress)
+      }
+    } catch (err) {
+      console.error("Error getting from localStorage:", err)
+    }
+
     return null
   }
+}
+
+// New function to disable automatic refresh for long videos
+export function shouldDisableAutoRefresh(duration: number): boolean {
+  // If video is longer than 10 minutes, disable auto refresh
+  return duration > 600
 }
