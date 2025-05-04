@@ -484,16 +484,16 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
     if (target.error) {
       switch (target.error.code) {
-        case 1:
+        case MediaError.MEDIA_ERR_ABORTED:
           errorMessage = "The fetching process was aborted by the user"
           break
-        case 2:
+        case MediaError.MEDIA_ERR_NETWORK:
           errorMessage = "Network error - video download failed"
           break
-        case 3:
+        case MediaError.MEDIA_ERR_DECODE:
           errorMessage = "Video decoding failed - format may be unsupported"
           break
-        case 4:
+        case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
           errorMessage = "Video not found (404) or access denied"
           break
         default:
@@ -506,10 +506,12 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     }
 
     console.error("Error loading video:", errorMessage)
-    console.error("Failed URL:", target.src)
+    if (target.src) {
+      console.error("Failed URL:", target.src)
+    }
 
     // Store error details for display
-    setErrorDetails(`${errorMessage} (URL: ${target.src.split("/").slice(-2).join("/")}...)`)
+    setErrorDetails(errorMessage)
 
     // Try to get a direct download URL as a last resort
     if (currentProgram && loadAttemptRef.current < maxAttempts) {
@@ -666,15 +668,30 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
           setIsPlaying(true)
         } catch (playError) {
           console.error("Error auto-playing new program:", playError)
+          // Don't throw an error here, just log it and continue
         }
       } else {
         console.error("Could not find a working URL for new program")
         setErrorDetails("Could not find a working URL for this video")
         setShowStandby(true)
+
+        // Try to play standby video
+        if (standbyVideoRef.current) {
+          standbyVideoRef.current.play().catch((e) => {
+            console.error("Failed to play standby video:", e)
+          })
+        }
       }
     } catch (error) {
       console.error("Error switching to new program:", error)
       setShowStandby(true)
+
+      // Try to play standby video
+      if (standbyVideoRef.current) {
+        standbyVideoRef.current.play().catch((e) => {
+          console.error("Failed to play standby video:", e)
+        })
+      }
     } finally {
       setIsLoading(false)
     }
@@ -1259,23 +1276,38 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
                 videoRef.current.currentTime = savedProgress
               }
             }}
-            onError={(e) => {
-              console.error("Video error:", e)
-
-              // Try to extract error details
+            onError={() => {
+              // Safely extract error details from the video element
               let errorMessage = "Unknown error"
-              const target = e.currentTarget
 
-              if (target.error) {
+              if (videoRef.current && videoRef.current.error) {
+                const videoError = videoRef.current.error
                 console.error("Video error details:", {
-                  code: target.error.code,
-                  message: target.error.message,
-                  name: target.error.name,
+                  code: videoError.code,
+                  message: videoError.message,
+                  name: videoError.name,
                 })
 
-                errorMessage = target.error.message || `Error code: ${target.error.code}`
+                // Map error codes to human-readable messages
+                switch (videoError.code) {
+                  case MediaError.MEDIA_ERR_ABORTED:
+                    errorMessage = "Playback aborted by the user"
+                    break
+                  case MediaError.MEDIA_ERR_NETWORK:
+                    errorMessage = "Network error occurred while loading"
+                    break
+                  case MediaError.MEDIA_ERR_DECODE:
+                    errorMessage = "Media decoding error"
+                    break
+                  case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
+                    errorMessage = "Video format not supported"
+                    break
+                  default:
+                    errorMessage = videoError.message || `Error code: ${videoError.code}`
+                }
               }
 
+              console.error("Video error:", errorMessage)
               setLoadError(`Error loading video: ${errorMessage}`)
 
               // If we've tried a few times with the normal URLs, try a fallback
@@ -1313,6 +1345,18 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
               />
             )}
             Your browser does not support the video tag.
+          </video>
+
+          {/* Standby video (hidden until needed) */}
+          <video
+            ref={standbyVideoRef}
+            className={`w-full h-full absolute inset-0 ${showStandby ? "block" : "hidden"}`}
+            autoPlay
+            loop
+            muted
+            playsInline
+          >
+            <source src={standbyVideoUrl} type="video/mp4" />
           </video>
 
           {isLoading && (
