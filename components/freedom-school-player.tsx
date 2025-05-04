@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
-import { Loader2, Play, Pause, Volume2, VolumeX, Maximize, ChevronLeft } from "lucide-react"
+import { Loader2, Play, Pause, Volume2, VolumeX, Maximize, ChevronLeft, AlertTriangle } from "lucide-react"
 import { Progress } from "@/components/ui/progress"
 import { saveWatchProgress, getWatchProgress } from "@/lib/supabase"
 
@@ -11,6 +11,16 @@ interface FreedomSchoolPlayerProps {
   videoUrl: string
   title: string
   fallbackUrl?: string
+}
+
+async function checkUrlExists(url: string): Promise<boolean> {
+  try {
+    const response = await fetch(url, { method: "HEAD", mode: "cors" })
+    return response.ok
+  } catch (error) {
+    console.error("Freedom School: Error checking URL:", error)
+    return false
+  }
 }
 
 export function FreedomSchoolPlayer({ videoId, videoUrl, title, fallbackUrl }: FreedomSchoolPlayerProps) {
@@ -23,6 +33,9 @@ export function FreedomSchoolPlayer({ videoId, videoUrl, title, fallbackUrl }: F
   const [error, setError] = useState<string | null>(null)
   const [currentUrl, setCurrentUrl] = useState(videoUrl)
   const [usedFallback, setUsedFallback] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [savedProgress, setSavedProgress] = useState<number | null>(null)
+  const [fallbackVideoUrl, setFallbackVideoUrl] = useState(fallbackUrl)
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const progressIntervalRef = useRef<NodeJS.Timeout | null>(null)
@@ -199,6 +212,65 @@ export function FreedomSchoolPlayer({ videoId, videoUrl, title, fallbackUrl }: F
     }
   }, [videoId, currentUrl, duration, fallbackUrl, usedFallback])
 
+  useEffect(() => {
+    let isMounted = true
+
+    async function loadVideo() {
+      if (!videoUrl) {
+        console.log("Freedom School: No video URL available")
+        setIsLoading(false)
+        return
+      }
+
+      setIsLoading(true)
+      console.log(`Freedom School: Loading video: ${videoUrl}`)
+
+      try {
+        // Check if the URL exists
+        const exists = await checkUrlExists(videoUrl)
+        console.log(`Freedom School: URL check result: ${exists ? "exists" : "does not exist"}`)
+
+        if (!isMounted) return
+
+        if (exists) {
+          setLoadError(null)
+        } else {
+          console.log(`Freedom School: Primary URL failed, trying fallback URL`)
+          // Try fallback URL if available
+          if (fallbackVideoUrl && fallbackVideoUrl !== videoUrl) {
+            setCurrentUrl(fallbackVideoUrl)
+            setUsedFallback(true)
+          } else {
+            setLoadError("Video source not found. Please try again later.")
+          }
+        }
+      } catch (error) {
+        console.error("Freedom School: Error checking video URL:", error)
+        // Even if there's an error checking, we'll still try to play the video
+      } finally {
+        if (isMounted) {
+          setIsLoading(false)
+        }
+      }
+    }
+
+    loadVideo()
+
+    // Set a timeout to prevent infinite loading
+    const timeout = setTimeout(() => {
+      if (isLoading && isMounted) {
+        console.log("Freedom School: Video load timed out")
+        setIsLoading(false)
+        setLoadError("Video is taking too long to load. Please try again or check your connection.")
+      }
+    }, 15000) // 15 seconds timeout
+
+    return () => {
+      isMounted = false
+      clearTimeout(timeout)
+    }
+  }, [videoUrl, fallbackVideoUrl, videoId])
+
   // Start stall detection
   const startStallDetection = () => {
     // Clear any existing stall detection
@@ -241,10 +313,11 @@ export function FreedomSchoolPlayer({ videoId, videoUrl, title, fallbackUrl }: F
     if (!videoRef.current) return
 
     try {
-      const savedProgress = await getWatchProgress(videoId)
-      if (savedProgress && savedProgress > 0) {
-        console.log(`Restoring Freedom School playback position to ${savedProgress} seconds`)
-        videoRef.current.currentTime = savedProgress
+      const savedProgressValue = await getWatchProgress(videoId)
+      if (savedProgressValue && savedProgressValue > 0) {
+        console.log(`Restoring Freedom School playback position to ${savedProgressValue} seconds`)
+        setSavedProgress(savedProgressValue)
+        videoRef.current.currentTime = savedProgressValue
       }
     } catch (err) {
       console.error("Error restoring playback position:", err)
@@ -369,17 +442,96 @@ export function FreedomSchoolPlayer({ videoId, videoUrl, title, fallbackUrl }: F
           </div>
         )}
 
+        {loadError && !isLoading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-70">
+            <div className="bg-gray-900 p-4 rounded-lg max-w-md text-center">
+              <AlertTriangle className="h-8 w-8 text-yellow-500 mx-auto mb-2" />
+              <p className="text-white mb-4">{loadError}</p>
+              <button
+                className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded"
+                onClick={() => {
+                  if (videoRef.current) {
+                    setIsLoading(true)
+                    setLoadError(null)
+                    videoRef.current.load()
+                  }
+                }}
+              >
+                Try Again
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Video element */}
         <video
           ref={videoRef}
-          src={currentUrl}
           className="w-full h-full"
+          controls
           autoPlay
           playsInline
-          muted={isMuted}
-          onLoadStart={() => setIsLoading(true)}
-          onCanPlay={() => setIsLoading(false)}
-        />
+          onLoadStart={() => {
+            console.log("Freedom School: Video load started")
+            setIsLoading(true)
+          }}
+          onCanPlay={() => {
+            console.log("Freedom School: Video can play now")
+            setIsLoading(false)
+            setLoadError(null)
+
+            // If we have saved progress, seek to it
+            if (savedProgress && videoRef.current) {
+              console.log(`Freedom School: Seeking to saved position: ${savedProgress}s`)
+              videoRef.current.currentTime = savedProgress
+            }
+          }}
+          onError={(e) => {
+            const error = e.currentTarget.error
+            console.error("Freedom School: Video error:", error?.message || "Unknown error", error?.code)
+
+            // Try fallback URL if available and not already using it
+            if (fallbackVideoUrl && currentUrl !== fallbackVideoUrl) {
+              console.log("Freedom School: Trying fallback URL")
+              setCurrentUrl(fallbackVideoUrl)
+              setUsedFallback(true)
+            } else {
+              setLoadError(`Error loading video: ${error?.message || "Unknown error"}`)
+            }
+          }}
+          onTimeUpdate={() => {
+            if (!videoRef.current) return
+
+            const currentTime = videoRef.current.currentTime
+
+            // Update progress state
+            if (duration > 0) {
+              setProgress((currentTime / duration) * 100)
+            }
+
+            // Save progress periodically (every 10 seconds)
+            const now = Date.now()
+            if (now - lastProgressSaveRef.current > 10000 && currentTime > 0) {
+              console.log(`Saving Freedom School progress: ${Math.round(currentTime)}s / ${Math.round(duration)}s`)
+              saveWatchProgress(videoId, currentTime)
+              lastProgressSaveRef.current = now
+            }
+
+            // Update last playback time for stall detection
+            lastPlaybackTimeRef.current = currentTime
+          }}
+          onWaiting={() => {
+            console.log("Freedom School: Video is waiting/buffering")
+          }}
+          onStalled={() => {
+            console.log("Freedom School: Video playback has stalled")
+          }}
+        >
+          <source
+            src={currentUrl}
+            type={currentUrl?.includes(".m3u8") ? "application/vnd.apple.mpegurl" : "video/mp4"}
+          />
+          Your browser does not support the video tag.
+        </video>
 
         {/* Video controls overlay */}
         <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4">

@@ -3,7 +3,7 @@
 import type React from "react"
 import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
-import { Loader2, Play, Pause, Volume2, VolumeX, Maximize, ChevronLeft } from "lucide-react"
+import { Loader2, Play, Pause, Volume2, VolumeX, Maximize, ChevronLeft, AlertTriangle } from "lucide-react"
 import { Progress } from "@/components/ui/progress"
 import {
   getLiveStreamUrl,
@@ -57,6 +57,9 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const [showShareOptions, setShowShareOptions] = useState(false)
   const [showTooltips, setShowTooltips] = useState(true)
   const [keyboardShortcutsEnabled, setKeyboardShortcutsEnabled] = useState(true)
+  const [loadTimeout, setLoadTimeout] = useState<NodeJS.Timeout | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [savedProgress, setSavedProgress] = useState<number | null>(null)
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const standbyVideoRef = useRef<HTMLVideoElement>(null)
@@ -203,11 +206,12 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     const loadSavedProgress = async () => {
       if (videoRef.current && currentProgram) {
         try {
-          const savedProgress = await getWatchProgress(currentProgram.id)
-          if (savedProgress && savedProgress > 10 && savedProgress < videoRef.current.duration - 30) {
+          const savedProgressValue = await getWatchProgress(currentProgram.id)
+          if (savedProgressValue && savedProgressValue > 10 && savedProgressValue < videoRef.current.duration - 30) {
             // Only restore if we have a meaningful position (not at the very beginning or end)
-            videoRef.current.currentTime = savedProgress
-            console.log(`Restored watch progress: ${savedProgress}s`)
+            videoRef.current.currentTime = savedProgressValue
+            setSavedProgress(savedProgressValue)
+            console.log(`Restored watch progress: ${savedProgressValue}s`)
           }
         } catch (err) {
           console.error("Error loading saved progress:", err)
@@ -1002,6 +1006,66 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     }
   }, [currentProgram, channel.id])
 
+  // New useEffect to handle video URL resolution
+  useEffect(() => {
+    let isMounted = true
+
+    async function resolveVideoUrl() {
+      if (!currentProgram?.mp4_url) {
+        console.log("No video URL available")
+        setVideoUrl(null)
+        setIsLoading(false)
+        return
+      }
+
+      setIsLoading(true)
+      console.log(`Resolving video URL for program: ${currentProgram.title}`)
+
+      try {
+        // First try to get a direct download URL
+        const directUrl = await getDirectDownloadUrl(currentProgram.mp4_url, channel.id)
+        console.log(`Resolved URL: ${directUrl || "Failed to resolve"}`)
+
+        if (isMounted) {
+          if (directUrl) {
+            setVideoUrl(directUrl)
+            setLoadError(null)
+          } else {
+            // If we couldn't resolve the URL, try using the original URL as fallback
+            console.log(`Using original URL as fallback: ${currentProgram.mp4_url}`)
+            setVideoUrl(currentProgram.mp4_url)
+          }
+          setIsLoading(false)
+        }
+      } catch (error) {
+        console.error("Error resolving video URL:", error)
+        if (isMounted) {
+          // Even if there's an error, try to use the original URL
+          setVideoUrl(currentProgram.mp4_url)
+          setIsLoading(false)
+        }
+      }
+    }
+
+    resolveVideoUrl()
+
+    // Set a timeout to prevent infinite loading
+    if (loadTimeout) clearTimeout(loadTimeout)
+    const timeout = setTimeout(() => {
+      if (isLoading) {
+        console.log("Video load timed out")
+        setIsLoading(false)
+        setLoadError("Video is taking too long to load. Please try again or check your connection.")
+      }
+    }, 15000) // 15 seconds timeout
+    setLoadTimeout(timeout)
+
+    return () => {
+      isMounted = false
+      if (loadTimeout) clearTimeout(loadTimeout)
+    }
+  }, [currentProgram, channel.id])
+
   const handleBack = () => {
     router.back()
   }
@@ -1068,23 +1132,93 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
         {/* Video element */}
         {videoUrl && (
-          <video
-            ref={videoRef}
-            src={videoUrl}
-            className="w-full h-full"
-            autoPlay
-            playsInline
-            muted={isMuted}
-            onLoadStart={() => setIsLoading(true)}
-            onCanPlay={() => setIsLoading(false)}
-            onEnded={handleVideoEnded}
-            onError={handleVideoError}
-            onLoadedMetadata={handleMetadataLoaded}
-            onPlay={handleVideoStarted}
-            onPause={handleVideoPaused}
-            onTimeUpdate={handleTimeUpdate}
-            onLoadedData={handleVideoLoaded}
-          />
+          <div className="relative w-full aspect-video bg-black">
+            <video
+              ref={videoRef}
+              className="w-full h-full"
+              controls
+              autoPlay
+              playsInline
+              onLoadStart={() => {
+                console.log("Video load started")
+                setIsLoading(true)
+              }}
+              onCanPlay={() => {
+                console.log("Video can play now")
+                setIsLoading(false)
+                setLoadError(null)
+
+                // If we have saved progress, seek to it
+                if (savedProgress && videoRef.current) {
+                  console.log(`Seeking to saved position: ${savedProgress}s`)
+                  videoRef.current.currentTime = savedProgress
+                }
+              }}
+              onError={(e) => {
+                const error = e.currentTarget.error
+                console.error("Video error:", error?.message || "Unknown error", error?.code)
+                setLoadError(`Error loading video: ${error?.message || "Unknown error"}`)
+
+                // Try to recover by using the original URL if we're not already using it
+                if (videoUrl !== currentProgram?.mp4_url && currentProgram?.mp4_url) {
+                  console.log("Trying original URL as fallback")
+                  setVideoUrl(currentProgram.mp4_url)
+                } else if (!isRetrying) {
+                  setIsRetrying(true)
+                  console.log("Retrying video load")
+                  setTimeout(() => {
+                    if (videoRef.current) {
+                      videoRef.current.load()
+                      setTimeout(() => setIsRetrying(false), 2000)
+                    }
+                  }, 1000)
+                }
+              }}
+              onTimeUpdate={handleTimeUpdate}
+              onWaiting={() => {
+                console.log("Video is waiting/buffering")
+              }}
+              onStalled={() => {
+                console.log("Video playback has stalled")
+              }}
+            >
+              <source
+                src={videoUrl}
+                type={videoUrl?.includes(".m3u8") ? "application/vnd.apple.mpegurl" : "video/mp4"}
+              />
+              Your browser does not support the video tag.
+            </video>
+
+            {isLoading && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50">
+                <div className="flex flex-col items-center">
+                  <Loader2 className="h-12 w-12 text-red-600 animate-spin mb-2" />
+                  <p className="text-white">Loading video...</p>
+                </div>
+              </div>
+            )}
+
+            {loadError && !isLoading && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-70">
+                <div className="bg-gray-900 p-4 rounded-lg max-w-md text-center">
+                  <AlertTriangle className="h-8 w-8 text-yellow-500 mx-auto mb-2" />
+                  <p className="text-white mb-4">{loadError}</p>
+                  <button
+                    className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded"
+                    onClick={() => {
+                      if (videoRef.current) {
+                        setIsLoading(true)
+                        setLoadError(null)
+                        videoRef.current.load()
+                      }
+                    }}
+                  >
+                    Try Again
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         )}
 
         {/* Video controls overlay */}
