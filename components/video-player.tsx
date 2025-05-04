@@ -65,6 +65,8 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const [programSwitchInProgress, setProgramSwitchInProgress] = useState(false)
   const [videoFormat, setVideoFormat] = useState<string | null>(null)
   const [formatFallbackAttempted, setFormatFallbackAttempted] = useState(false)
+  const [currentMimeType, setCurrentMimeType] = useState<string>("video/mp4")
+  const [mimeTypeAttempts, setMimeTypeAttempts] = useState<string[]>([])
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const standbyVideoRef = useRef<HTMLVideoElement>(null)
@@ -76,7 +78,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const loadAttemptRef = useRef(0)
   const programChangeTimeRef = useRef<number | null>(null)
   const sleepTimerRef = useRef<NodeJS.Timeout | null>(null)
-  const maxAttempts = 3
+  const maxAttempts = 5 // Increased from 3 to 5
   const [videoMetadata, setVideoMetadata] = useState<{ duration: number; loaded: boolean }>({
     duration: 0,
     loaded: false,
@@ -91,6 +93,8 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const retryCountRef = useRef<number>(0)
   const maxRetries = 5
   const programCheckIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const formatRetryCountRef = useRef<number>(0)
+  const maxFormatRetries = 3
 
   // Track if component is mounted to prevent state updates after unmount
   const isMountedRef = useRef(true)
@@ -107,11 +111,11 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const standbyVideoUrl =
     "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/standby_blacktruthtv-D7yZUERL2zhjE71Llxul69gbPLxGES.mp4"
 
-  // Fallback video URLs for testing
+  // Fallback video URLs - MP4 only
   const fallbackVideoUrls = [
-    "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8", // HLS stream
-    "https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4", // MP4 video
-    "https://storage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4", // Another MP4 video
+    "https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+    "https://storage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
+    "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
   ]
 
   // Add this function near the top of the component, with the other utility functions
@@ -135,10 +139,16 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     if (lowerUrl.includes(".avi")) return "avi"
     if (lowerUrl.includes(".mkv")) return "mkv"
     if (lowerUrl.includes(".flv")) return "flv"
+    if (lowerUrl.includes(".ts")) return "ts"
+    if (lowerUrl.includes(".m4v")) return "m4v"
+    if (lowerUrl.includes(".3gp")) return "3gp"
+    if (lowerUrl.includes(".ogg")) return "ogg"
 
     // Try to guess from path components
     if (lowerUrl.includes("/hls/")) return "hls"
     if (lowerUrl.includes("/dash/")) return "dash"
+    if (lowerUrl.includes("/mp4/")) return "mp4"
+    if (lowerUrl.includes("/video/")) return "mp4" // Assume mp4 for generic /video/ paths
 
     return "unknown"
   }
@@ -164,31 +174,94 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         return "video/x-matroska"
       case "flv":
         return "video/x-flv"
+      case "ts":
+        return "video/mp2t"
+      case "m4v":
+        return "video/x-m4v"
+      case "3gp":
+        return "video/3gpp"
+      case "ogg":
+        return "video/ogg"
       default:
         return "video/mp4" // Default to mp4 as a safe choice
     }
+  }
+
+  // Get all possible MIME types to try for a URL
+  const getAllPossibleMimeTypes = (url: string): string[] => {
+    // Start with the detected MIME type
+    const detectedMimeType = getMimeType(url)
+
+    // Add other common MIME types to try
+    return [
+      detectedMimeType,
+      "video/mp4",
+      "video/webm",
+      "application/vnd.apple.mpegurl",
+      "video/mp2t",
+      "video/quicktime",
+      "video/x-m4v",
+      "application/x-mpegURL",
+    ]
   }
 
   // Helper function to try alternative format for the same video
   const tryAlternativeFormat = async (originalUrl: string): Promise<string | null> => {
     if (!originalUrl) return null
 
-    // If it's an m3u8 file, try mp4 instead
-    if (originalUrl.includes(".m3u8")) {
-      return originalUrl.replace(".m3u8", ".mp4")
+    console.log("Trying alternative format for URL:", originalUrl)
+
+    // Try different file extensions
+    const extensions = [".mp4", ".m3u8", ".webm", ".mov", ".m4v", ".ts"]
+    const baseUrl = originalUrl.split("?")[0] // Remove query parameters
+
+    // Remove any existing extension
+    let baseWithoutExt = baseUrl
+    const lastDotIndex = baseUrl.lastIndexOf(".")
+    const lastSlashIndex = baseUrl.lastIndexOf("/")
+
+    if (lastDotIndex > lastSlashIndex) {
+      baseWithoutExt = baseUrl.substring(0, lastDotIndex)
     }
 
-    // If it's an mp4 file, try m3u8 instead
-    if (originalUrl.includes(".mp4")) {
-      return originalUrl.replace(".mp4", ".m3u8")
+    // Try each extension
+    for (const ext of extensions) {
+      const newUrl = `${baseWithoutExt}${ext}`
+      if (newUrl !== originalUrl) {
+        console.log(`Trying alternative URL with extension ${ext}: ${newUrl}`)
+        return newUrl
+      }
     }
 
-    // Try adding or removing trailing slash
+    // If we couldn't create a new URL with a different extension, try adding or removing trailing slash
     if (originalUrl.endsWith("/")) {
       return originalUrl.slice(0, -1)
     } else {
       return `${originalUrl}/`
     }
+  }
+
+  // Special handling for problematic channels
+  const getChannelSpecificUrl = (channelId: string, originalUrl: string): string | null => {
+    // Special handling for channel 16
+    if (channelId === "16") {
+      console.log("Applying special handling for channel 16")
+
+      // If the URL contains specific patterns that are known to cause issues, modify them
+      if (originalUrl.includes(".m3u8")) {
+        return originalUrl.replace(".m3u8", ".mp4")
+      }
+
+      // Try a different URL structure for channel 16
+      if (originalUrl.includes("channel16")) {
+        const fileName = originalUrl.split("/").pop()
+        if (fileName) {
+          return `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/videos/${fileName}`
+        }
+      }
+    }
+
+    return null
   }
 
   // Check if channel is in favorites
@@ -585,6 +658,59 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     // Store error details for display
     setErrorDetails(errorMessage)
 
+    // For format errors, try different MIME types first
+    if (
+      target.error &&
+      (target.error.code === MediaError.MEDIA_ERR_DECODE ||
+        target.error.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED)
+    ) {
+      console.log("Format error detected, trying different MIME type")
+
+      if (videoUrl && tryNextMimeType(videoUrl)) {
+        // Successfully tried a different MIME type, wait for result
+        return
+      }
+
+      // If we've tried all MIME types, try alternative format
+      if (!formatFallbackAttempted && videoUrl) {
+        setFormatFallbackAttempted(true)
+        console.log("Trying alternative format")
+
+        try {
+          // Try channel-specific URL first
+          const channelSpecificUrl = getChannelSpecificUrl(channel.id, videoUrl)
+
+          if (channelSpecificUrl) {
+            console.log(`Using channel-specific URL for channel ${channel.id}: ${channelSpecificUrl}`)
+            setVideoUrl(channelSpecificUrl)
+            setMimeTypeAttempts([])
+
+            if (videoRef.current) {
+              videoRef.current.src = channelSpecificUrl
+              videoRef.current.load()
+              return
+            }
+          }
+
+          // Try alternative format as fallback
+          const alternativeUrl = await tryAlternativeFormat(videoUrl)
+          if (alternativeUrl) {
+            console.log("Found alternative format URL:", alternativeUrl)
+            setVideoUrl(alternativeUrl)
+            setMimeTypeAttempts([])
+
+            if (videoRef.current) {
+              videoRef.current.src = alternativeUrl
+              videoRef.current.load()
+              return
+            }
+          }
+        } catch (error) {
+          console.error("Error trying format fallback:", error)
+        }
+      }
+    }
+
     // Try to get a direct download URL as a last resort
     if (currentProgram && loadAttemptRef.current < maxAttempts) {
       loadAttemptRef.current += 1
@@ -596,6 +722,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
           console.log(`Found direct URL: ${url}`)
           setDirectUrl(url)
           setAttemptedUrls((prev) => [...prev, url])
+          setMimeTypeAttempts([])
 
           // Add cache-busting parameter
           const urlWithCacheBust = `${url}?t=${Date.now()}`
@@ -609,17 +736,10 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       }
     }
 
-    // If we've tried enough times or couldn't get a direct URL, show standby
+    // If we've tried enough times or couldn't get a direct URL, try fallback videos
     if (loadAttemptRef.current >= maxAttempts) {
-      console.log("Maximum attempts reached, showing standby")
-      setShowStandby(true)
-
-      // Make sure standby video is playing
-      if (standbyVideoRef.current) {
-        standbyVideoRef.current.play().catch((e) => {
-          console.error("Failed to play standby video:", e)
-        })
-      }
+      console.log("Maximum attempts reached, trying fallback videos")
+      tryFallbackVideo()
     }
   }
 
@@ -631,31 +751,43 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     setErrorDetails(null)
     loadAttemptRef.current = 0
     setAttemptedUrls([])
+    setMimeTypeAttempts([])
+    setFormatFallbackAttempted(false)
 
     try {
       // Try to get a direct download URL
       const url = await getDirectDownloadUrl(currentProgram.mp4_url, channel.id)
 
-      if (url && videoRef.current) {
+      if (url) {
         console.log(`Retrying with direct URL: ${url}`)
         setDirectUrl(url)
         setAttemptedUrls([url])
 
+        // Check for channel-specific handling
+        const channelSpecificUrl = getChannelSpecificUrl(channel.id, url)
+        const finalUrl = channelSpecificUrl || url
+
         // Add cache-busting parameter
-        const urlWithCacheBust = `${url}?t=${Date.now()}`
+        const urlWithCacheBust = `${finalUrl}?t=${Date.now()}`
 
         videoRef.current.src = urlWithCacheBust
         videoRef.current.load()
+        setVideoUrl(urlWithCacheBust)
         setShowStandby(false)
       } else {
         console.error("Could not find a working URL")
         setErrorDetails("Could not find a working URL for this video")
         setShowStandby(true)
+        if (standbyVideoRef.current) {
+          standbyVideoRef.current.play().catch((e) => {
+            console.error("Failed to play standby video:", e)
+          })
+        }
       }
     } catch (err) {
       console.error("Error in retry:", err)
       setErrorDetails(`Retry failed: ${err instanceof Error ? err.message : String(err)}`)
-      setShowStandby(true)
+      tryFallbackVideo()
     } finally {
       setIsRetrying(false)
     }
@@ -718,6 +850,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     setIsLoading(true)
     setCurrentProgram(program)
     setFormatFallbackAttempted(false)
+    setMimeTypeAttempts([])
 
     try {
       const url = await getDirectDownloadUrl(program.mp4_url, channel.id)
@@ -726,13 +859,17 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         console.log(`Found direct URL for new program: ${url}`)
         setDirectUrl(url)
 
+        // Check for channel-specific handling
+        const channelSpecificUrl = getChannelSpecificUrl(channel.id, url)
+        const finalUrl = channelSpecificUrl || url
+
         // Detect video format
-        const format = detectVideoFormat(url)
+        const format = detectVideoFormat(finalUrl)
         setVideoFormat(format)
         console.log(`Detected video format: ${format}`)
 
         // Add cache-busting parameter
-        const urlWithCacheBust = `${url}?t=${Date.now()}`
+        const urlWithCacheBust = `${finalUrl}?t=${Date.now()}`
 
         // Update video source and load the new video
         videoRef.current.src = urlWithCacheBust
@@ -752,8 +889,6 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         console.error("Could not find a working URL for new program")
         setErrorDetails("Could not find a working URL for this video")
         setShowStandby(true)
-
-        // Try to play standby video
         if (standbyVideoRef.current) {
           standbyVideoRef.current.play().catch((e) => {
             console.error("Failed to play standby video:", e)
@@ -762,14 +897,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       }
     } catch (error) {
       console.error("Error switching to new program:", error)
-      setShowStandby(true)
-
-      // Try to play standby video
-      if (standbyVideoRef.current) {
-        standbyVideoRef.current.play().catch((e) => {
-          console.error("Failed to play standby video:", e)
-        })
-      }
+      tryFallbackVideo()
     } finally {
       setIsLoading(false)
     }
@@ -812,7 +940,6 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       if (!program) {
         console.log(`No program found for channel ${channel.id}, showing standby video immediately`)
         setShowStandby(true)
-
         if (standbyVideoRef.current) {
           standbyVideoRef.current.play().catch((e) => {
             console.error("Failed to play standby video:", e)
@@ -841,6 +968,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         loadAttemptRef.current = 0
         setAttemptedUrls([])
         setFormatFallbackAttempted(false)
+        setMimeTypeAttempts([])
 
         try {
           // First, try to get a direct URL
@@ -851,13 +979,17 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
             setDirectUrl(url)
             setAttemptedUrls([url])
 
+            // Check for channel-specific handling
+            const channelSpecificUrl = getChannelSpecificUrl(channel.id, url)
+            const finalUrl = channelSpecificUrl || url
+
             // Detect video format
-            const format = detectVideoFormat(url)
+            const format = detectVideoFormat(finalUrl)
             setVideoFormat(format)
             console.log(`Detected video format: ${format}`)
 
             // Add cache-busting parameter
-            const urlWithCacheBust = `${url}?t=${Date.now()}`
+            const urlWithCacheBust = `${finalUrl}?t=${Date.now()}`
 
             videoRef.current.src = urlWithCacheBust
             videoRef.current.load()
@@ -890,7 +1022,6 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
               console.error("Could not find a working URL and mp4_url is not usable")
               setErrorDetails("Could not find a working URL for this video")
               setShowStandby(true)
-
               if (standbyVideoRef.current) {
                 standbyVideoRef.current.play().catch((e) => {
                   console.error("Failed to play standby video:", e)
@@ -909,26 +1040,14 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
             setShowStandby(false)
             setVideoUrl(program.mp4_url)
           } else {
-            setShowStandby(true)
-
-            if (standbyVideoRef.current) {
-              standbyVideoRef.current.play().catch((e) => {
-                console.error("Failed to play standby video:", e)
-              })
-            }
+            tryFallbackVideo()
           }
         }
       }
     } catch (e) {
       console.error(`Error refreshing program for channel ${channel.id}:`, e)
       setError(`Failed to refresh program: ${e}`)
-      setShowStandby(true)
-
-      if (standbyVideoRef.current) {
-        standbyVideoRef.current.play().catch((e) => {
-          console.error("Failed to play standby video:", e)
-        })
-      }
+      tryFallbackVideo()
     } finally {
       setIsLoading(false)
     }
@@ -1017,36 +1136,58 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     return `${minutes}:${seconds < 10 ? "0" : ""}${seconds}`
   }
 
-  // Try alternative format when a format error occurs
-  const tryFormatFallback = async () => {
-    if (!videoUrl || !videoRef.current || formatFallbackAttempted) return false
+  // Try fallback videos if all else fails - but only as a last resort
+  const tryFallbackVideo = () => {
+    if (!videoRef.current) return
 
-    setFormatFallbackAttempted(true)
-    console.log("Trying format fallback for video URL:", videoUrl)
+    // Only use fallback video if we've tried multiple times with the original video
+    if (loadAttemptRef.current < maxAttempts) {
+      console.log(`Not using fallback yet, attempt ${loadAttemptRef.current} of ${maxAttempts}`)
 
-    try {
-      const alternativeUrl = await tryAlternativeFormat(videoUrl)
-      if (alternativeUrl) {
-        console.log("Found alternative format URL:", alternativeUrl)
-
-        // Detect video format
-        const format = detectVideoFormat(alternativeUrl)
-        setVideoFormat(format)
-        console.log(`Detected alternative video format: ${format}`)
-
-        // Add cache-busting parameter
-        const urlWithCacheBust = `${alternativeUrl}?t=${Date.now()}`
-
-        videoRef.current.src = urlWithCacheBust
+      // Try the original URL again with a cache buster
+      if (videoUrl) {
+        const cacheBustedUrl = `${videoUrl.split("?")[0]}?t=${Date.now()}`
+        console.log(`Retrying original video with cache buster: ${cacheBustedUrl}`)
+        videoRef.current.src = cacheBustedUrl
         videoRef.current.load()
-        setVideoUrl(urlWithCacheBust)
-        return true
+        loadAttemptRef.current += 1
+        return
       }
-    } catch (error) {
-      console.error("Error trying format fallback:", error)
     }
 
-    return false
+    // Only use fallback as a last resort
+    console.log("All attempts with original video failed, using fallback video")
+    setRetryCount((prev) => prev + 1)
+    const fallbackIndex = retryCount % fallbackVideoUrls.length
+    const fallbackUrl = fallbackVideoUrls[fallbackIndex]
+
+    console.log(`Using fallback video #${fallbackIndex + 1}: ${fallbackUrl}`)
+
+    videoRef.current.src = fallbackUrl
+    videoRef.current.load()
+    setVideoUrl(fallbackUrl)
+    setFallbackMode(true)
+    setShowStandby(false)
+    setLoadError(`Using fallback video while we try to fix the issue. (Attempt ${retryCount + 1})`)
+  }
+
+  const handleBack = () => {
+    router.back()
+  }
+
+  const togglePlayPause = () => {
+    if (videoRef.current) {
+      if (videoRef.current.paused) {
+        videoRef.current.play().catch((err) => {
+          console.error("Error playing video:", err)
+          setLoadError(`Error playing video: ${err.message || "Unknown error"}`)
+        })
+        setIsPlaying(true)
+      } else {
+        videoRef.current.pause()
+        setIsPlaying(false)
+      }
+    }
   }
 
   // Update the loadInitialProgram logic in the useEffect
@@ -1066,6 +1207,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
           loadAttemptRef.current = 0
           setAttemptedUrls([])
           setFormatFallbackAttempted(false)
+          setMimeTypeAttempts([])
 
           try {
             // First try to get a direct URL
@@ -1076,13 +1218,17 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
               setDirectUrl(url)
               setAttemptedUrls([url])
 
+              // Check for channel-specific handling
+              const channelSpecificUrl = getChannelSpecificUrl(channel.id, url)
+              const finalUrl = channelSpecificUrl || url
+
               // Detect video format
-              const format = detectVideoFormat(url)
+              const format = detectVideoFormat(finalUrl)
               setVideoFormat(format)
               console.log(`Detected video format: ${format}`)
 
               // Add cache-busting parameter
-              const urlWithCacheBust = `${url}?t=${Date.now()}`
+              const urlWithCacheBust = `${finalUrl}?t=${Date.now()}`
 
               videoRef.current.src = urlWithCacheBust
               videoRef.current.load()
@@ -1116,13 +1262,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
               } else {
                 console.error("Could not find a working URL for initial program and mp4_url is not usable")
                 setErrorDetails("Could not find a working URL for this video")
-                setShowStandby(true)
-
-                if (standbyVideoRef.current) {
-                  standbyVideoRef.current.play().catch((e) => {
-                    console.error("Failed to play standby video:", e)
-                  })
-                }
+                tryFallbackVideo()
               }
             }
           } catch (err) {
@@ -1139,13 +1279,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
               // Set the videoUrl state so it's available for the render
               setVideoUrl(currentProgram.mp4_url)
             } else {
-              setShowStandby(true)
-
-              if (standbyVideoRef.current) {
-                standbyVideoRef.current.play().catch((e) => {
-                  console.error("Failed to play standby video:", e)
-                })
-              }
+              tryFallbackVideo()
             }
           }
         }
@@ -1230,115 +1364,6 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
     return () => clearInterval(progressTimer)
   }, [currentProgram])
-
-  // Effect to handle video playback when program changes
-  useEffect(() => {
-    if (videoRef.current && currentProgram) {
-      loadAttemptRef.current = 0
-      setAttemptedUrls([])
-      setErrorDetails(null)
-      setFormatFallbackAttempted(false)
-
-      // Don't reload the video if we're actively playing and the program just changed
-      // (prevent interruptions during viewing)
-      const isActivelyPlaying = !videoRef.current.paused && videoRef.current.currentTime > 0
-
-      // Only reload if:
-      // 1. Not actively playing, OR
-      // 2. This is a forced program change (programChangeTimeRef was just updated)
-      const shouldReload =
-        !isActivelyPlaying || (programChangeTimeRef.current && Date.now() - programChangeTimeRef.current < 2000)
-
-      if (!shouldReload) {
-        console.log("Program changed but keeping current video playback to avoid interruption")
-        return
-      }
-
-      const loadProgram = async () => {
-        try {
-          const url = await getDirectDownloadUrl(currentProgram.mp4_url, channel.id)
-
-          if (url) {
-            console.log(`Found direct URL for program: ${url}`)
-            setDirectUrl(url)
-            setAttemptedUrls([url])
-
-            // Detect video format
-            const format = detectVideoFormat(url)
-            setVideoFormat(format)
-            console.log(`Detected video format: ${format}`)
-
-            // Add cache-busting parameter
-            const urlWithCacheBust = `${url}?t=${Date.now()}`
-
-            videoRef.current!.src = urlWithCacheBust
-            videoRef.current!.load()
-            setShowStandby(false)
-
-            // Set the videoUrl state so it's available for the render
-            setVideoUrl(urlWithCacheBust)
-          } else {
-            console.error("Could not find a working URL for program")
-            setErrorDetails("Could not find a working URL for this video")
-            setShowStandby(true)
-
-            if (standbyVideoRef.current) {
-              standbyVideoRef.current.play().catch((e) => {
-                console.error("Failed to play standby video:", e)
-              })
-            }
-          }
-        } catch (err) {
-          console.error("Error getting direct URL for program:", err)
-          setShowStandby(true)
-
-          if (standbyVideoRef.current) {
-            standbyVideoRef.current.play().catch((e) => {
-              console.error("Failed to play standby video:", e)
-            })
-          }
-        }
-      }
-
-      loadProgram()
-    }
-  }, [currentProgram, channel.id])
-
-  // Try fallback videos if all else fails
-  const tryFallbackVideo = () => {
-    if (!videoRef.current) return
-
-    setRetryCount((prev) => prev + 1)
-    const fallbackIndex = retryCount % fallbackVideoUrls.length
-    const fallbackUrl = fallbackVideoUrls[fallbackIndex]
-
-    console.log(`Trying fallback video #${fallbackIndex + 1}: ${fallbackUrl}`)
-
-    videoRef.current.src = fallbackUrl
-    videoRef.current.load()
-    setVideoUrl(fallbackUrl)
-    setFallbackMode(true)
-    setLoadError(`Using fallback video while we try to fix the issue. (Attempt ${retryCount + 1})`)
-  }
-
-  const handleBack = () => {
-    router.back()
-  }
-
-  const togglePlayPause = () => {
-    if (videoRef.current) {
-      if (videoRef.current.paused) {
-        videoRef.current.play().catch((err) => {
-          console.error("Error playing video:", err)
-          setLoadError(`Error playing video: ${err.message || "Unknown error"}`)
-        })
-        setIsPlaying(true)
-      } else {
-        videoRef.current.pause()
-        setIsPlaying(false)
-      }
-    }
-  }
 
   // Render both videos but control visibility with CSS
   return (
@@ -1429,54 +1454,106 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
                 // Map error codes to human-readable messages
                 switch (videoError.code) {
                   case MediaError.MEDIA_ERR_ABORTED:
-                    errorMessage = "Playback aborted by the user"
+                    errorMessage = "The fetching process was aborted by the user"
                     break
                   case MediaError.MEDIA_ERR_NETWORK:
-                    errorMessage = "Network error occurred while loading"
+                    errorMessage = "Network error - video download failed"
                     break
                   case MediaError.MEDIA_ERR_DECODE:
-                    errorMessage = "Media decoding error - format may be unsupported"
+                    errorMessage = "Video decoding failed - format may be unsupported"
                     break
                   case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
-                    errorMessage = "Video format not supported"
+                    errorMessage = "Video not found (404) or access denied"
                     break
                   default:
                     errorMessage = videoError.message || `Error code: ${videoError.code}`
                 }
 
-                // For format errors, try alternative format
+                // For format errors, try different MIME types first
                 if (
                   videoError.code === MediaError.MEDIA_ERR_DECODE ||
                   videoError.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED
                 ) {
-                  console.log("Format error detected, trying alternative format")
-                  tryFormatFallback().then((success) => {
-                    if (!success) {
-                      console.log("Format fallback failed, trying fallback video")
-                      tryFallbackVideo()
+                  console.log("Format error detected, trying different MIME type")
+
+                  if (videoUrl && tryNextMimeType(videoUrl)) {
+                    // Successfully tried a different MIME type, wait for result
+                    return
+                  }
+
+                  // If we've tried all MIME types, try alternative format
+                  if (!formatFallbackAttempted && videoUrl) {
+                    setFormatFallbackAttempted(true)
+                    console.log("Trying alternative format")
+
+                    // Try channel-specific URL first
+                    const channelSpecificUrl = getChannelSpecificUrl(channel.id, videoUrl)
+
+                    if (channelSpecificUrl) {
+                      console.log(`Using channel-specific URL for channel ${channel.id}: ${channelSpecificUrl}`)
+                      setVideoUrl(channelSpecificUrl)
+                      setMimeTypeAttempts([])
+
+                      if (videoRef.current) {
+                        videoRef.current.src = channelSpecificUrl
+                        videoRef.current.load()
+                        return
+                      }
                     }
-                  })
-                  return
+
+                    // Try to get a direct download URL again
+                    if (currentProgram) {
+                      console.log("Trying to get direct download URL again")
+                      getDirectDownloadUrl(currentProgram.mp4_url, channel.id)
+                        .then((url) => {
+                          if (url && videoRef.current) {
+                            console.log(`Got new direct URL: ${url}`)
+                            const cacheBustedUrl = `${url}?t=${Date.now()}`
+                            videoRef.current.src = cacheBustedUrl
+                            videoRef.current.load()
+                          } else {
+                            // Increment attempt counter but don't go to fallback yet
+                            loadAttemptRef.current += 1
+                            console.log(`No direct URL found, attempt ${loadAttemptRef.current} of ${maxAttempts}`)
+
+                            // Only use fallback if we've tried enough times
+                            if (loadAttemptRef.current >= maxAttempts) {
+                              tryFallbackVideo()
+                            }
+                          }
+                        })
+                        .catch((err) => {
+                          console.error("Error getting direct URL:", err)
+                          loadAttemptRef.current += 1
+
+                          // Only use fallback if we've tried enough times
+                          if (loadAttemptRef.current >= maxAttempts) {
+                            tryFallbackVideo()
+                          }
+                        })
+                      return
+                    }
+                  }
                 }
               }
 
               console.error("Video error:", errorMessage)
               setLoadError(`Error loading video: ${errorMessage}`)
 
-              // If we've tried a few times with the normal URLs, try a fallback
-              if (retryCount < 3) {
-                setRetryCount((prev) => prev + 1)
-                console.log(`Retrying video load (attempt ${retryCount + 1})`)
+              // Increment attempt counter but don't go to fallback yet
+              loadAttemptRef.current += 1
+              console.log(`Video error, attempt ${loadAttemptRef.current} of ${maxAttempts}`)
 
-                if (videoRef.current) {
-                  // Try reloading with a cache buster
-                  const currentSrc = videoRef.current.src.split("?")[0]
-                  videoRef.current.src = `${currentSrc}?t=${Date.now()}`
-                  videoRef.current.load()
-                }
-              } else {
-                // After 3 retries, try a fallback video
+              // Only use fallback if we've tried enough times
+              if (loadAttemptRef.current >= maxAttempts) {
                 tryFallbackVideo()
+              } else if (videoRef.current && videoUrl) {
+                // Try reloading with a cache buster
+                const currentSrc = videoUrl.split("?")[0]
+                const cacheBustedUrl = `${currentSrc}?t=${Date.now()}`
+                console.log(`Retrying with cache buster: ${cacheBustedUrl}`)
+                videoRef.current.src = cacheBustedUrl
+                videoRef.current.load()
               }
             }}
             onTimeUpdate={handleTimeUpdate}
@@ -1491,7 +1568,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
               console.log("Video playback has stalled")
             }}
           >
-            {videoUrl && <source src={videoUrl} type={getMimeType(videoUrl)} />}
+            {videoUrl && <source src={videoUrl} type={currentMimeType} />}
             Your browser does not support the video tag.
           </video>
 
@@ -1640,7 +1717,6 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       {currentProgram && (
         <div className="bg-black p-4">
           <h2 className="text-xl font-bold">{currentProgram.title}</h2>
-          {videoFormat && <p className="text-gray-400 text-sm mt-1">Format: {videoFormat}</p>}
           {scheduledProgramId !== currentProgram.id && (
             <p className="text-yellow-500 text-sm mt-1">New program scheduled. Will update shortly.</p>
           )}
@@ -1653,4 +1729,35 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       )}
     </div>
   )
+}
+
+// Helper function to try the next MIME type in the list
+const tryNextMimeType = (url: string): boolean => {
+  if (!url) return false
+
+  const allMimeTypes = getAllPossibleMimeTypes(url)
+
+  // Get the MIME types we haven't tried yet
+  const remainingMimeTypes = allMimeTypes.filter((mimeType) => !mimeTypeAttempts.includes(mimeType))
+
+  if (remainingMimeTypes.length === 0) {
+    console.log("No more MIME types to try")
+    return false
+  }
+
+  // Get the next MIME type to try
+  const nextMimeType = remainingMimeTypes[0]
+
+  console.log(`Trying MIME type: ${nextMimeType}`)
+
+  // Update the state with the new MIME type and the attempted MIME types
+  setCurrentMimeType(nextMimeType)
+  setMimeTypeAttempts((prevAttempts) => [...prevAttempts, nextMimeType])
+
+  // Reload the video with the new MIME type
+  if (videoRef.current) {
+    videoRef.current.load()
+  }
+
+  return true
 }
