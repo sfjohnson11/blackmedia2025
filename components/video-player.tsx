@@ -4,7 +4,7 @@ import type React from "react"
 
 import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
-import { Loader2, RefreshCw } from "lucide-react"
+import { Loader2, RefreshCw, Download, ExternalLink } from "lucide-react"
 
 interface VideoPlayerProps {
   channel: any
@@ -15,11 +15,11 @@ interface VideoPlayerProps {
 export function VideoPlayer({ channel, initialProgram, upcomingPrograms }: VideoPlayerProps) {
   const router = useRouter()
   const videoRef = useRef<HTMLVideoElement>(null)
-
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [videoUrl, setVideoUrl] = useState<string | null>(null)
   const [debugInfo, setDebugInfo] = useState<string>("")
+  const [attemptCount, setAttemptCount] = useState(0)
 
   // Go back
   const handleBack = () => {
@@ -45,7 +45,42 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms }: Video
     return protocol + url
   }
 
-  // Load the video
+  // Add aggressive cache buster with random values
+  const addCacheBuster = (url: string): string => {
+    const random = Math.floor(Math.random() * 1000000)
+    const timestamp = Date.now()
+    const cacheBuster = `t=${timestamp}&r=${random}`
+    return url.includes("?") ? `${url}&${cacheBuster}` : `${url}?${cacheBuster}`
+  }
+
+  // Try to download the video directly
+  const downloadVideo = () => {
+    if (!videoUrl) return
+
+    try {
+      // Create a temporary anchor element
+      const a = document.createElement("a")
+      a.href = videoUrl
+      a.download = `video-${initialProgram?.id || "download"}.mp4`
+      a.target = "_blank"
+      a.rel = "noopener noreferrer"
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+    } catch (err) {
+      console.error("Error downloading video:", err)
+      alert("Could not download the video. Please try opening it directly instead.")
+    }
+  }
+
+  // Open the video URL directly in a new tab
+  const openDirectly = () => {
+    if (videoUrl) {
+      window.open(videoUrl, "_blank")
+    }
+  }
+
+  // Load the video with more aggressive error handling
   const loadVideo = () => {
     if (!initialProgram || !initialProgram.mp4_url || !videoRef.current) {
       setError("No video URL available")
@@ -53,28 +88,39 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms }: Video
       return
     }
 
+    setIsLoading(true)
+    setError(null)
+    setAttemptCount((prev) => prev + 1)
+
     try {
       // Get the URL from the program and fix any double slashes
       const rawUrl = initialProgram.mp4_url
       const fixedUrl = fixUrl(rawUrl)
 
-      // Add a cache buster to prevent caching
-      const timestamp = Date.now()
-      const urlWithCacheBuster = fixedUrl.includes("?") ? `${fixedUrl}&t=${timestamp}` : `${fixedUrl}?t=${timestamp}`
+      // Add an aggressive cache buster
+      const urlWithCacheBuster = addCacheBuster(fixedUrl)
 
       // Set debug info
       setDebugInfo(`
+        Attempt: ${attemptCount + 1}
         Original URL: ${rawUrl}
         Fixed URL: ${fixedUrl}
         URL with cache buster: ${urlWithCacheBuster}
         Channel ID: ${channel.id}
         Program ID: ${initialProgram.id}
         Program title: ${initialProgram.title}
+        Time: ${new Date().toISOString()}
       `)
 
       // Set the video source
       videoRef.current.src = urlWithCacheBuster
       setVideoUrl(urlWithCacheBuster)
+
+      // Set CORS attributes
+      videoRef.current.crossOrigin = "anonymous"
+
+      // Set other attributes that might help
+      videoRef.current.preload = "auto"
 
       // Load the video
       videoRef.current.load()
@@ -98,7 +144,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms }: Video
     }
   }
 
-  // Handle video error
+  // Handle video error with more detailed reporting
   const handleVideoError = (e: React.SyntheticEvent<HTMLVideoElement>) => {
     const videoElement = e.currentTarget
     let errorMessage = "Unknown error"
@@ -129,6 +175,9 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms }: Video
     console.error("Video error:", errorMessage)
     setError(`Video error: ${errorMessage}`)
     setIsLoading(false)
+
+    // Update debug info with error details
+    setDebugInfo((prev) => `${prev}\n\nError: ${errorMessage}\nTime: ${new Date().toISOString()}`)
   }
 
   // Initial setup
@@ -145,10 +194,28 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms }: Video
     }
   }, [channel.id, initialProgram])
 
-  // Open the video URL directly in a new tab
-  const openDirectly = () => {
-    if (videoUrl) {
-      window.open(videoUrl, "_blank")
+  // Test if the URL is accessible
+  const testUrl = async () => {
+    if (!videoUrl) return
+
+    setDebugInfo((prev) => `${prev}\n\nTesting URL accessibility...`)
+
+    try {
+      const response = await fetch(videoUrl, { method: "HEAD" })
+      const status = response.status
+      const headers = Array.from(response.headers.entries())
+        .map(([key, value]) => `${key}: ${value}`)
+        .join("\n")
+
+      setDebugInfo(
+        (prev) => `${prev}\n\nURL Test Results:
+        Status: ${status}
+        Headers:
+        ${headers}
+      `,
+      )
+    } catch (err) {
+      setDebugInfo((prev) => `${prev}\n\nURL Test Error: ${err instanceof Error ? err.message : String(err)}`)
     }
   }
 
@@ -186,9 +253,15 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms }: Video
               </button>
               <button
                 onClick={openDirectly}
-                className="bg-gray-700 text-white px-4 py-2 rounded hover:bg-gray-600 transition-colors"
+                className="bg-gray-700 text-white px-4 py-2 rounded hover:bg-gray-600 transition-colors flex items-center"
               >
-                Open Directly
+                <ExternalLink className="h-4 w-4 mr-2" /> Open Directly
+              </button>
+              <button
+                onClick={downloadVideo}
+                className="bg-gray-700 text-white px-4 py-2 rounded hover:bg-gray-600 transition-colors flex items-center"
+              >
+                <Download className="h-4 w-4 mr-2" /> Download
               </button>
             </div>
           </div>
@@ -226,15 +299,27 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms }: Video
         <pre className="text-xs text-gray-400 whitespace-pre-wrap bg-gray-900 p-3 rounded overflow-auto max-h-40">
           {debugInfo}
         </pre>
-        <div className="mt-3">
+        <div className="mt-3 flex flex-wrap gap-2">
           <button
             onClick={openDirectly}
-            className="bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700 mr-2"
+            className="bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700 flex items-center"
           >
-            Open Video Directly
+            <ExternalLink className="h-3 w-3 mr-1" /> Open Directly
           </button>
-          <button onClick={loadVideo} className="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700">
-            Reload Video
+          <button
+            onClick={downloadVideo}
+            className="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700 flex items-center"
+          >
+            <Download className="h-3 w-3 mr-1" /> Download
+          </button>
+          <button
+            onClick={loadVideo}
+            className="bg-yellow-600 text-white px-3 py-1 rounded text-sm hover:bg-yellow-700 flex items-center"
+          >
+            <RefreshCw className="h-3 w-3 mr-1" /> Reload
+          </button>
+          <button onClick={testUrl} className="bg-purple-600 text-white px-3 py-1 rounded text-sm hover:bg-purple-700">
+            Test URL
           </button>
         </div>
       </div>
