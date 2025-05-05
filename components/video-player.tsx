@@ -18,10 +18,30 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const [currentProgram, setCurrentProgram] = useState(initialProgram)
   const [upcomingPrograms, setUpcomingPrograms] = useState(initialUpcoming)
   const [programCheckInterval, setProgramCheckInterval] = useState<NodeJS.Timeout | null>(null)
+  const [debugInfo, setDebugInfo] = useState("")
 
   // Go back
   const handleBack = () => {
     router.back()
+  }
+
+  // Fix double slashes in URLs (but preserve http://)
+  const fixUrl = (url: string): string => {
+    if (!url) return ""
+
+    // First preserve the protocol (http:// or https://)
+    let protocol = ""
+    const protocolMatch = url.match(/^(https?:\/\/)/)
+    if (protocolMatch) {
+      protocol = protocolMatch[0]
+      url = url.substring(protocol.length)
+    }
+
+    // Replace any double slashes with single slashes
+    url = url.replace(/\/+/g, "/")
+
+    // Put the protocol back
+    return protocol + url
   }
 
   // Check for program updates
@@ -34,8 +54,18 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         console.log("New program detected:", program.title)
         setCurrentProgram(program)
 
-        if (videoRef.current) {
-          videoRef.current.src = program.mp4_url
+        if (videoRef.current && program.mp4_url) {
+          // Fix double slashes in the URL
+          const originalUrl = program.mp4_url
+          const fixedUrl = fixUrl(originalUrl)
+
+          // Log both URLs for debugging
+          console.log("Original URL:", originalUrl)
+          console.log("Fixed URL:", fixedUrl)
+          setDebugInfo(`Original: ${originalUrl}\nFixed: ${fixedUrl}`)
+
+          // Set the fixed URL as the video source
+          videoRef.current.src = fixedUrl
           videoRef.current.load()
           videoRef.current.play().catch((err) => {
             console.error("Error playing video:", err)
@@ -62,9 +92,18 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     // Set up video player
     if (initialProgram && initialProgram.mp4_url && videoRef.current) {
       console.log("Loading initial program:", initialProgram.title)
-      console.log("URL:", initialProgram.mp4_url)
 
-      videoRef.current.src = initialProgram.mp4_url
+      // Fix double slashes in the URL
+      const originalUrl = initialProgram.mp4_url
+      const fixedUrl = fixUrl(originalUrl)
+
+      // Log both URLs for debugging
+      console.log("Original URL:", originalUrl)
+      console.log("Fixed URL:", fixedUrl)
+      setDebugInfo(`Original: ${originalUrl}\nFixed: ${fixedUrl}`)
+
+      // Set the fixed URL as the video source
+      videoRef.current.src = fixedUrl
       videoRef.current.load()
       videoRef.current.play().catch((err) => {
         console.error("Error playing initial video:", err)
@@ -132,6 +171,13 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         <button onClick={checkForProgramUpdates} className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700">
           Refresh Program
         </button>
+      </div>
+
+      {/* Debug info */}
+      <div className="bg-black p-2 text-xs text-gray-500">
+        <p>Channel ID: {channel.id}</p>
+        <p>Program: {currentProgram?.title || "None"}</p>
+        <pre className="whitespace-pre-wrap">{debugInfo}</pre>
       </div>
     </div>
   )
