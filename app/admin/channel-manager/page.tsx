@@ -34,6 +34,13 @@ export default function ChannelManager() {
 
         if (error) throw error
 
+        // Sort channels by ID numerically
+        data.sort((a, b) => {
+          const aNum = Number.parseInt(a.id, 10)
+          const bNum = Number.parseInt(b.id, 10)
+          return aNum - bNum
+        })
+
         setChannels(data || [])
 
         // Initialize edited channels with current names
@@ -90,6 +97,13 @@ export default function ChannelManager() {
       const { data, error } = await supabase.from("channels").select("*").order("id")
 
       if (error) throw error
+
+      // Sort channels by ID numerically
+      data.sort((a, b) => {
+        const aNum = Number.parseInt(a.id, 10)
+        const bNum = Number.parseInt(b.id, 10)
+        return aNum - bNum
+      })
 
       setChannels(data || [])
       setMessage({

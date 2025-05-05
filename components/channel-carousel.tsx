@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useMemo } from "react"
 import { ChevronLeft, ChevronRight } from "lucide-react"
 import type { Channel } from "@/types"
 import { ChannelCard } from "@/components/channel-card"
@@ -18,6 +18,14 @@ export function ChannelCarousel({
   autoScroll = false,
   autoScrollInterval = 5000,
 }: ChannelCarouselProps) {
+  // Add at the beginning of the component, after the props are destructured
+  const sortedChannels = useMemo(() => {
+    return [...channels].sort((a, b) => {
+      const aNum = Number.parseInt(a.id, 10)
+      const bNum = Number.parseInt(b.id, 10)
+      return aNum - bNum
+    })
+  }, [channels])
   const [currentIndex, setCurrentIndex] = useState(0)
   const [isHovering, setIsHovering] = useState(false)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -46,7 +54,7 @@ export function ChannelCarousel({
 
   // Auto-scroll functionality
   useEffect(() => {
-    if (autoScroll && !isHovering && channels.length > itemsPerPage) {
+    if (autoScroll && !isHovering && sortedChannels.length > itemsPerPage) {
       autoScrollTimerRef.current = setInterval(() => {
         scrollNext()
       }, autoScrollInterval)
@@ -57,7 +65,7 @@ export function ChannelCarousel({
         clearInterval(autoScrollTimerRef.current)
       }
     }
-  }, [autoScroll, isHovering, currentIndex, channels.length, itemsPerPage, autoScrollInterval])
+  }, [autoScroll, isHovering, currentIndex, sortedChannels.length, itemsPerPage, autoScrollInterval])
 
   const scrollPrev = () => {
     setCurrentIndex((prev) => {
@@ -69,7 +77,7 @@ export function ChannelCarousel({
 
   const scrollNext = () => {
     setCurrentIndex((prev) => {
-      const newIndex = Math.min(prev + 1, Math.max(0, channels.length - itemsPerPage))
+      const newIndex = Math.min(prev + 1, Math.max(0, sortedChannels.length - itemsPerPage))
       scrollToIndex(newIndex)
       return newIndex
     })
@@ -77,7 +85,7 @@ export function ChannelCarousel({
 
   const scrollToIndex = (index: number) => {
     if (scrollContainerRef.current) {
-      const cardWidth = scrollContainerRef.current.scrollWidth / channels.length
+      const cardWidth = scrollContainerRef.current.scrollWidth / sortedChannels.length
       scrollContainerRef.current.scrollTo({
         left: index * cardWidth,
         behavior: "smooth",
@@ -89,7 +97,7 @@ export function ChannelCarousel({
   const handleScroll = () => {
     if (scrollContainerRef.current) {
       const scrollLeft = scrollContainerRef.current.scrollLeft
-      const cardWidth = scrollContainerRef.current.scrollWidth / channels.length
+      const cardWidth = scrollContainerRef.current.scrollWidth / sortedChannels.length
       const newIndex = Math.round(scrollLeft / cardWidth)
       if (newIndex !== currentIndex) {
         setCurrentIndex(newIndex)
@@ -98,7 +106,7 @@ export function ChannelCarousel({
   }
 
   const showLeftArrow = currentIndex > 0
-  const showRightArrow = currentIndex < channels.length - itemsPerPage
+  const showRightArrow = currentIndex < sortedChannels.length - itemsPerPage
 
   return (
     <div
@@ -139,7 +147,7 @@ export function ChannelCarousel({
           className="flex space-x-5 overflow-x-scroll scrollbar-hide pb-6 pt-2 scroll-smooth"
           onScroll={handleScroll}
         >
-          {channels.map((channel) => (
+          {sortedChannels.map((channel) => (
             <div key={channel.id} className="min-w-[220px] flex-shrink-0">
               <ChannelCard channel={channel} />
             </div>
@@ -147,9 +155,9 @@ export function ChannelCarousel({
         </div>
 
         {/* Pagination indicators */}
-        {channels.length > itemsPerPage && (
+        {sortedChannels.length > itemsPerPage && (
           <div className="flex justify-center mt-2 space-x-1">
-            {Array.from({ length: Math.ceil(channels.length / itemsPerPage) }).map((_, i) => (
+            {Array.from({ length: Math.ceil(sortedChannels.length / itemsPerPage) }).map((_, i) => (
               <button
                 key={i}
                 onClick={() => {
