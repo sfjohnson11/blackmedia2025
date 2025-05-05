@@ -15,17 +15,12 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   },
 })
 
-// Centralized function to get full Supabase storage URLs
-export const getFullUrl = (path: string): string => {
-  // Make sure path doesn't start with a slash
+// Centralized function to get full Supabase storage URLs - UPDATED to match expected format
+export function getFullUrl(path: string): string {
+  const base = process.env.NEXT_PUBLIC_SUPABASE_URL + "/storage/v1/object/public/"
   const cleanPath = path.replace(/^\/+/, "")
-  const base = `${supabaseUrl}/storage/v1/object/public/`
-
-  // Combine and fix any double slashes
-  const url = `${base}${cleanPath}`
-
-  // Fix double slashes in URLs (but preserve http://)
-  return fixUrl(url)
+  // Apply fixUrl to prevent double slashes
+  return fixUrl(base + cleanPath)
 }
 
 export const isLiveChannel = (channelId: string): boolean => {
@@ -75,7 +70,7 @@ export async function getCurrentProgram(channelId: string): Promise<{ program: a
   console.log(`Current time (Local): ${now.toLocaleString()}`)
 
   try {
-    // Get programs that have already started - REMOVED headers() method
+    // Get programs that have already started
     const { data, error } = await supabase
       .from("programs")
       .select("*")
@@ -147,7 +142,6 @@ export async function getUpcomingPrograms(channelId: string): Promise<{ programs
   console.log(`Getting upcoming programs for channel ${channelId} at ${now}`)
 
   try {
-    // REMOVED headers() method
     const { data: programs, error } = await supabase
       .from("programs")
       .select("*")
@@ -297,7 +291,7 @@ export async function checkRLSStatus(bucketName: string): Promise<{
   canAccess: boolean
 }> {
   try {
-    // Check if RLS is enabled - REMOVED headers() method
+    // Check if RLS is enabled
     const { data: rlsData, error: rlsError } = await supabase
       .from("pg_policies")
       .select("*")
