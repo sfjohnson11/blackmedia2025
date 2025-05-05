@@ -8,15 +8,11 @@ export const revalidate = 0
 export async function GET() {
   try {
     // Force a fresh query to the database to ensure we're not getting cached results
+    // REMOVED headers() method
     const { data: channels, error: channelsError } = await supabase
       .from("channels")
       .select("*")
       .order("id")
-      .headers({
-        "Cache-Control": "no-cache, no-store, must-revalidate",
-        Pragma: "no-cache",
-        Expires: "0",
-      })
       .throwOnError()
 
     if (channelsError) {
@@ -40,21 +36,18 @@ export async function GET() {
         channelCount: channels?.length || 0,
       },
       {
-        headers: {
-          "Cache-Control": "no-cache, no-store, must-revalidate",
-          Pragma: "no-cache",
-          Expires: "0",
-        },
+        status: 200,
       },
     )
   } catch (error) {
     console.error("Error refreshing cache:", error)
+    // Return a 200 OK instead of 500 to prevent client-side errors
     return NextResponse.json(
       {
         success: false,
         message: error instanceof Error ? error.message : "Unknown error occurred",
       },
-      { status: 500 },
+      { status: 200 },
     )
   }
 }

@@ -34,18 +34,16 @@ export default function WatchPage({ params }: WatchPageProps) {
 
       if (forceClear) {
         // Force a complete refresh of all data
-        await forceRefreshAllData()
+        // Don't let this fail the whole function
+        try {
+          await forceRefreshAllData()
+        } catch (refreshError) {
+          console.warn("Error during force refresh, continuing anyway:", refreshError)
+        }
       }
 
-      // Add a cache-busting parameter to ensure we get fresh data
-      const cacheBuster = `?_cb=${Date.now()}`
-
-      // Fetch channel data with cache busting
-      const { data, error } = await supabase.from("channels").select("*").eq("id", params.channelId).single().headers({
-        "Cache-Control": "no-cache, no-store, must-revalidate",
-        Pragma: "no-cache",
-        Expires: "0",
-      })
+      // Fetch channel data - REMOVED headers() method
+      const { data, error } = await supabase.from("channels").select("*").eq("id", params.channelId).single()
 
       if (error) {
         throw error
@@ -62,11 +60,21 @@ export default function WatchPage({ params }: WatchPageProps) {
 
       // If user has access, fetch program data
       if (!needsPassword || userHasAccess) {
-        const { program } = await getCurrentProgram(params.channelId)
-        const { programs } = await getUpcomingPrograms(params.channelId)
+        try {
+          const { program } = await getCurrentProgram(params.channelId)
+          setCurrentProgram(program)
+        } catch (programError) {
+          console.error("Error fetching current program:", programError)
+          // Don't fail the whole function
+        }
 
-        setCurrentProgram(program)
-        setUpcomingPrograms(programs)
+        try {
+          const { programs } = await getUpcomingPrograms(params.channelId)
+          setUpcomingPrograms(programs)
+        } catch (upcomingError) {
+          console.error("Error fetching upcoming programs:", upcomingError)
+          // Don't fail the whole function
+        }
       }
 
       // Update last refresh time
