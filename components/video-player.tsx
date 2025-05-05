@@ -80,12 +80,9 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     // If it's already a full URL, use it directly
     if (url.startsWith("http")) {
       fullUrl = url
-      console.log("Using direct URL:", fullUrl)
     } else {
       // Otherwise, use getFullUrl to construct the full path
-      // This is the CORRECT FORMAT: getFullUrl("freedom-school/intro.mp4")
       fullUrl = getFullUrl(url)
-      console.log("Constructed URL using getFullUrl:", fullUrl)
     }
 
     // Add a cache-busting parameter if this is a retry

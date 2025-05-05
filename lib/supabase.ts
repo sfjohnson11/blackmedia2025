@@ -15,12 +15,11 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   },
 })
 
-// Centralized function to get full Supabase storage URLs - UPDATED to match expected format
+// Centralized function to get full Supabase storage URLs - REVERTED to original implementation
 export function getFullUrl(path: string): string {
   const base = process.env.NEXT_PUBLIC_SUPABASE_URL + "/storage/v1/object/public/"
   const cleanPath = path.replace(/^\/+/, "")
-  // Apply fixUrl to prevent double slashes
-  return fixUrl(base + cleanPath)
+  return base + cleanPath
 }
 
 export const isLiveChannel = (channelId: string): boolean => {
