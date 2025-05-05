@@ -2,9 +2,9 @@
 
 import type React from "react"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
-import { Loader2, ChevronLeft } from "lucide-react"
+import { Loader2, ChevronLeft, AlertTriangle, RefreshCw } from "lucide-react"
 
 interface FreedomSchoolPlayerProps {
   videoId?: number
@@ -25,10 +25,14 @@ export function FreedomSchoolPlayer({
   const [errorDetails, setErrorDetails] = useState<string | null>(null)
   const [currentUrl, setCurrentUrl] = useState("")
   const [usedFallback, setUsedFallback] = useState(false)
+  const [retryCount, setRetryCount] = useState(0)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const loadTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const maxRetries = 3
 
   // Go back
   const handleBack = () => {
-    router.push("/freedom-school")
+    router.push("/")
   }
 
   // Fix double slashes in URLs (but preserve http://)
@@ -37,8 +41,6 @@ export function FreedomSchoolPlayer({
       console.log("Freedom School: WARNING - Empty URL passed to fixUrl")
       return ""
     }
-
-    console.log("Freedom School: Original URL before fixing:", url)
 
     // First preserve the protocol (http:// or https://)
     let protocol = ""
@@ -53,13 +55,23 @@ export function FreedomSchoolPlayer({
 
     // Put the protocol back
     const fixedUrl = protocol + url
-    console.log("Freedom School: Fixed URL after processing:", fixedUrl)
     return fixedUrl
   }
 
-  // Load video
-  const loadVideo = (url: string) => {
-    console.log("Freedom School: loadVideo called with URL:", url)
+  // Check if URL is accessible
+  const checkUrlAccessibility = async (url: string): Promise<boolean> => {
+    try {
+      const response = await fetch(url, { method: "HEAD", mode: "no-cors" })
+      return true
+    } catch (error) {
+      console.error("Freedom School: URL accessibility check failed:", error)
+      return false
+    }
+  }
+
+  // Load video with retry logic
+  const loadVideo = async (url: string, retry = 0) => {
+    console.log(`Freedom School: loadVideo called with URL: ${url}, retry: ${retry}`)
 
     if (!url) {
       console.error("Freedom School: ERROR - Empty URL passed to loadVideo")
@@ -68,37 +80,82 @@ export function FreedomSchoolPlayer({
       return
     }
 
+    // Clear any existing timeout
+    if (loadTimeoutRef.current) {
+      clearTimeout(loadTimeoutRef.current)
+    }
+
     // Fix double slashes in the URL
     const fixedUrl = fixUrl(url)
     console.log("Freedom School: Setting video URL to:", fixedUrl)
 
+    // Add cache-busting parameter if retrying
+    const finalUrl = retry > 0 ? `${fixedUrl}${fixedUrl.includes("?") ? "&" : "?"}cb=${Date.now()}` : fixedUrl
+
     // Set the video URL - this will trigger a remount of the video element due to the key prop
-    setCurrentUrl(fixedUrl)
+    setCurrentUrl(finalUrl)
     setIsLoading(true)
     setError(null)
     setErrorDetails(null)
+    setRetryCount(retry)
+
+    // Set a timeout to detect if video loading takes too long
+    loadTimeoutRef.current = setTimeout(() => {
+      console.log("Freedom School: Video load timeout triggered")
+      if (isLoading && videoRef.current) {
+        handleLoadingTimeout()
+      }
+    }, 15000) // 15 seconds timeout
+  }
+
+  // Handle loading timeout
+  const handleLoadingTimeout = () => {
+    console.log("Freedom School: Loading timeout occurred")
+
+    if (retryCount < maxRetries) {
+      console.log(`Freedom School: Retrying (${retryCount + 1}/${maxRetries})`)
+      loadVideo(videoUrl || "", retryCount + 1)
+    } else if (!usedFallback && fallbackUrl) {
+      tryFallback()
+    } else {
+      setError("Video loading timed out")
+      setErrorDetails(`The video took too long to load. URL: ${currentUrl}`)
+      setIsLoading(false)
+    }
   }
 
   // Try fallback
   const tryFallback = () => {
     if (!fallbackUrl || usedFallback) {
       console.log("Freedom School: No fallback URL available or already used fallback")
+      setIsLoading(false)
       return
     }
 
     console.log("Freedom School: Trying fallback URL:", fallbackUrl)
     setUsedFallback(true)
+    setRetryCount(0)
     loadVideo(fallbackUrl)
   }
 
   // Handle video error with improved error logging
   const handleVideoError = (e: React.SyntheticEvent<HTMLVideoElement>) => {
     const videoElement = e.currentTarget
-    const videoError = videoElement.error
 
     console.log("Freedom School: Video error event triggered")
+    console.log("Freedom School: Video network state:", videoElement.networkState)
+    console.log("Freedom School: Video ready state:", videoElement.readyState)
 
-    if (videoError) {
+    // Clear loading timeout
+    if (loadTimeoutRef.current) {
+      clearTimeout(loadTimeoutRef.current)
+      loadTimeoutRef.current = null
+    }
+
+    // Check if we have an error object
+    if (videoElement.error) {
+      const videoError = videoElement.error
+
       // Log the error code and message
       console.error("Freedom School: Video error code:", videoError.code)
       console.error("Freedom School: Video error message:", videoError.message)
@@ -109,22 +166,16 @@ export function FreedomSchoolPlayer({
       switch (videoError.code) {
         case MediaError.MEDIA_ERR_ABORTED:
           errorMessage = "Video playback was aborted"
-          console.error("Freedom School: MEDIA_ERR_ABORTED: Video playback was aborted")
           break
         case MediaError.MEDIA_ERR_NETWORK:
           errorMessage = "A network error occurred while loading the video"
-          console.error("Freedom School: MEDIA_ERR_NETWORK: A network error occurred")
           break
         case MediaError.MEDIA_ERR_DECODE:
           errorMessage = "The video could not be decoded"
-          console.error("Freedom School: MEDIA_ERR_DECODE: Failed to decode the video")
           break
         case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
           errorMessage = "The video format is not supported or the URL is invalid"
-          console.error("Freedom School: MEDIA_ERR_SRC_NOT_SUPPORTED: Unsupported video source")
           break
-        default:
-          console.error("Freedom School: Unknown video error")
       }
 
       // Add the error message if available
@@ -132,18 +183,33 @@ export function FreedomSchoolPlayer({
         errorMessage += `: ${videoError.message}`
       }
 
-      // Log the current URL
-      console.error("Freedom School: Current video URL when error occurred:", currentUrl)
-
       // Set the error state
       setError(`Video error: ${errorMessage}`)
       setErrorDetails(`Error code: ${videoError.code}, URL: ${currentUrl}`)
     } else {
       console.error("Freedom School: Video error event but no error object available")
+
+      // Provide more detailed information about the video element state
+      const networkStateText =
+        ["NETWORK_EMPTY", "NETWORK_IDLE", "NETWORK_LOADING", "NETWORK_NO_SOURCE"][videoElement.networkState] ||
+        "Unknown"
+
+      const readyStateText =
+        ["HAVE_NOTHING", "HAVE_METADATA", "HAVE_CURRENT_DATA", "HAVE_FUTURE_DATA", "HAVE_ENOUGH_DATA"][
+          videoElement.readyState
+        ] || "Unknown"
+
       setError("Video error occurred")
+      setErrorDetails(
+        `Network state: ${networkStateText} (${videoElement.networkState}), Ready state: ${readyStateText} (${videoElement.readyState}), URL: ${currentUrl}`,
+      )
     }
 
-    if (!usedFallback && fallbackUrl) {
+    // Try retry or fallback
+    if (retryCount < maxRetries) {
+      console.log(`Freedom School: Retrying (${retryCount + 1}/${maxRetries})`)
+      loadVideo(videoUrl || "", retryCount + 1)
+    } else if (!usedFallback && fallbackUrl) {
       tryFallback()
     } else {
       setIsLoading(false)
@@ -153,7 +219,29 @@ export function FreedomSchoolPlayer({
   // Handle video can play
   const handleCanPlay = () => {
     console.log("Freedom School: Video can play event triggered for URL:", currentUrl)
+
+    // Clear loading timeout
+    if (loadTimeoutRef.current) {
+      clearTimeout(loadTimeoutRef.current)
+      loadTimeoutRef.current = null
+    }
+
     setIsLoading(false)
+
+    // Start playing
+    if (videoRef.current) {
+      videoRef.current.play().catch((err) => {
+        console.log("Freedom School: Autoplay prevented:", err)
+      })
+    }
+  }
+
+  // Manual refresh
+  const handleManualRefresh = () => {
+    console.log("Freedom School: Manual refresh triggered")
+    setRetryCount(0)
+    setUsedFallback(false)
+    loadVideo(videoUrl || "")
   }
 
   // Initial setup
@@ -169,31 +257,33 @@ export function FreedomSchoolPlayer({
       setError("No video URL provided")
       setIsLoading(false)
     }
+
+    // Cleanup function
+    return () => {
+      if (loadTimeoutRef.current) {
+        clearTimeout(loadTimeoutRef.current)
+      }
+    }
   }, [videoId, videoUrl, fallbackUrl])
 
-  // Log whenever currentUrl changes
-  useEffect(() => {
-    console.log("Freedom School: Video URL state changed to:", currentUrl)
-  }, [currentUrl])
-
   return (
-    <div className="relative bg-black">
-      {/* Back button - only show when not on the main freedom school page */}
-      {router.pathname !== "/freedom-school" && (
-        <button
-          onClick={handleBack}
-          className="absolute top-4 left-4 z-10 bg-black/50 p-2 rounded-full hover:bg-black/70 transition-colors"
-        >
-          <ChevronLeft className="h-6 w-6 text-white" />
-        </button>
-      )}
+    <div className="relative bg-black min-h-screen">
+      {/* Back button */}
+      <button
+        onClick={handleBack}
+        className="absolute top-4 left-4 z-10 bg-black/50 p-2 rounded-full hover:bg-black/70 transition-colors"
+      >
+        <ChevronLeft className="h-6 w-6 text-white" />
+      </button>
 
       {/* Loading state */}
       {isLoading && (
         <div className="absolute inset-0 flex items-center justify-center bg-black z-20">
           <div className="flex flex-col items-center">
             <Loader2 className="h-12 w-12 text-red-600 animate-spin mb-2" />
-            <p className="text-white">Loading video...</p>
+            <p className="text-white">
+              Loading video{retryCount > 0 ? ` (Attempt ${retryCount + 1}/${maxRetries + 1})` : ""}...
+            </p>
           </div>
         </div>
       )}
@@ -201,15 +291,24 @@ export function FreedomSchoolPlayer({
       {/* Error state */}
       {error && (
         <div className="absolute inset-0 flex items-center justify-center bg-black z-20">
-          <div className="text-center p-4">
-            <p className="text-red-500 mb-4">{error}</p>
-            {errorDetails && <p className="text-gray-400 text-sm mb-4">{errorDetails}</p>}
-            <button
-              onClick={() => loadVideo(usedFallback && fallbackUrl ? fallbackUrl : videoUrl || "")}
-              className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition-colors"
-            >
-              Try Again
-            </button>
+          <div className="text-center p-4 max-w-md">
+            <AlertTriangle className="h-12 w-12 text-red-600 mx-auto mb-4" />
+            <p className="text-red-500 text-lg mb-4">{error}</p>
+            {errorDetails && (
+              <details className="mb-4 text-left">
+                <summary className="text-gray-400 text-sm cursor-pointer">Technical Details</summary>
+                <p className="text-gray-400 text-xs mt-2 p-2 bg-gray-900 rounded">{errorDetails}</p>
+              </details>
+            )}
+            <div className="flex justify-center space-x-4">
+              <button
+                onClick={handleManualRefresh}
+                className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition-colors flex items-center"
+              >
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Try Again
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -218,11 +317,12 @@ export function FreedomSchoolPlayer({
       <div className="w-full aspect-video bg-black">
         {currentUrl ? (
           <video
-            key={currentUrl} // This forces a complete remount when the URL changes
+            ref={videoRef}
+            key={`${currentUrl}-${retryCount}`} // This forces a complete remount when the URL or retry count changes
             className="w-full h-full"
             controls
             playsInline
-            autoPlay // Add autoPlay to start playing automatically
+            preload="auto"
             onCanPlay={handleCanPlay}
             onError={handleVideoError}
             onLoadStart={() => console.log("Freedom School: Video load started for URL:", currentUrl)}
@@ -242,6 +342,11 @@ export function FreedomSchoolPlayer({
       <div className="bg-black p-4">
         <h2 className="text-xl font-bold text-white">{title}</h2>
         {usedFallback && <p className="text-yellow-500 text-sm mt-1">Using fallback video source</p>}
+        {retryCount > 0 && (
+          <p className="text-blue-500 text-sm mt-1">
+            Retry attempt: {retryCount}/{maxRetries}
+          </p>
+        )}
       </div>
 
       {/* Debug info - only show in development */}
@@ -251,6 +356,9 @@ export function FreedomSchoolPlayer({
           <p>Original URL: {videoUrl || "None"}</p>
           <p>Current URL: {currentUrl || "None"}</p>
           <p>Using Fallback: {usedFallback ? "Yes" : "No"}</p>
+          <p>
+            Retry Count: {retryCount}/{maxRetries}
+          </p>
           <p>Loading: {isLoading ? "Yes" : "No"}</p>
           <p>Error: {error || "None"}</p>
         </div>
