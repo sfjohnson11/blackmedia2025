@@ -7,13 +7,18 @@ import { useRouter } from "next/navigation"
 import { Loader2, ChevronLeft } from "lucide-react"
 
 interface FreedomSchoolPlayerProps {
-  videoId: number
-  videoUrl: string
-  title: string
+  videoId?: number
+  videoUrl?: string
+  title?: string
   fallbackUrl?: string
 }
 
-export function FreedomSchoolPlayer({ videoId, videoUrl, title, fallbackUrl }: FreedomSchoolPlayerProps) {
+export function FreedomSchoolPlayer({
+  videoId = 1,
+  videoUrl = "https://bttv-videos.s3.amazonaws.com/freedom-school/intro.mp4",
+  title = "Freedom School Introduction",
+  fallbackUrl = "https://bttv-videos.s3.amazonaws.com/freedom-school/welcome.mp4",
+}: FreedomSchoolPlayerProps) {
   const router = useRouter()
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -164,7 +169,7 @@ export function FreedomSchoolPlayer({ videoId, videoUrl, title, fallbackUrl }: F
       setError("No video URL provided")
       setIsLoading(false)
     }
-  }, [videoId, videoUrl])
+  }, [videoId, videoUrl, fallbackUrl])
 
   // Log whenever currentUrl changes
   useEffect(() => {
@@ -173,13 +178,15 @@ export function FreedomSchoolPlayer({ videoId, videoUrl, title, fallbackUrl }: F
 
   return (
     <div className="relative bg-black">
-      {/* Back button */}
-      <button
-        onClick={handleBack}
-        className="absolute top-4 left-4 z-10 bg-black/50 p-2 rounded-full hover:bg-black/70 transition-colors"
-      >
-        <ChevronLeft className="h-6 w-6 text-white" />
-      </button>
+      {/* Back button - only show when not on the main freedom school page */}
+      {router.pathname !== "/freedom-school" && (
+        <button
+          onClick={handleBack}
+          className="absolute top-4 left-4 z-10 bg-black/50 p-2 rounded-full hover:bg-black/70 transition-colors"
+        >
+          <ChevronLeft className="h-6 w-6 text-white" />
+        </button>
+      )}
 
       {/* Loading state */}
       {isLoading && (
@@ -198,7 +205,7 @@ export function FreedomSchoolPlayer({ videoId, videoUrl, title, fallbackUrl }: F
             <p className="text-red-500 mb-4">{error}</p>
             {errorDetails && <p className="text-gray-400 text-sm mb-4">{errorDetails}</p>}
             <button
-              onClick={() => loadVideo(usedFallback && fallbackUrl ? fallbackUrl : videoUrl)}
+              onClick={() => loadVideo(usedFallback && fallbackUrl ? fallbackUrl : videoUrl || "")}
               className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition-colors"
             >
               Try Again
@@ -237,15 +244,17 @@ export function FreedomSchoolPlayer({ videoId, videoUrl, title, fallbackUrl }: F
         {usedFallback && <p className="text-yellow-500 text-sm mt-1">Using fallback video source</p>}
       </div>
 
-      {/* Debug info */}
-      <div className="bg-black p-2 text-xs text-gray-500">
-        <p>Video ID: {videoId}</p>
-        <p>Original URL: {videoUrl || "None"}</p>
-        <p>Current URL: {currentUrl || "None"}</p>
-        <p>Using Fallback: {usedFallback ? "Yes" : "No"}</p>
-        <p>Loading: {isLoading ? "Yes" : "No"}</p>
-        <p>Error: {error || "None"}</p>
-      </div>
+      {/* Debug info - only show in development */}
+      {process.env.NODE_ENV === "development" && (
+        <div className="bg-black p-2 text-xs text-gray-500">
+          <p>Video ID: {videoId}</p>
+          <p>Original URL: {videoUrl || "None"}</p>
+          <p>Current URL: {currentUrl || "None"}</p>
+          <p>Using Fallback: {usedFallback ? "Yes" : "No"}</p>
+          <p>Loading: {isLoading ? "Yes" : "No"}</p>
+          <p>Error: {error || "None"}</p>
+        </div>
+      )}
     </div>
   )
 }

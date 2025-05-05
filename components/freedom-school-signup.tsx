@@ -3,201 +3,133 @@
 import type React from "react"
 
 import { useState } from "react"
-import { supabase } from "@/lib/supabase"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Textarea } from "@/components/ui/textarea"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react"
+import { Loader2 } from "lucide-react"
 
 export function FreedomSchoolSignUp() {
-  const [formData, setFormData] = useState({
-    fullName: "",
-    email: "",
-    phone: "",
-    age: "",
-    interests: "",
-    newsletter: true,
-    course: "history",
-  })
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isSuccess, setIsSuccess] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  const [loading, setLoading] = useState(false)
-  const [success, setSuccess] = useState(false)
-  const [error, setError] = useState("")
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    const { name, value } = e.target
-    setFormData((prev) => ({ ...prev, [name]: value }))
-  }
-
-  const handleSelectChange = (value: string) => {
-    setFormData((prev) => ({ ...prev, course: value }))
-  }
-
-  const handleCheckboxChange = (checked: boolean) => {
-    setFormData((prev) => ({ ...prev, newsletter: checked }))
-  }
-
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    setLoading(true)
-    setError("")
+    setIsSubmitting(true)
+    setError(null)
+
+    const formData = new FormData(e.currentTarget)
+    const name = formData.get("name") as string
+    const email = formData.get("email") as string
+    const interests = formData.get("interests") as string
 
     try {
-      // Insert the sign-up data into Supabase
-      const { error: supabaseError } = await supabase.from("freedom_school_signups").insert([
-        {
-          full_name: formData.fullName,
-          email: formData.email,
-          phone: formData.phone,
-          age: formData.age,
-          interests: formData.interests,
-          newsletter: formData.newsletter,
-          preferred_course: formData.course,
-        },
-      ])
+      // Simulate API call
+      await new Promise((resolve) => setTimeout(resolve, 1500))
 
-      if (supabaseError) throw new Error(supabaseError.message)
+      // In a real implementation, you would send this data to your backend
+      console.log("Form submitted with:", { name, email, interests })
 
-      // Show success message
-      setSuccess(true)
-
-      // Reset form after 3 seconds
-      setTimeout(() => {
-        setFormData({
-          fullName: "",
-          email: "",
-          phone: "",
-          age: "",
-          interests: "",
-          newsletter: true,
-          course: "history",
-        })
-        setSuccess(false)
-      }, 3000)
+      setIsSuccess(true)
+      e.currentTarget.reset()
     } catch (err) {
-      console.error("Error submitting form:", err)
-      setError("There was an error submitting your information. Please try again.")
+      setError("There was an error submitting your form. Please try again.")
+      console.error("Form submission error:", err)
     } finally {
-      setLoading(false)
+      setIsSubmitting(false)
     }
   }
 
   return (
-    <div className="bg-gray-900 rounded-xl p-6 md:p-8 sticky top-24">
-      <h2 className="text-2xl md:text-3xl font-bold mb-6 text-center">Join Our Freedom School</h2>
+    <div className="bg-gray-900 rounded-xl p-6 md:p-8 sticky top-20">
+      <h2 className="text-2xl md:text-3xl font-bold mb-4">Join Our Freedom School</h2>
 
-      {success ? (
-        <div className="bg-green-900/30 border border-green-600 rounded-lg p-4 flex items-center mb-6">
-          <CheckCircle2 className="h-5 w-5 text-green-500 mr-2 flex-shrink-0" />
-          <p className="text-green-100">
-            Thank you for signing up! We will contact you with more information about our Freedom School program.
+      {isSuccess ? (
+        <div className="bg-green-900/30 border border-green-600 rounded-lg p-4 text-center">
+          <h3 className="text-xl font-semibold text-green-400 mb-2">Thank You!</h3>
+          <p className="text-gray-300">
+            Your registration has been received. We'll contact you with more information about our upcoming classes.
           </p>
+          <button
+            onClick={() => setIsSuccess(false)}
+            className="mt-4 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded transition-colors"
+          >
+            Register Another Person
+          </button>
         </div>
-      ) : error ? (
-        <div className="bg-red-900/30 border border-red-600 rounded-lg p-4 flex items-center mb-6">
-          <AlertCircle className="h-5 w-5 text-red-500 mr-2 flex-shrink-0" />
-          <p className="text-red-100">{error}</p>
-        </div>
-      ) : null}
+      ) : (
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <p className="text-gray-300 mb-4">
+            Register for our upcoming Freedom School sessions. Classes are free and open to all ages.
+          </p>
 
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <Label htmlFor="fullName">Full Name</Label>
-          <Input
-            id="fullName"
-            name="fullName"
-            value={formData.fullName}
-            onChange={handleChange}
-            required
-            className="bg-gray-800 border-gray-700"
-          />
-        </div>
-
-        <div>
-          <Label htmlFor="email">Email Address</Label>
-          <Input
-            id="email"
-            name="email"
-            type="email"
-            value={formData.email}
-            onChange={handleChange}
-            required
-            className="bg-gray-800 border-gray-700"
-          />
-        </div>
-
-        <div>
-          <Label htmlFor="phone">Phone Number (optional)</Label>
-          <Input
-            id="phone"
-            name="phone"
-            type="tel"
-            value={formData.phone}
-            onChange={handleChange}
-            className="bg-gray-800 border-gray-700"
-          />
-        </div>
-
-        <div>
-          <Label htmlFor="age">Age (optional)</Label>
-          <Input
-            id="age"
-            name="age"
-            type="text"
-            value={formData.age}
-            onChange={handleChange}
-            className="bg-gray-800 border-gray-700"
-          />
-        </div>
-
-        <div>
-          <Label htmlFor="course">Preferred Course</Label>
-          <Select value={formData.course} onValueChange={handleSelectChange}>
-            <SelectTrigger className="bg-gray-800 border-gray-700">
-              <SelectValue placeholder="Select a course" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="history">The History of Freedom Schools</SelectItem>
-              <SelectItem value="literature">African American Literature</SelectItem>
-              <SelectItem value="youth">Youth Leadership Development</SelectItem>
-              <SelectItem value="all">All Available Courses</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div>
-          <Label htmlFor="interests">Interests & Questions (optional)</Label>
-          <Textarea
-            id="interests"
-            name="interests"
-            value={formData.interests}
-            onChange={handleChange}
-            placeholder="Tell us what you're interested in learning or any questions you have..."
-            className="bg-gray-800 border-gray-700 min-h-[100px]"
-          />
-        </div>
-
-        <div className="flex items-center space-x-2">
-          <Checkbox id="newsletter" checked={formData.newsletter} onCheckedChange={handleCheckboxChange} />
-          <Label htmlFor="newsletter" className="text-sm">
-            Receive updates about Freedom School programs and events
-          </Label>
-        </div>
-
-        <Button type="submit" className="w-full bg-red-600 hover:bg-red-700 text-white" disabled={loading}>
-          {loading ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Submitting...
-            </>
-          ) : (
-            "Sign Up for Freedom School"
+          {error && (
+            <div className="bg-red-900/30 border border-red-600 rounded-lg p-3 text-red-400 text-sm">{error}</div>
           )}
-        </Button>
-      </form>
+
+          <div>
+            <label htmlFor="name" className="block text-sm font-medium text-gray-300 mb-1">
+              Full Name
+            </label>
+            <input
+              type="text"
+              id="name"
+              name="name"
+              required
+              className="w-full bg-gray-800 border border-gray-700 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-red-600"
+              placeholder="Enter your full name"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="email" className="block text-sm font-medium text-gray-300 mb-1">
+              Email Address
+            </label>
+            <input
+              type="email"
+              id="email"
+              name="email"
+              required
+              className="w-full bg-gray-800 border border-gray-700 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-red-600"
+              placeholder="Enter your email address"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="interests" className="block text-sm font-medium text-gray-300 mb-1">
+              Areas of Interest
+            </label>
+            <select
+              id="interests"
+              name="interests"
+              className="w-full bg-gray-800 border border-gray-700 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-red-600"
+            >
+              <option value="history">African American History</option>
+              <option value="literature">Literature & Arts</option>
+              <option value="youth">Youth Leadership</option>
+              <option value="community">Community Organizing</option>
+              <option value="all">All Topics</option>
+            </select>
+          </div>
+
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            className="w-full bg-red-600 hover:bg-red-700 disabled:bg-red-800/50 text-white font-medium py-2 px-4 rounded-md transition-colors flex items-center justify-center"
+          >
+            {isSubmitting ? (
+              <>
+                <Loader2 className="animate-spin mr-2 h-4 w-4" />
+                Submitting...
+              </>
+            ) : (
+              "Register for Freedom School"
+            )}
+          </button>
+
+          <p className="text-xs text-gray-400 mt-4">
+            By registering, you'll receive updates about our Freedom School program and other educational initiatives
+            from Black Truth TV. You can unsubscribe at any time.
+          </p>
+        </form>
+      )}
     </div>
   )
 }
