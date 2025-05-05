@@ -22,42 +22,19 @@ export default function FreedomSchoolPage() {
   const [videoUrl, setVideoUrl] = useState<string>("")
   const [isLoading, setIsLoading] = useState<boolean>(true)
   const [error, setError] = useState<string | null>(null)
-  const fallbackUrl = "freedom-school/welcome.mp4"
   const headerImageUrl = getFullUrl("freedom-school/freedom-schoolimage.jpeg")
 
   useEffect(() => {
-    const primary = "freedom-school/intro.mp4"
-    const fullPrimary = getFullUrl(primary)
-    const fullFallback = getFullUrl(fallbackUrl)
+    // This will be where you can set your video URL once uploaded
+    setIsLoading(false)
 
-    // Preload test
-    fetch(fullPrimary, { method: "HEAD" })
-      .then((res) => {
-        if (!res.ok) throw new Error("Primary video not available")
-        setVideoUrl(fullPrimary)
-      })
-      .catch(() => {
-        setVideoUrl(fullFallback)
-        setError("Primary video failed, using fallback")
-      })
-      .finally(() => {
-        setIsLoading(false)
-      })
+    // For now, we'll just show a placeholder message
+    setError("No videos have been uploaded yet. Please check back later.")
   }, [])
 
   const handleVideoError = () => {
-    if (videoUrl !== getFullUrl(fallbackUrl)) {
-      setVideoUrl(getFullUrl(fallbackUrl))
-      setError("Video failed to load. Switched to fallback.")
-    } else {
-      setError("Both primary and fallback failed to load.")
-    }
+    setError("Video failed to load. Please check your connection and try again.")
   }
-
-  // Debug helper
-  useEffect(() => {
-    console.log("📺 Playing Freedom School video:", videoUrl)
-  }, [videoUrl])
 
   return (
     <div className="bg-black min-h-screen text-white p-6">
@@ -88,25 +65,20 @@ export default function FreedomSchoolPage() {
       <div className="w-full aspect-video bg-black mb-4">
         {isLoading ? (
           <div className="flex items-center justify-center h-full">Loading video...</div>
-        ) : (
-          <video
-            ref={videoRef}
-            key={videoUrl}
-            src={videoUrl}
-            controls
-            autoPlay
-            playsInline
-            className="w-full h-full"
-            onError={handleVideoError}
-          >
+        ) : videoUrl ? (
+          <video ref={videoRef} controls autoPlay playsInline className="w-full h-full" onError={handleVideoError}>
             <source src={videoUrl} type="video/mp4" />
             Your browser does not support the video tag.
           </video>
+        ) : (
+          <div className="flex items-center justify-center h-full bg-gray-900 text-gray-400">
+            <p>Video content coming soon</p>
+          </div>
         )}
       </div>
 
       {error && (
-        <div className="text-red-500 flex items-center gap-2 mb-4">
+        <div className="text-yellow-500 flex items-center gap-2 mb-4">
           <AlertCircle className="w-5 h-5" /> {error}
         </div>
       )}
