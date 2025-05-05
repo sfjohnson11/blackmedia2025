@@ -36,6 +36,8 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   // Fix double slashes in URLs (but preserve http://)
   const fixUrl = (url: string): string => {
     if (!url) return ""
+    // First, normalize the URL by replacing multiple slashes with a single slash
+    // But preserve the http:// or https:// part
     return url.replace(/(https?:\/\/)|(\/\/+)/g, (match, protocol) => {
       return protocol || "/"
     })
@@ -47,6 +49,13 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     return url.includes("?") ? `${url}&${cacheBuster}` : `${url}?${cacheBuster}`
   }
 
+  // Extract filename from URL
+  const extractFilename = (url: string): string => {
+    if (!url) return ""
+    const parts = url.split("/")
+    return parts[parts.length - 1].split("?")[0] // Remove query parameters
+  }
+
   // Generate alternative URLs for a given program
   const generateAlternativeUrls = (program: any): string[] => {
     if (!program || !program.mp4_url) return []
@@ -54,37 +63,35 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ""
 
     // Extract filename from mp4_url
-    const urlParts = program.mp4_url.split("/")
-    const fileName = urlParts[urlParts.length - 1]
+    const fileName = extractFilename(program.mp4_url)
 
-    // Generate different URL patterns
+    // Generate different URL patterns - UNIVERSAL for ALL channels
     const urls = [
       // Original URL (fixed)
       fixUrl(program.mp4_url),
 
-      // Try with channel ID in path
+      // Try with channel ID in path (various formats)
       `${supabaseUrl}/storage/v1/object/public/channel${channel.id}/${fileName}`,
-
-      // Try with "ch" prefix
       `${supabaseUrl}/storage/v1/object/public/ch${channel.id}/${fileName}`,
-
-      // Try with videos folder
       `${supabaseUrl}/storage/v1/object/public/videos/channel${channel.id}/${fileName}`,
+      `${supabaseUrl}/storage/v1/object/public/videos/ch${channel.id}/${fileName}`,
 
-      // Try with just the filename in root bucket
+      // Try with just the filename in various buckets
+      `${supabaseUrl}/storage/v1/object/public/videos/${fileName}`,
       `${supabaseUrl}/storage/v1/object/public/${fileName}`,
 
-      // Special handling for channel 14
-      `${supabaseUrl}/storage/v1/object/public/channel14/${fileName}`,
-      `${supabaseUrl}/storage/v1/object/public/ch14/${fileName}`,
-      `${supabaseUrl}/storage/v1/object/public/videos/ch14/${fileName}`,
+      // Try with channel ID as a folder name
+      `${supabaseUrl}/storage/v1/object/public/${channel.id}/${fileName}`,
 
-      // Try direct URL without Supabase path
-      fileName.startsWith("http") ? fileName : `https://${fileName}`,
+      // Try direct URL if it looks like a full URL
+      fileName.includes("http") ? fileName : null,
+
+      // Try with the original URL but different domain
+      program.mp4_url.replace(/^https?:\/\/[^/]+/, supabaseUrl),
     ]
 
-    // Filter out duplicates and empty URLs
-    return [...new Set(urls.filter((url) => url && url.length > 10))].map(fixUrl)
+    // Filter out duplicates, nulls, and empty URLs
+    return [...new Set(urls.filter(Boolean))].map(fixUrl)
   }
 
   // Try to load video with a specific URL
