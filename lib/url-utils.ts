@@ -1,3 +1,5 @@
+// url-utils.ts
+
 /**
  * Checks if a URL is accessible by making a HEAD request
  * @param url The URL to check
@@ -7,10 +9,9 @@ export async function isUrlAccessible(url: string): Promise<boolean> {
   if (!url) return false
 
   try {
-    // Use a HEAD request to minimize data transfer
     const response = await fetch(url, {
       method: "HEAD",
-      mode: "no-cors", // This helps with CORS issues
+      mode: "no-cors",
       cache: "no-cache",
     })
 
@@ -50,7 +51,7 @@ export function getVideoTypeFromUrl(url: string): "mp4" | "hls" | "unknown" {
   if (lowerUrl.includes(".m3u8")) return "hls"
   if (lowerUrl.includes(".mp4")) return "mp4"
 
-  // Try to guess based on domain or path
+  // Guess based on known streaming platforms
   if (
     lowerUrl.includes("mux.dev") ||
     lowerUrl.includes("livestream") ||
@@ -60,5 +61,5 @@ export function getVideoTypeFromUrl(url: string): "mp4" | "hls" | "unknown" {
     return "hls"
   }
 
-  return "mp4" // Default to mp4 if we can't determine
+  return "mp4" // Default fallback
 }
