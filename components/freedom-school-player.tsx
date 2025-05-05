@@ -4,7 +4,7 @@ import type React from "react"
 
 import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
-import { Loader2, ChevronLeft, AlertTriangle, RefreshCw } from "lucide-react"
+import { Loader2, AlertTriangle, RefreshCw } from "lucide-react"
 
 interface FreedomSchoolPlayerProps {
   videoId?: number
@@ -15,9 +15,9 @@ interface FreedomSchoolPlayerProps {
 
 export function FreedomSchoolPlayer({
   videoId = 1,
-  videoUrl = "https://bttv-videos.s3.amazonaws.com/freedom-school/intro.mp4",
-  title = "Freedom School Introduction",
-  fallbackUrl = "https://bttv-videos.s3.amazonaws.com/freedom-school/welcome.mp4",
+  videoUrl = "",
+  title = "Freedom School Video",
+  fallbackUrl = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
 }: FreedomSchoolPlayerProps) {
   const router = useRouter()
   const [isLoading, setIsLoading] = useState(true)
@@ -28,11 +28,11 @@ export function FreedomSchoolPlayer({
   const [retryCount, setRetryCount] = useState(0)
   const videoRef = useRef<HTMLVideoElement>(null)
   const loadTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const maxRetries = 3
+  const maxRetries = 2
 
   // Go back
   const handleBack = () => {
-    router.push("/")
+    router.push("/freedom-school")
   }
 
   // Fix double slashes in URLs (but preserve http://)
@@ -55,18 +55,8 @@ export function FreedomSchoolPlayer({
 
     // Put the protocol back
     const fixedUrl = protocol + url
+    console.log("Freedom School: Fixed URL:", fixedUrl)
     return fixedUrl
-  }
-
-  // Check if URL is accessible
-  const checkUrlAccessibility = async (url: string): Promise<boolean> => {
-    try {
-      const response = await fetch(url, { method: "HEAD", mode: "no-cors" })
-      return true
-    } catch (error) {
-      console.error("Freedom School: URL accessibility check failed:", error)
-      return false
-    }
   }
 
   // Load video with retry logic
@@ -145,6 +135,7 @@ export function FreedomSchoolPlayer({
     console.log("Freedom School: Video error event triggered")
     console.log("Freedom School: Video network state:", videoElement.networkState)
     console.log("Freedom School: Video ready state:", videoElement.readyState)
+    console.log("Freedom School: Current video URL:", currentUrl)
 
     // Clear loading timeout
     if (loadTimeoutRef.current) {
@@ -267,15 +258,7 @@ export function FreedomSchoolPlayer({
   }, [videoId, videoUrl, fallbackUrl])
 
   return (
-    <div className="relative bg-black min-h-screen">
-      {/* Back button */}
-      <button
-        onClick={handleBack}
-        className="absolute top-4 left-4 z-10 bg-black/50 p-2 rounded-full hover:bg-black/70 transition-colors"
-      >
-        <ChevronLeft className="h-6 w-6 text-white" />
-      </button>
-
+    <div className="relative bg-black">
       {/* Loading state */}
       {isLoading && (
         <div className="absolute inset-0 flex items-center justify-center bg-black z-20">
@@ -335,17 +318,6 @@ export function FreedomSchoolPlayer({
           <div className="w-full h-full flex items-center justify-center">
             <p className="text-white">No video URL available</p>
           </div>
-        )}
-      </div>
-
-      {/* Video title */}
-      <div className="bg-black p-4">
-        <h2 className="text-xl font-bold text-white">{title}</h2>
-        {usedFallback && <p className="text-yellow-500 text-sm mt-1">Using fallback video source</p>}
-        {retryCount > 0 && (
-          <p className="text-blue-500 text-sm mt-1">
-            Retry attempt: {retryCount}/{maxRetries}
-          </p>
         )}
       </div>
 
