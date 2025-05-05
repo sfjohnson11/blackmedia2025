@@ -4,7 +4,7 @@ import type React from "react"
 
 import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
-import { Loader2, ChevronLeft, RefreshCw } from "lucide-react"
+import { Loader2, ChevronLeft, RefreshCw, AlertTriangle } from "lucide-react"
 import { getCurrentProgram, getUpcomingPrograms } from "@/lib/supabase"
 
 // Add this at the top of your component (using your Supabase URL from environment variables)
@@ -18,6 +18,7 @@ interface VideoPlayerProps {
 
 export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initialUpcoming }: VideoPlayerProps) {
   const router = useRouter()
+  const videoRef = useRef<HTMLVideoElement>(null)
   const videoContainerRef = useRef<HTMLDivElement>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [currentProgram, setCurrentProgram] = useState(initialProgram)
@@ -28,6 +29,8 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const [errorDetails, setErrorDetails] = useState<string | null>(null)
   const [currentTime, setCurrentTime] = useState(new Date())
   const [lastRefreshTime, setLastRefreshTime] = useState(new Date())
+  const [retryCount, setRetryCount] = useState(0)
+  const [fallbackMode, setFallbackMode] = useState(false)
 
   // Go back
   const handleBack = () => {
@@ -70,6 +73,10 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       setIsLoading(false)
       return
     }
+
+    // Reset retry count and fallback mode when loading a new video
+    setRetryCount(0)
+    setFallbackMode(false)
 
     // Check if the URL is already a full URL or just a filename
     let fullUrl
@@ -186,13 +193,53 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     checkForProgramUpdates()
   }
 
-  // Handle video error with improved error logging
+  // Try alternative URL formats if the current one fails
+  const tryAlternativeUrl = () => {
+    if (!currentProgram?.mp4_url) return false
+
+    const url = currentProgram.mp4_url
+    const retryOptions = [
+      // Option 1: Try with a different path structure
+      url.startsWith("http")
+        ? url
+        : `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/channel${channel.id}/${url}`,
+
+      // Option 2: Try with a different bucket name
+      url.startsWith("http")
+        ? url
+        : `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/ch${channel.id}/${url}`,
+
+      // Option 3: Try with videos prefix
+      url.startsWith("http")
+        ? url
+        : `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/videos/ch${channel.id}/${url}`,
+    ]
+
+    if (retryCount < retryOptions.length) {
+      const alternativeUrl = retryOptions[retryCount]
+      console.log(`Trying alternative URL format (${retryCount + 1}/${retryOptions.length}):`, alternativeUrl)
+      setVideoUrl(alternativeUrl)
+      setRetryCount(retryCount + 1)
+      return true
+    }
+
+    return false
+  }
+
+  // Handle video error with improved error recovery
   const handleVideoError = (e: React.SyntheticEvent<HTMLVideoElement>) => {
     const videoElement = e.currentTarget
     const videoError = videoElement.error
 
     console.log("Video error event triggered")
 
+    // First try alternative URL formats
+    if (tryAlternativeUrl()) {
+      console.log("Trying alternative URL format...")
+      return
+    }
+
+    // If we've tried all alternative URLs and still have errors, show error state
     if (videoError) {
       // Log the error code and message
       console.error("Video error code:", videoError.code)
@@ -235,7 +282,16 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       setErrorDetails(`Error code: ${videoError.code}, URL: ${videoUrl}`)
     } else {
       console.error("Video error event but no error object available")
-      setError("Video error occurred")
+
+      // Even without an error object, we can try to recover
+      if (!fallbackMode) {
+        console.log("Switching to fallback mode...")
+        setFallbackMode(true)
+        forceRefreshProgram() // Try to refresh the program
+      } else {
+        setError("Video error occurred")
+        setErrorDetails("No error details available. URL: " + videoUrl)
+      }
     }
 
     setIsLoading(false)
@@ -312,6 +368,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       {error && (
         <div className="absolute inset-0 flex items-center justify-center bg-black z-20">
           <div className="text-center p-4 max-w-md">
+            <AlertTriangle className="h-12 w-12 text-red-600 mx-auto mb-4" />
             <p className="text-red-500 mb-4">{error}</p>
             {errorDetails && <p className="text-gray-400 text-sm mb-4">{errorDetails}</p>}
             <div className="flex flex-wrap justify-center gap-3">
@@ -330,6 +387,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       <div ref={videoContainerRef} className="w-full aspect-video bg-black">
         {videoUrl ? (
           <video
+            ref={videoRef}
             key={videoUrl} // This forces a complete remount when the URL changes
             className="w-full h-full"
             controls
@@ -340,6 +398,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
             onError={handleVideoError}
             onLoadStart={() => console.log("Video load started for URL:", videoUrl)}
             onLoadedData={() => console.log("Video data loaded for URL:", videoUrl)}
+            crossOrigin="anonymous" // Add crossOrigin to help with CORS issues
           >
             <source src={videoUrl} type="video/mp4" />
             Your browser does not support the video tag.
@@ -388,9 +447,18 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         <p>Current Time (UTC): {new Date().toISOString()}</p>
         <p>Current Time (Local): {new Date().toLocaleString()}</p>
         {currentProgram && <p>Program Start Time: {new Date(currentProgram.start_time).toLocaleString()}</p>}
+        {currentProgram && <p>Program Duration: {currentProgram.duration || "Unknown"} seconds</p>}
+        {currentProgram && currentProgram.duration && (
+          <p>
+            Program End Time:{" "}
+            {new Date(new Date(currentProgram.start_time).getTime() + currentProgram.duration * 1000).toLocaleString()}
+          </p>
+        )}
         <p>Last Refresh: {lastRefreshTime.toLocaleString()}</p>
         <p>Loading: {isLoading ? "Yes" : "No"}</p>
         <p>Error: {error || "None"}</p>
+        <p>Retry Count: {retryCount}</p>
+        <p>Fallback Mode: {fallbackMode ? "Yes" : "No"}</p>
       </div>
     </div>
   )

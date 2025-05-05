@@ -44,7 +44,7 @@ export async function createTables() {
   }
 }
 
-// Replace the getCurrentProgram function with this more efficient implementation
+// Improved getCurrentProgram function with better handling of edge cases
 export async function getCurrentProgram(channelId: string): Promise<{ program: any }> {
   console.log(`=== GETTING CURRENT PROGRAM FOR CHANNEL ${channelId} ===`)
   const now = new Date()
@@ -74,13 +74,22 @@ export async function getCurrentProgram(channelId: string): Promise<{ program: a
 
     // Find the active program (where current time is between start and end)
     const activeProgram = data.find((program) => {
+      // Validate duration is a number
+      if (!program.duration || typeof program.duration !== "number") {
+        console.log(`Program ${program.id} has invalid duration: ${program.duration}`)
+        return false
+      }
+
       const start = new Date(program.start_time)
       const end = new Date(start.getTime() + program.duration * 1000)
       const isActive = now >= start && now < end
 
       console.log(`Checking program: ${program.title}`)
-      console.log(`- Start time: ${start.toLocaleString()}`)
-      console.log(`- End time: ${end.toLocaleString()}`)
+      console.log(`- ID: ${program.id}`)
+      console.log(`- Start time (UTC): ${program.start_time}`)
+      console.log(`- Start time (Local): ${start.toLocaleString()}`)
+      console.log(`- Duration: ${program.duration} seconds`)
+      console.log(`- End time (Local): ${end.toLocaleString()}`)
       console.log(`- Is active: ${isActive}`)
 
       return isActive
@@ -92,7 +101,16 @@ export async function getCurrentProgram(channelId: string): Promise<{ program: a
     }
 
     // If no active program, return the most recent program
-    console.log(`No active program found, returning most recent program: ${data[0]?.title}`)
+    // Make sure it has a valid mp4_url
+    const validProgram = data.find((program) => program.mp4_url && program.mp4_url.trim() !== "")
+
+    if (validProgram) {
+      console.log(`No active program found, returning most recent valid program: ${validProgram.title}`)
+      return { program: validProgram }
+    }
+
+    // If no program with valid URL, return the most recent one anyway
+    console.log(`No program with valid URL found, returning most recent program: ${data[0]?.title}`)
     return { program: data[0] || null }
   } catch (e) {
     console.error(`Error in getCurrentProgram for channel ${channelId}:`, e)
@@ -127,6 +145,11 @@ export async function getUpcomingPrograms(channelId: string): Promise<{ programs
 }
 
 export function calculateProgramProgress(program: any): { progressPercent: number; isFinished: boolean } {
+  // Validate program and duration
+  if (!program || !program.duration || typeof program.duration !== "number") {
+    return { progressPercent: 0, isFinished: false }
+  }
+
   const startTime = new Date(program.start_time).getTime()
   const now = Date.now()
   const duration = program.duration * 1000 // Convert seconds to milliseconds
