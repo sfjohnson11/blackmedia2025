@@ -17,7 +17,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const [isLoading, setIsLoading] = useState(true)
   const [currentProgram, setCurrentProgram] = useState(initialProgram)
   const [upcomingPrograms, setUpcomingPrograms] = useState(initialUpcoming)
-  const [programCheckInterval, setProgramCheckInterval] = useState<NodeJS.Timeout | null>(null)
+  const [lastProgramCheck, setLastProgramCheck] = useState(Date.now())
 
   // Go back
   const handleBack = () => {
@@ -45,10 +45,19 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
   // Check for program updates
   const checkForProgramUpdates = async () => {
+    // Don't check too frequently
+    const now = Date.now()
+    if (now - lastProgramCheck < 10000) {
+      // 10 seconds minimum between checks
+      return
+    }
+    setLastProgramCheck(now)
+
     try {
       const { program } = await getCurrentProgram(channel.id)
       const { programs } = await getUpcomingPrograms(channel.id)
 
+      // If we have a new program, switch to it
       if (program && (!currentProgram || program.id !== currentProgram.id)) {
         console.log("New program detected:", program.title)
         setCurrentProgram(program)
@@ -56,6 +65,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         if (videoRef.current && program.mp4_url) {
           // Fix double slashes in the URL
           const fixedUrl = fixUrl(program.mp4_url)
+          console.log("Playing new program with URL:", fixedUrl)
 
           // Set the fixed URL as the video source
           videoRef.current.src = fixedUrl
@@ -88,6 +98,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
       // Fix double slashes in the URL
       const fixedUrl = fixUrl(initialProgram.mp4_url)
+      console.log("Playing initial program with URL:", fixedUrl)
 
       // Set the fixed URL as the video source
       videoRef.current.src = fixedUrl
@@ -100,12 +111,28 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       checkForProgramUpdates()
     }
 
-    // Check for program updates every minute
-    const interval = setInterval(checkForProgramUpdates, 60000)
-    setProgramCheckInterval(interval)
+    // Set up regular program checks
+    const programCheckInterval = setInterval(checkForProgramUpdates, 30000) // Check every 30 seconds
+
+    // Set up a more frequent check for the exact program change time
+    const scheduleCheckInterval = setInterval(() => {
+      // Check if we have upcoming programs
+      if (upcomingPrograms.length > 0) {
+        const nextProgram = upcomingPrograms[0]
+        const nextProgramTime = new Date(nextProgram.start_time).getTime()
+        const now = Date.now()
+
+        // If it's time for the next program (within 5 seconds), check for updates
+        if (nextProgramTime <= now + 5000 && nextProgramTime >= now - 5000) {
+          console.log("It's time for the next program, checking for updates")
+          checkForProgramUpdates()
+        }
+      }
+    }, 5000) // Check every 5 seconds
 
     return () => {
-      if (interval) clearInterval(interval)
+      clearInterval(programCheckInterval)
+      clearInterval(scheduleCheckInterval)
     }
   }, [])
 
@@ -138,7 +165,6 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
           playsInline
           onCanPlay={() => setIsLoading(false)}
           onEnded={handleVideoEnd}
-          type="video/mp4"
         >
           Your browser does not support the video tag.
         </video>
@@ -149,7 +175,9 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         <div className="bg-black p-4">
           <h2 className="text-xl font-bold text-white">{currentProgram.title}</h2>
           {upcomingPrograms.length > 0 && (
-            <p className="text-gray-400 text-sm mt-1">Next: {upcomingPrograms[0].title}</p>
+            <p className="text-gray-400 text-sm mt-1">
+              Next: {upcomingPrograms[0].title} at {new Date(upcomingPrograms[0].start_time).toLocaleTimeString()}
+            </p>
           )}
         </div>
       )}
