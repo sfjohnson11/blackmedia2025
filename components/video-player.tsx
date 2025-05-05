@@ -28,9 +28,10 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const [lastRefreshTime, setLastRefreshTime] = useState(new Date())
   const [loadingTimeout, setLoadingTimeout] = useState<NodeJS.Timeout | null>(null)
   const [retryCount, setRetryCount] = useState(0)
-  const maxRetries = 2
+  const maxRetries = 3 // Increased from 2 to 3
   const [debugInfo, setDebugInfo] = useState<Record<string, any>>({})
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [videoType, setVideoType] = useState<"mp4" | "hls" | "unknown">("unknown")
 
   // Go back
   const handleBack = () => {
@@ -53,7 +54,33 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     }
   }
 
-  // Load video with updated handling and timeout - UPDATED to use getFullUrl correctly
+  // Determine video type from URL
+  const getVideoType = (url: string): "mp4" | "hls" | "unknown" => {
+    if (!url) return "unknown"
+
+    const lowerUrl = url.toLowerCase()
+    if (lowerUrl.includes(".m3u8")) return "hls"
+    if (lowerUrl.includes(".mp4")) return "mp4"
+
+    // Try to guess based on domain
+    if (lowerUrl.includes("mux.dev") || lowerUrl.includes("livestream") || lowerUrl.includes("stream")) {
+      return "hls"
+    }
+
+    return "mp4" // Default to mp4 if we can't determine
+  }
+
+  // Validate URL before loading
+  const isValidUrl = (url: string): boolean => {
+    try {
+      new URL(url)
+      return true
+    } catch (e) {
+      return false
+    }
+  }
+
+  // Load video with improved validation and error handling
   const loadVideo = (url: string, forceRetry = false) => {
     console.log("loadVideo called with URL:", url)
     addDebugInfo("loadVideoUrl", url)
@@ -82,7 +109,22 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       fullUrl = url
     } else {
       // Otherwise, use getFullUrl to construct the full path
-      fullUrl = getFullUrl(url)
+      try {
+        fullUrl = getFullUrl(url)
+      } catch (err) {
+        console.error("Error constructing full URL:", err)
+        setError(`Invalid URL format: ${url}`)
+        setIsLoading(false)
+        return
+      }
+    }
+
+    // Validate the URL
+    if (!isValidUrl(fullUrl)) {
+      console.error("Invalid URL:", fullUrl)
+      setError(`Invalid URL format: ${fullUrl}`)
+      setIsLoading(false)
+      return
     }
 
     // Add a cache-busting parameter if this is a retry
@@ -91,17 +133,22 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       fullUrl = `${fullUrl}${separator}retry=${Date.now()}`
     }
 
-    console.log("Setting video URL to:", fullUrl)
+    // Determine video type
+    const type = getVideoType(fullUrl)
+    setVideoType(type)
+
+    console.log(`Setting video URL to: ${fullUrl} (type: ${type})`)
     addDebugInfo("finalVideoUrl", fullUrl)
     addDebugInfo("originalVideoUrl", url)
     addDebugInfo("retryCount", retryCount)
+    addDebugInfo("videoType", type)
 
     setVideoUrl(fullUrl)
     setIsLoading(true)
     setError(null)
     setErrorDetails(null)
 
-    // Set a timeout to catch silent failures
+    // Set a timeout to catch silent failures - increased to 20 seconds
     const timeout = setTimeout(() => {
       console.log("Video loading timeout reached")
       addDebugInfo("loadingTimeout", true)
@@ -116,11 +163,11 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
           loadVideo(url, false)
         } else {
           setError("Video failed to load (timeout)")
-          setErrorDetails(`URL: ${fullUrl}`)
+          setErrorDetails(`URL: ${fullUrl} | Type: ${type}`)
           setIsLoading(false)
         }
       }
-    }, 15000) // 15 second timeout
+    }, 20000) // 20 second timeout (increased from 15)
 
     setLoadingTimeout(timeout)
   }
@@ -312,7 +359,10 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
         // Try loading the video again with the same URL
         if (currentProgram?.mp4_url) {
-          loadVideo(currentProgram.mp4_url, false)
+          // Add a small delay before retrying
+          setTimeout(() => {
+            loadVideo(currentProgram.mp4_url, false)
+          }, 1000)
           return
         }
       }
@@ -428,6 +478,34 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     addDebugInfo("videoUrlChanged", videoUrl)
   }, [videoUrl])
 
+  // Try to load HLS.js if needed
+  useEffect(() => {
+    if (videoType === "hls") {
+      // This is just a placeholder - in a real implementation, you would load HLS.js here
+      console.log("HLS video detected, should load HLS.js if needed")
+    }
+  }, [videoType])
+
+  // Function to check if the URL is accessible
+  const checkUrlAccessibility = async (url: string) => {
+    try {
+      const response = await fetch(url, { method: "HEAD", mode: "no-cors" })
+      return true
+    } catch (error) {
+      console.error("URL accessibility check failed:", error)
+      return false
+    }
+  }
+
+  // Try to verify URL accessibility when URL changes
+  useEffect(() => {
+    if (videoUrl) {
+      checkUrlAccessibility(videoUrl).then((isAccessible) => {
+        addDebugInfo("urlAccessible", isAccessible)
+      })
+    }
+  }, [videoUrl])
+
   return (
     <div className="relative bg-black">
       {/* Back button */}
@@ -444,6 +522,11 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
           <div className="flex flex-col items-center">
             <Loader2 className="h-12 w-12 text-red-600 animate-spin mb-2" />
             <p className="text-white">Loading video{retryCount > 0 ? ` (Retry ${retryCount}/${maxRetries})` : ""}...</p>
+            {retryCount > 0 && (
+              <p className="text-gray-400 text-sm mt-2">
+                If loading fails, try refreshing the page or checking the video URL.
+              </p>
+            )}
           </div>
         </div>
       )}
@@ -464,6 +547,12 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
                 <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshing ? "animate-spin" : ""}`} />
                 {isRefreshing ? "Refreshing..." : "Force Refresh"}
               </button>
+              <button
+                onClick={() => router.back()}
+                className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 transition-colors"
+              >
+                Go Back
+              </button>
             </div>
           </div>
         </div>
@@ -474,25 +563,26 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         {videoUrl ? (
           <video
             ref={videoRef}
-            key={`${videoUrl}-${retryCount}`}
+            key={`${videoUrl}-${retryCount}`} // This forces a complete remount when the URL or retry count changes
             className="w-full h-full"
             controls
             playsInline
-            autoPlay
+            autoPlay // Add autoPlay to start playing automatically
             onCanPlay={handleCanPlay}
             onEnded={handleVideoEnd}
             onError={handleVideoError}
             onLoadStart={() => {
               console.log("Video load started for URL:", videoUrl)
               addDebugInfo("loadStarted", new Date().toISOString())
-              addDebugInfo("videoType", videoUrl.includes(".m3u8") ? "HLS" : "MP4")
+              addDebugInfo("videoType", videoType)
             }}
             onLoadedData={() => {
               console.log("Video data loaded for URL:", videoUrl)
               addDebugInfo("loadedData", new Date().toISOString())
             }}
+            crossOrigin="anonymous" // Add crossOrigin to help with CORS issues
           >
-            {videoUrl.includes(".m3u8") ? (
+            {videoType === "hls" ? (
               // HLS stream
               <source src={videoUrl} type="application/vnd.apple.mpegurl" />
             ) : (
@@ -544,6 +634,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         <p>Current Program: {currentProgram?.title || "None"}</p>
         <p>Program URL: {currentProgram?.mp4_url || "None"}</p>
         <p>Video URL: {videoUrl || "None"}</p>
+        <p>Video Type: {videoType}</p>
         <p>Current Time (UTC): {new Date().toISOString()}</p>
         <p>Current Time (Local): {new Date().toLocaleString()}</p>
         {currentProgram && <p>Program Start Time: {new Date(currentProgram.start_time).toLocaleString()}</p>}

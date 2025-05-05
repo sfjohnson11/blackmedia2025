@@ -7,11 +7,28 @@ export const supabase = createClient<Database>(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "",
 )
 
-// Centralized full URL builder
+// Centralized full URL builder with improved error handling
 export function getFullUrl(path: string): string {
-  const base = process.env.NEXT_PUBLIC_SUPABASE_URL + "/storage/v1/object/public/"
+  if (!path) {
+    console.error("Empty path passed to getFullUrl")
+    return ""
+  }
+
+  // If it's already a full URL, return it
+  if (path.startsWith("http")) {
+    return path
+  }
+
+  // Make sure we have the Supabase URL
+  const baseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  if (!baseUrl) {
+    console.error("NEXT_PUBLIC_SUPABASE_URL is not defined")
+    return path // Return the original path as a fallback
+  }
+
+  // Clean the path and construct the full URL
   const cleanPath = path.replace(/^\/+/, "")
-  return base + cleanPath
+  return `${baseUrl}/storage/v1/object/public/${cleanPath}`
 }
 
 // Get the current program for a channel
