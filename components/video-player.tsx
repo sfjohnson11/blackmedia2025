@@ -120,14 +120,42 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
   // Handle video error
   const handleVideoError = (e: React.SyntheticEvent<HTMLVideoElement>) => {
-    const videoElement = e.currentTarget
-    console.error("Video error event:", e)
-    console.error("Video error details:", videoElement.error)
-    console.error("Current video URL when error occurred:", videoUrl)
+  const video = e.currentTarget;
+  const err = video?.error;
 
-    setError("Error playing video. Please try again.")
-    setIsLoading(false)
+  console.error("🎬 Video error triggered at:", videoUrl);
+
+  if (!err) {
+    console.error("⚠️ No error object found on video element.");
+    setError("Unknown video error. Try refreshing.");
+    return;
   }
+
+  let message = "";
+
+  switch (err.code) {
+    case 1:
+      message = "MEDIA_ERR_ABORTED: The video was aborted.";
+      break;
+    case 2:
+      message = "MEDIA_ERR_NETWORK: A network error occurred.";
+      break;
+    case 3:
+      message = "MEDIA_ERR_DECODE: Failed to decode the video.";
+      break;
+    case 4:
+      message = "MEDIA_ERR_SRC_NOT_SUPPORTED: Video source is unsupported or unreachable.";
+      break;
+    default:
+      message = "An unknown video error occurred.";
+      break;
+  }
+
+  console.error("🧨 VIDEO ERROR CODE:", err.code, "-", message);
+  setError(message);
+  setIsLoading(false);
+}
+
 
   // Handle video can play
   const handleCanPlay = () => {
