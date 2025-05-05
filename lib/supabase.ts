@@ -234,23 +234,6 @@ export async function getDirectDownloadUrl(url: string | null, channelId: string
       return null
     }
 
-    // Special handling for channel 8
-    if (channelId === "8") {
-      // Extract filename from URL
-      const fileName = url.split("/").pop() || url
-
-      // Try different URL patterns for channel 8
-      const ch8UrlPatterns = [
-        `${supabaseUrl}/storage/v1/object/public/channel8/${fileName}`,
-        `${supabaseUrl}/storage/v1/object/public/channel8//${fileName}`,
-        `${supabaseUrl}/storage/v1/object/public/ch8/${fileName}`,
-        `${supabaseUrl}/storage/v1/object/public/videos/channel8/${fileName}`,
-      ]
-
-      // Return the first URL pattern (we'll try them all in the video player)
-      return ch8UrlPatterns[0]
-    }
-
     // For other URLs, try to use them directly
     console.log(`Using URL directly: ${url}`)
     return url
@@ -261,335 +244,127 @@ export async function getDirectDownloadUrl(url: string | null, channelId: string
   }
 }
 
-export async function listBuckets() {
-  try {
-    const { data, error } = await supabase.storage.listBuckets()
-    if (error) {
-      throw error
-    }
-    return data
-  } catch (error) {
-    console.error("Error listing buckets:", error)
-    throw error
-  }
-}
-
-export async function listFiles(bucketName: string) {
-  try {
-    const { data, error } = await supabase.storage.from(bucketName).list()
-    if (error) {
-      throw error
-    }
-    return data
-  } catch (error) {
-    console.error(`Error listing files in bucket ${bucketName}:`, error)
-    throw error
-  }
-}
-
-// New function to get the direct public URL for a file in Supabase storage
-export function getPublicUrl(bucketName: string, filePath: string): string {
-  const { data } = supabase.storage.from(bucketName).getPublicUrl(filePath)
-  return data.publicUrl
-}
-
-// New function to construct a URL with the specific pattern observed in your storage
+// Function to construct a URL with the specific pattern observed in your storage
 export function constructChannelVideoUrl(channelId: string, fileName: string): string {
   // Use the specific pattern with double slash that works for your storage
   return `${supabaseUrl}/storage/v1/object/public/channel${channelId}//${fileName}`
 }
 
-export async function testAllVideoFormats(
-  channelId: string,
-  fileName: string,
-): Promise<Array<{ url: string; works: boolean }>> {
-  const baseUrl = supabaseUrl + "/storage/v1/object/public"
-
-  const urlFormats = [
-    `${baseUrl}/channel${channelId}/${fileName}`,
-    `${baseUrl}/channel${channelId}//${fileName}`, // Note the double slash
-    `${baseUrl}/videos/channel${channelId}/${fileName}`,
-    `${baseUrl}/videos/channel-${channelId}/${fileName}`,
-    `${baseUrl}/videos/${fileName}`,
-    `${baseUrl}/${channelId}/${fileName}`,
-    `${baseUrl}/ch${channelId}/${fileName}`,
-  ]
-
-  const results = []
-
-  for (const url of urlFormats) {
-    try {
-      const response = await fetch(url, { method: "HEAD" })
-      results.push({
-        url,
-        works: response.ok,
-      })
-    } catch (error) {
-      results.push({
-        url,
-        works: false,
-      })
-    }
-  }
-
-  return results
-}
-
-// Add this new function
-export async function checkChannelHasPrograms(channelId: string): Promise<boolean> {
+// These functions are required by the video player component
+export async function saveWatchProgress(programId: number, currentTime: number): Promise<void> {
   try {
-    const { count, error } = await supabase
-      .from("programs")
-      .select("*", { count: "exact", head: true })
-      .eq("channel_id", channelId)
+    // Don't save progress if it's very close to the beginning (less than 5 seconds)
+    if (currentTime < 5) return
 
-    if (error) {
-      console.error(`Error checking programs for channel ${channelId}:`, error)
-      return false
-    }
+    if (typeof window === "undefined") return
 
-    return count > 0
-  } catch (e) {
-    console.error(`Error in checkChannelHasPrograms for channel ${channelId}:`, e)
-    return false
+    // Simple localStorage implementation
+    localStorage.setItem(`watch_progress_${programId}`, currentTime.toString())
+  } catch (error) {
+    console.error("Error saving watch progress:", error)
   }
 }
 
-// Update the findWorkingVideoUrl function to be more comprehensive and add better logging
+export async function getWatchProgress(programId: number): Promise<number | null> {
+  try {
+    if (typeof window === "undefined") return null
+
+    const savedProgress = localStorage.getItem(`watch_progress_${programId}`)
+    if (savedProgress) {
+      return Number.parseFloat(savedProgress)
+    }
+    return null
+  } catch (error) {
+    console.error("Error getting watch progress:", error)
+    return null
+  }
+}
+
+export function shouldDisableAutoRefresh(duration: number): boolean {
+  // If video is longer than 5 minutes (300 seconds), disable auto refresh
+  return duration > 300
+}
+
 export async function checkRLSStatus(bucketName: string): Promise<{
   enabled: boolean
   hasPublicPolicy: boolean
   canAccess: boolean
 }> {
   try {
-    // Try to list files in the bucket
-    const { data: files, error: listError } = await supabase.storage.from(bucketName).list()
+    // Check if RLS is enabled
+    const { data: policyData, error: policyError } = await supabase
+      .from("pg_policies")
+      .select("*")
+      .eq("tablename", bucketName)
 
-    if (listError) {
-      console.error(`Error listing files in bucket ${bucketName}:`, listError)
-      return {
-        enabled: true, // Assuming RLS is enabled if we get an error
-        hasPublicPolicy: false,
-        canAccess: false,
-      }
+    const rlsEnabled = policyData && policyData.length > 0
+
+    // Check if there's a public policy
+    const hasPublicPolicy = policyData?.some((policy) => policy.definition === "true") || false
+
+    // Try to access a file in the bucket
+    let canAccess = false
+    try {
+      const { data: listData, error: listError } = await supabase.storage.from(bucketName).list()
+      canAccess = !listError
+    } catch (accessError) {
+      console.warn(`Could not access bucket ${bucketName}:`, accessError)
     }
 
-    // If we can list files, check if we can get a public URL for the first file
-    if (files && files.length > 0) {
-      const firstFile = files[0]
-      const { data } = supabase.storage.from(bucketName).getPublicUrl(firstFile.name)
-
-      if (data?.publicUrl) {
-        // Check if the URL actually works
-        const exists = await checkUrlExists(data.publicUrl)
-        return {
-          enabled: !exists, // If URL doesn't work, RLS is likely enabled
-          hasPublicPolicy: exists,
-          canAccess: exists,
-        }
-      }
+    return {
+      enabled: rlsEnabled,
+      hasPublicPolicy,
+      canAccess,
     }
-
+  } catch (error) {
+    console.error(`Error checking RLS status for bucket ${bucketName}:`, error)
     return {
       enabled: false,
-      hasPublicPolicy: true,
-      canAccess: true,
-    }
-  } catch (e) {
-    console.error(`Error checking RLS status for bucket ${bucketName}:`, e)
-    return {
-      enabled: true,
       hasPublicPolicy: false,
       canAccess: false,
     }
   }
 }
 
-// CRITICAL FIX: Completely rewritten watch progress functions to prevent video restarts
-// Use IndexedDB instead of localStorage for more reliable storage
-const DB_NAME = "videoProgressDB"
-const STORE_NAME = "watchProgress"
-let dbPromise: Promise<IDBDatabase> | null = null
-
-// Initialize the database
-function initDB(): Promise<IDBDatabase> {
-  if (!dbPromise) {
-    dbPromise = new Promise((resolve, reject) => {
-      if (typeof window === "undefined" || !window.indexedDB) {
-        reject("IndexedDB not available")
-        return
-      }
-
-      const request = indexedDB.open(DB_NAME, 1)
-
-      request.onerror = (event) => {
-        console.error("IndexedDB error:", event)
-        reject("Could not open IndexedDB")
-      }
-
-      request.onsuccess = (event) => {
-        resolve(request.result)
-      }
-
-      request.onupgradeneeded = (event) => {
-        const db = request.result
-        if (!db.objectStoreNames.contains(STORE_NAME)) {
-          db.createObjectStore(STORE_NAME, { keyPath: "id" })
-        }
-      }
-    })
-  }
-  return dbPromise
-}
-
-// Save watch progress to IndexedDB
-export async function saveWatchProgress(programId: number, currentTime: number): Promise<void> {
+export async function listBuckets(): Promise<any[]> {
   try {
-    // Don't save progress if it's very close to the beginning (less than 5 seconds)
-    if (currentTime < 5) return
+    const { data, error } = await supabase.storage.listBuckets()
 
-    // For Freedom School videos (which have higher IDs), log more details
-    if (programId > 900) {
-      console.log(`Saving Freedom School video progress: ID=${programId}, time=${Math.round(currentTime)}s`)
+    if (error) {
+      throw new Error(`Error listing buckets: ${error.message}`)
     }
 
-    if (typeof window === "undefined" || !window.indexedDB) {
-      throw new Error("IndexedDB not available")
-    }
-
-    const db = await initDB()
-    const tx = db.transaction(STORE_NAME, "readwrite")
-    const store = tx.objectStore(STORE_NAME)
-
-    // Create a unique ID that includes user info if available
-    const userId = localStorage.getItem("userId") || "guest"
-    const id = `${userId}_${programId}`
-
-    // Save with timestamp to track when it was last updated
-    await store.put({
-      id,
-      programId,
-      currentTime,
-      timestamp: Date.now(),
-      userId,
-    })
-
-    // Also save a backup in localStorage in case IndexedDB fails
-    try {
-      localStorage.setItem(
-        `watch_progress_backup_${id}`,
-        JSON.stringify({
-          currentTime,
-          timestamp: Date.now(),
-        }),
-      )
-    } catch (err) {
-      // Ignore localStorage errors
-    }
-
-    return new Promise((resolve, reject) => {
-      tx.oncomplete = () => resolve()
-      tx.onerror = (event) => reject(event)
-    })
+    return data || []
   } catch (error) {
-    console.error("Error saving watch progress to IndexedDB:", error)
-
-    // Fallback to localStorage
-    try {
-      const userId = localStorage.getItem("userId") || "guest"
-      const id = `${userId}_${programId}`
-      localStorage.setItem(`watch_progress_${id}`, currentTime.toString())
-      console.log(`Saved watch progress to localStorage as fallback: ${currentTime}s`)
-    } catch (err) {
-      console.error("Error saving to localStorage fallback:", err)
-    }
+    console.error("Error listing buckets:", error)
+    return []
   }
 }
 
-// Get watch progress from IndexedDB
-export async function getWatchProgress(programId: number): Promise<number | null> {
-  try {
-    if (typeof window === "undefined" || !window.indexedDB) {
-      throw new Error("IndexedDB not available")
-    }
+export async function testAllVideoFormats(
+  channelId: string,
+  fileName: string,
+): Promise<Array<{ url: string; works: boolean }>> {
+  const baseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ""
+  const formats = [
+    `${baseUrl}/storage/v1/object/public/channel${channelId}/${fileName}`,
+    `${baseUrl}/storage/v1/object/public/videos/channel${channelId}/${fileName}`,
+    `${baseUrl}/storage/v1/object/public/videos/channel-${channelId}/${fileName}`,
+    `${baseUrl}/storage/v1/object/public/videos/${fileName}`,
+    `${baseUrl}/storage/v1/object/public/${channelId}/${fileName}`,
+    `${baseUrl}/storage/v1/object/public/ch${channelId}/${fileName}`,
+  ]
 
-    // For Freedom School videos (which have higher IDs), log more details
-    if (programId > 900) {
-      console.log(`Getting Freedom School video progress: ID=${programId}`)
-    }
+  const results = []
 
-    const db = await initDB()
-    const tx = db.transaction(STORE_NAME, "readonly")
-    const store = tx.objectStore(STORE_NAME)
-
-    const userId = localStorage.getItem("userId") || "guest"
-    const id = `${userId}_${programId}`
-
-    return new Promise((resolve, reject) => {
-      const request = store.get(id)
-
-      request.onsuccess = () => {
-        if (request.result) {
-          console.log(`Retrieved watch progress from IndexedDB: ${request.result.currentTime}s`)
-          resolve(request.result.currentTime)
-        } else {
-          // Try localStorage fallback
-          try {
-            const savedProgress = localStorage.getItem(`watch_progress_${id}`)
-            if (savedProgress) {
-              const time = Number.parseFloat(savedProgress)
-              console.log(`Retrieved watch progress from localStorage fallback: ${time}s`)
-              resolve(time)
-            } else {
-              resolve(null)
-            }
-          } catch (err) {
-            console.error("Error getting from localStorage fallback:", err)
-            resolve(null)
-          }
-        }
-      }
-
-      request.onerror = (event) => {
-        console.error("Error getting watch progress:", event)
-
-        // Try localStorage fallback
-        try {
-          const savedProgress = localStorage.getItem(`watch_progress_${id}`)
-          if (savedProgress) {
-            resolve(Number.parseFloat(savedProgress))
-          } else {
-            resolve(null)
-          }
-        } catch (err) {
-          console.error("Error getting from localStorage fallback:", err)
-          resolve(null)
-        }
-      }
-    })
-  } catch (error) {
-    console.error("Error accessing IndexedDB:", error)
-
-    // Fallback to localStorage
+  for (const url of formats) {
     try {
-      const userId = localStorage.getItem("userId") || "guest"
-      const id = `${userId}_${programId}`
-      const savedProgress = localStorage.getItem(`watch_progress_${id}`)
-      if (savedProgress) {
-        return Number.parseFloat(savedProgress)
-      }
-    } catch (err) {
-      console.error("Error getting from localStorage:", err)
+      const response = await fetch(url, { method: "HEAD" })
+      results.push({ url, works: response.ok })
+    } catch (error) {
+      results.push({ url, works: false })
     }
-
-    return null
   }
-}
 
-// This is a critical fix for the video restart issue
-// Add this function to completely disable any automatic refresh for videos longer than 5 minutes
-export function shouldDisableAutoRefresh(duration: number): boolean {
-  // If video is longer than 5 minutes (300 seconds), disable auto refresh
-  // This will prevent the 5-minute restart issue
-  return duration > 300
+  return results
 }
