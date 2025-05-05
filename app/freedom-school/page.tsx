@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -20,17 +20,9 @@ export default function FreedomSchoolPage() {
   const router = useRouter()
   const videoRef = useRef<HTMLVideoElement>(null)
   const [videoUrl, setVideoUrl] = useState<string>("")
-  const [isLoading, setIsLoading] = useState<boolean>(true)
+  const [isLoading, setIsLoading] = useState<boolean>(false)
   const [error, setError] = useState<string | null>(null)
   const headerImageUrl = getFullUrl("freedom-school/freedom-schoolimage.jpeg")
-
-  useEffect(() => {
-    // This will be where you can set your video URL once uploaded
-    setIsLoading(false)
-
-    // For now, we'll just show a placeholder message
-    setError("No videos have been uploaded yet. Please check back later.")
-  }, [])
 
   const handleVideoError = () => {
     setError("Video failed to load. Please check your connection and try again.")
@@ -57,7 +49,7 @@ export default function FreedomSchoolPage() {
           <div className="absolute inset-0 bg-gradient-to-t from-black to-transparent"></div>
           <div className="absolute bottom-0 left-0 p-4">
             <h1 className="text-3xl md:text-4xl font-bold">📚 Freedom School</h1>
-            <p className="text-gray-300">Learn, reflect, and rise — our virtual classroom is always open.</p>
+            <p className="text-gray-300">Our virtual classroom is always open.</p>
           </div>
         </div>
       </div>
