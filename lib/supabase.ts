@@ -15,6 +15,19 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   },
 })
 
+// Centralized function to get full Supabase storage URLs
+export const getFullUrl = (path: string): string => {
+  // Make sure path doesn't start with a slash
+  const cleanPath = path.replace(/^\/+/, "")
+  const base = `${supabaseUrl}/storage/v1/object/public/`
+
+  // Combine and fix any double slashes
+  const url = `${base}${cleanPath}`
+
+  // Fix double slashes in URLs (but preserve http://)
+  return fixUrl(url)
+}
+
 export const isLiveChannel = (channelId: string): boolean => {
   // Only Channel 21 is live
   return channelId === "21"
@@ -339,14 +352,8 @@ export async function getDirectDownloadUrl(url: string | null, channelId: string
 
 // Function to construct a URL with the specific pattern observed in your storage
 export function constructChannelVideoUrl(channelId: string, fileName: string): string {
-  // First clean the filename by removing any leading slashes
-  const cleanFileName = fileName.replace(/^\/+/, "")
-
-  // Construct the URL with the channel-specific bucket
-  const url = `${supabaseUrl}/storage/v1/object/public/channel${channelId}/${cleanFileName}`
-
-  // Fix any double slashes in the URL (except in http://)
-  return fixUrl(url)
+  // Use the centralized getFullUrl function
+  return getFullUrl(`channel${channelId}/${fileName.replace(/^\/+/, "")}`)
 }
 
 // These functions are required by the video player component

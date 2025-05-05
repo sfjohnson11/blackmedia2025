@@ -5,10 +5,7 @@ import type React from "react"
 import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { Loader2, ChevronLeft, RefreshCw, AlertTriangle } from "lucide-react"
-import { getCurrentProgram, getUpcomingPrograms, forceRefreshAllData } from "@/lib/supabase"
-
-// Remove the hardcoded "videos" path
-const SUPABASE_PUBLIC_BUCKET_BASE = process.env.NEXT_PUBLIC_SUPABASE_URL + "/storage/v1/object/public/"
+import { getCurrentProgram, getUpcomingPrograms, forceRefreshAllData, getFullUrl } from "@/lib/supabase"
 
 interface VideoPlayerProps {
   channel: any
@@ -56,34 +53,6 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     }
   }
 
-  // Fix double slashes in URLs (but preserve http://)
-  const fixUrl = (url: string): string => {
-    if (!url) {
-      console.log("WARNING: Empty URL passed to fixUrl")
-      return ""
-    }
-
-    console.log("Original URL before fixing:", url)
-    addDebugInfo("originalUrl", url)
-
-    // First preserve the protocol (http:// or https://)
-    let protocol = ""
-    const protocolMatch = url.match(/^(https?:\/\/)/)
-    if (protocolMatch) {
-      protocol = protocolMatch[0]
-      url = url.substring(protocol.length)
-    }
-
-    // Replace any double slashes with single slashes
-    url = url.replace(/\/+/g, "/")
-
-    // Put the protocol back
-    const fixedUrl = protocol + url
-    console.log("Fixed URL after processing:", fixedUrl)
-    addDebugInfo("fixedUrl", fixedUrl)
-    return fixedUrl
-  }
-
   // Load video with updated handling and timeout
   const loadVideo = (url: string, forceRetry = false) => {
     console.log("loadVideo called with URL:", url)
@@ -109,36 +78,19 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     let fullUrl
     const originalUrl = url
 
-    // Special handling for specific channels
-    if (channel.id === "13" || channel.id === "10") {
-      console.log(`Special handling for channel ${channel.id}`)
-      addDebugInfo("channelSpecialHandling", channel.id)
-
-      // If it's just a filename (not a full URL)
-      if (!url.startsWith("http")) {
-        // Remove any leading slashes and ensure clean filename
-        const cleanFileName = url.replace(/^\/+/, "")
-        // Use a specific structure for these channels
-        fullUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/videos/${cleanFileName}`
-      } else {
-        fullUrl = url
-      }
+    // Handle all channels consistently
+    if (url.startsWith("http")) {
+      // It's already a full URL
+      fullUrl = url
     } else {
-      // Normal handling for other channels
-      if (url.startsWith("http")) {
-        // It's already a full URL
-        fullUrl = url
-      } else {
-        // It's just a filename, combine with channel-specific bucket path
-        // Remove any leading slashes
-        const cleanFileName = url.replace(/^\/+/, "")
-        // Use channel-specific bucket
-        fullUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/channel${channel.id}/${cleanFileName}`
-      }
+      // It's just a filename, combine with channel-specific bucket path
+      // Remove any leading slashes
+      const cleanFileName = url.replace(/^\/+/, "")
+      // Use channel-specific bucket with the centralized getFullUrl function
+      fullUrl = getFullUrl(`channel${channel.id}/${cleanFileName}`)
+      console.log(`Constructed URL for channel ${channel.id}: ${fullUrl}`)
+      addDebugInfo("constructedUrl", fullUrl)
     }
-
-    // Fix any double slashes in the URL (except in http://)
-    fullUrl = fixUrl(fullUrl)
 
     // Add a cache-busting parameter if this is a retry
     if (retryCount > 0) {
