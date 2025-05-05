@@ -27,7 +27,12 @@ export function FreedomSchoolPlayer({ videoId, videoUrl, title, fallbackUrl }: F
 
   // Fix double slashes in URLs (but preserve http://)
   const fixUrl = (url: string): string => {
-    if (!url) return ""
+    if (!url) {
+      console.log("Freedom School: WARNING - Empty URL passed to fixUrl")
+      return ""
+    }
+
+    console.log("Freedom School: Original URL before fixing:", url)
 
     // First preserve the protocol (http:// or https://)
     let protocol = ""
@@ -41,16 +46,25 @@ export function FreedomSchoolPlayer({ videoId, videoUrl, title, fallbackUrl }: F
     url = url.replace(/\/+/g, "/")
 
     // Put the protocol back
-    return protocol + url
+    const fixedUrl = protocol + url
+    console.log("Freedom School: Fixed URL after processing:", fixedUrl)
+    return fixedUrl
   }
 
   // Load video
   const loadVideo = (url: string) => {
-    if (!url) return
+    console.log("Freedom School: loadVideo called with URL:", url)
+
+    if (!url) {
+      console.error("Freedom School: ERROR - Empty URL passed to loadVideo")
+      setError("No video URL available")
+      setIsLoading(false)
+      return
+    }
 
     // Fix double slashes in the URL
     const fixedUrl = fixUrl(url)
-    console.log("Freedom School: Loading video with URL:", fixedUrl)
+    console.log("Freedom School: Setting video URL to:", fixedUrl)
 
     // Set the video URL - this will trigger a remount of the video element due to the key prop
     setCurrentUrl(fixedUrl)
@@ -60,7 +74,10 @@ export function FreedomSchoolPlayer({ videoId, videoUrl, title, fallbackUrl }: F
 
   // Try fallback
   const tryFallback = () => {
-    if (!fallbackUrl || usedFallback) return
+    if (!fallbackUrl || usedFallback) {
+      console.log("Freedom School: No fallback URL available or already used fallback")
+      return
+    }
 
     console.log("Freedom School: Trying fallback URL:", fallbackUrl)
     setUsedFallback(true)
@@ -69,7 +86,10 @@ export function FreedomSchoolPlayer({ videoId, videoUrl, title, fallbackUrl }: F
 
   // Handle video error
   const handleVideoError = (e: React.SyntheticEvent<HTMLVideoElement>) => {
-    console.error("Freedom School: Video error:", e)
+    const videoElement = e.currentTarget
+    console.error("Freedom School: Video error event:", e)
+    console.error("Freedom School: Video error details:", videoElement.error)
+    console.error("Freedom School: Current video URL when error occurred:", currentUrl)
 
     if (!usedFallback && fallbackUrl) {
       tryFallback()
@@ -79,17 +99,31 @@ export function FreedomSchoolPlayer({ videoId, videoUrl, title, fallbackUrl }: F
     }
   }
 
+  // Handle video can play
+  const handleCanPlay = () => {
+    console.log("Freedom School: Video can play event triggered for URL:", currentUrl)
+    setIsLoading(false)
+  }
+
   // Initial setup
   useEffect(() => {
     console.log("Freedom School: Initial setup for video ID:", videoId)
+    console.log("Freedom School: Initial video URL:", videoUrl)
+    console.log("Freedom School: Fallback URL:", fallbackUrl)
 
     if (videoUrl) {
       loadVideo(videoUrl)
     } else {
+      console.error("Freedom School: No video URL provided")
       setError("No video URL provided")
       setIsLoading(false)
     }
   }, [videoId, videoUrl])
+
+  // Log whenever currentUrl changes
+  useEffect(() => {
+    console.log("Freedom School: Video URL state changed to:", currentUrl)
+  }, [currentUrl])
 
   return (
     <div className="relative bg-black">
@@ -128,19 +162,25 @@ export function FreedomSchoolPlayer({ videoId, videoUrl, title, fallbackUrl }: F
 
       {/* Video element */}
       <div className="w-full aspect-video bg-black">
-        {currentUrl && (
+        {currentUrl ? (
           <video
             key={currentUrl} // This forces a complete remount when the URL changes
             className="w-full h-full"
             controls
             playsInline
             autoPlay // Add autoPlay to start playing automatically
-            onCanPlay={() => setIsLoading(false)}
+            onCanPlay={handleCanPlay}
             onError={handleVideoError}
+            onLoadStart={() => console.log("Freedom School: Video load started for URL:", currentUrl)}
+            onLoadedData={() => console.log("Freedom School: Video data loaded for URL:", currentUrl)}
           >
             <source src={currentUrl} type="video/mp4" />
             Your browser does not support the video tag.
           </video>
+        ) : (
+          <div className="w-full h-full flex items-center justify-center">
+            <p className="text-white">No video URL available</p>
+          </div>
         )}
       </div>
 
@@ -153,8 +193,11 @@ export function FreedomSchoolPlayer({ videoId, videoUrl, title, fallbackUrl }: F
       {/* Debug info */}
       <div className="bg-black p-2 text-xs text-gray-500">
         <p>Video ID: {videoId}</p>
+        <p>Original URL: {videoUrl || "None"}</p>
         <p>Current URL: {currentUrl || "None"}</p>
         <p>Using Fallback: {usedFallback ? "Yes" : "No"}</p>
+        <p>Loading: {isLoading ? "Yes" : "No"}</p>
+        <p>Error: {error || "None"}</p>
       </div>
     </div>
   )
