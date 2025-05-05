@@ -46,14 +46,16 @@ export async function createTables() {
 
 export async function getCurrentProgram(channelId: string): Promise<{ program: any }> {
   const now = new Date().toISOString()
-  console.log(`Fetching current program for channel ${channelId} at ${now}`)
+  console.log(`Fetching current program for channel ${channelId} at ${now} (UTC)`)
+  console.log(`Local time: ${new Date().toLocaleString()}`)
 
   try {
+    // First, get the most recent program that started before now
     const { data: program, error } = await supabase
       .from("programs")
       .select("*")
       .eq("channel_id", channelId)
-      .lte("start_time", now)
+      .lte("start_time", now) // Program started before or at current time
       .order("start_time", { ascending: false })
       .limit(1)
       .single()
@@ -69,7 +71,26 @@ export async function getCurrentProgram(channelId: string): Promise<{ program: a
       return { program: null }
     }
 
-    console.log(`Found current program for channel ${channelId}:`, program?.title || "Unknown title")
+    // Now check if this program has ended based on its duration
+    if (program) {
+      const startTime = new Date(program.start_time).getTime()
+      const endTime = startTime + program.duration * 1000 // Convert duration from seconds to milliseconds
+      const currentTime = Date.now()
+
+      console.log(`Program: ${program.title}`)
+      console.log(`Start time: ${new Date(startTime).toLocaleString()}`)
+      console.log(`End time: ${new Date(endTime).toLocaleString()}`)
+      console.log(`Current time: ${new Date(currentTime).toLocaleString()}`)
+
+      // If the program has ended, it's not the current program
+      if (currentTime > endTime) {
+        console.log(`Program ${program.title} has ended, returning null`)
+        return { program: null }
+      }
+
+      console.log(`Found current program for channel ${channelId}: ${program.title}`)
+    }
+
     return { program }
   } catch (e) {
     console.error(`Error in getCurrentProgram for channel ${channelId}:`, e)
@@ -80,20 +101,25 @@ export async function getCurrentProgram(channelId: string): Promise<{ program: a
 export async function getUpcomingPrograms(channelId: string): Promise<{ programs: any[] }> {
   const now = new Date().toISOString()
 
-  const { data: programs, error } = await supabase
-    .from("programs")
-    .select("*")
-    .eq("channel_id", channelId)
-    .gt("start_time", now)
-    .order("start_time", { ascending: true })
-    .limit(5)
+  try {
+    const { data: programs, error } = await supabase
+      .from("programs")
+      .select("*")
+      .eq("channel_id", channelId)
+      .gt("start_time", now)
+      .order("start_time", { ascending: true })
+      .limit(5)
 
-  if (error) {
-    console.error("Error fetching upcoming programs:", error)
+    if (error) {
+      console.error("Error fetching upcoming programs:", error)
+      return { programs: [] }
+    }
+
+    return { programs: programs || [] }
+  } catch (e) {
+    console.error(`Error in getUpcomingPrograms for channel ${channelId}:`, e)
     return { programs: [] }
   }
-
-  return { programs }
 }
 
 export function calculateProgramProgress(program: any): { progressPercent: number; isFinished: boolean } {
@@ -119,6 +145,25 @@ export const getLiveStreamUrl = (channelId: string): string | null => {
     return "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"
   }
   return null
+}
+
+// Fix double slashes in URLs (but preserve http://)
+export function fixUrl(url: string): string {
+  if (!url) return ""
+
+  // First preserve the protocol (http:// or https://)
+  let protocol = ""
+  const protocolMatch = url.match(/^(https?:\/\/)/)
+  if (protocolMatch) {
+    protocol = protocolMatch[0]
+    url = url.substring(protocol.length)
+  }
+
+  // Replace any double slashes with single slashes
+  url = url.replace(/\/+/g, "/")
+
+  // Put the protocol back
+  return protocol + url
 }
 
 // Improve the URL checking and resolution functions
