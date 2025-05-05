@@ -266,7 +266,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     }
   }
 
-  // Try alternative URL formats for the video
+  // Update the tryAlternativeUrlFormats function to fix double slashes
   const tryAlternativeUrlFormats = async () => {
     if (!currentProgram || !videoRef.current) return
 
@@ -281,28 +281,32 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       // Get base URL without the filename
       const baseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ""
 
-      // Try different URL formats
+      // Fix any double slashes in the URL (but preserve http://)
+      const fixUrl = (url: string) => {
+        return url.replace(/(https?:\/\/)|(\/\/+)/g, (match, protocol) => {
+          return protocol || "/"
+        })
+      }
+
+      // Try different URL formats (with single slashes)
       const urlFormats = [
-        // Original URL
-        currentProgram.mp4_url,
+        // Original URL (fixed)
+        fixUrl(currentProgram.mp4_url),
 
         // Try with channel ID in path
-        `${baseUrl}/storage/v1/object/public/channel${channel.id}/${fileName}`,
-
-        // Try with double slash (common pattern)
-        `${baseUrl}/storage/v1/object/public/channel${channel.id}//${fileName}`,
+        fixUrl(`${baseUrl}/storage/v1/object/public/channel${channel.id}/${fileName}`),
 
         // Try with "ch" prefix
-        `${baseUrl}/storage/v1/object/public/ch${channel.id}/${fileName}`,
+        fixUrl(`${baseUrl}/storage/v1/object/public/ch${channel.id}/${fileName}`),
 
         // Try with videos folder
-        `${baseUrl}/storage/v1/object/public/videos/channel${channel.id}/${fileName}`,
+        fixUrl(`${baseUrl}/storage/v1/object/public/videos/channel${channel.id}/${fileName}`),
 
         // Try with videos folder and channel name
-        `${baseUrl}/storage/v1/object/public/videos/${cleanedName}/${fileName}`,
+        fixUrl(`${baseUrl}/storage/v1/object/public/videos/${cleanedName}/${fileName}`),
 
         // Try with just the filename in root bucket
-        `${baseUrl}/storage/v1/object/public/${fileName}`,
+        fixUrl(`${baseUrl}/storage/v1/object/public/${fileName}`),
       ]
 
       // Filter out URLs we've already tried
@@ -352,102 +356,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     }
   }
 
-  // Function to retry playing the current video
-  const retryPlayback = async () => {
-    if (!currentProgram || !videoRef.current) return
-
-    setIsLoading(true)
-    setLoadError(null)
-    setErrorDetails(null)
-    setRetryCount(0)
-    setUrlsAttempted([])
-
-    try {
-      // Try the direct mp4_url first
-      if (currentProgram.mp4_url) {
-        console.log(`Trying direct mp4_url: ${currentProgram.mp4_url}`)
-
-        // Add cache buster to URL
-        const urlWithCacheBuster = addCacheBuster(currentProgram.mp4_url)
-
-        // Add to attempted URLs
-        setUrlsAttempted((prev) => [...prev, urlWithCacheBuster])
-
-        videoRef.current.src = urlWithCacheBuster
-        videoRef.current.load()
-        setVideoUrl(urlWithCacheBuster)
-
-        try {
-          await videoRef.current.play()
-          setIsPlaying(true)
-          setIsLoading(false)
-          return
-        } catch (err) {
-          console.error("Error playing with direct URL:", err)
-          // Continue to try alternative formats
-        }
-      }
-
-      // If direct URL didn't work, try alternative formats
-      tryAlternativeUrlFormats()
-    } catch (err) {
-      console.error("Error in retry:", err)
-      setLoadError(`Retry failed: ${err instanceof Error ? err.message : String(err)}`)
-      setIsLoading(false)
-      tryAlternativeUrlFormats()
-    }
-  }
-
-  // Check for program updates
-  const checkForProgramUpdates = async () => {
-    // Don't check if we're already in the process of switching programs
-    if (programSwitchInProgressRef.current) {
-      return
-    }
-
-    const now = Date.now()
-    const timeSinceLastCheck = now - lastProgramCheck
-
-    // Only check every 30 seconds to avoid too many API calls
-    if (timeSinceLastCheck < 30000) {
-      return
-    }
-
-    setLastProgramCheck(now)
-    console.log("Checking for program updates...")
-
-    try {
-      // Set flag to prevent multiple simultaneous program switches
-      programSwitchInProgressRef.current = true
-
-      const { program } = await getCurrentProgram(channel.id)
-      const { programs } = await getUpcomingPrograms(channel.id)
-
-      // If we have a new program, switch to it
-      if (program && (!currentProgram || program.id !== currentProgram.id)) {
-        console.log(`New program detected: ${program.title} (ID: ${program.id})`)
-        console.log(`Previous program: ${currentProgram?.title || "None"} (ID: ${currentProgram?.id || "None"})`)
-
-        // Reset URL attempts for the new program
-        setUrlsAttempted([])
-        setRetryCount(0)
-
-        // Switch to the new program
-        await loadProgram(program)
-        setUpcomingPrograms(programs)
-      } else {
-        // Just update the upcoming programs list
-        setUpcomingPrograms(programs)
-      }
-    } catch (err) {
-      console.error("Error checking for program updates:", err)
-    } finally {
-      // Clear the flag
-      programSwitchInProgressRef.current = false
-    }
-  }
-
-  // Load a specific program
+  // Update the loadProgram function to fix double slashes
   const loadProgram = async (program: Program) => {
     console.log(`Loading program: ${program.title} (ID: ${program.id})`)
 
@@ -468,8 +377,14 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       if (program.mp4_url) {
         console.log(`Trying direct mp4_url: ${program.mp4_url}`)
 
+        // Fix any double slashes in the URL (but preserve http://)
+        const fixedUrl = program.mp4_url.replace(/(https?:\/\/)|(\/\/+)/g, (match, protocol) => {
+          return protocol || "/"
+        })
+        console.log(`Fixed URL: ${fixedUrl}`)
+
         // Add cache buster to URL
-        const urlWithCacheBuster = addCacheBuster(program.mp4_url)
+        const urlWithCacheBuster = addCacheBuster(fixedUrl)
 
         // Add to attempted URLs
         setUrlsAttempted((prev) => [...prev, urlWithCacheBuster])
@@ -637,6 +552,43 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
   const handleBack = () => {
     router.back()
+  }
+
+  // Function to check for program updates
+  const checkForProgramUpdates = async () => {
+    const now = Date.now()
+    const timeSinceLastCheck = now - lastProgramCheck
+
+    // Only check if it's been at least 30 seconds since the last check
+    if (timeSinceLastCheck < 30000) {
+      return
+    }
+
+    setLastProgramCheck(now)
+
+    try {
+      const { program } = await getCurrentProgram(channel.id)
+      const { programs } = await getUpcomingPrograms(channel.id)
+
+      // Update upcoming programs list
+      setUpcomingPrograms(programs)
+
+      if (program && (!currentProgram || program.id !== currentProgram.id)) {
+        console.log(`New program detected by interval: ${program.title} (ID: ${program.id})`)
+        loadProgram(program)
+      }
+    } catch (error) {
+      console.error("Error checking for program updates:", error)
+    }
+  }
+
+  // Function to retry playback
+  const retryPlayback = () => {
+    if (currentProgram) {
+      loadProgram(currentProgram)
+    } else {
+      refreshCurrentProgram()
+    }
   }
 
   // Initial setup

@@ -224,8 +224,12 @@ export async function getDirectDownloadUrl(url: string | null, channelId: string
 
     // For Supabase storage URLs, get a direct download URL
     if (url.includes("supabase.co") && url.includes("storage/v1/object/public")) {
-      console.log(`URL is a Supabase storage URL: ${url}`)
-      return url
+      // Fix any double slashes in the path (but preserve http://)
+      const fixedUrl = url.replace(/(https?:\/\/)|(\/\/+)/g, (match, protocol) => {
+        return protocol || "/"
+      })
+      console.log(`Fixed Supabase storage URL: ${fixedUrl}`)
+      return fixedUrl
     }
 
     // For YouTube URLs, we can't use them directly
@@ -234,20 +238,25 @@ export async function getDirectDownloadUrl(url: string | null, channelId: string
       return null
     }
 
-    // For other URLs, try to use them directly
-    console.log(`Using URL directly: ${url}`)
-    return url
+    // For other URLs, try to use them directly (with double slash fix)
+    const fixedUrl = url.replace(/(https?:\/\/)|(\/\/+)/g, (match, protocol) => {
+      return protocol || "/"
+    })
+    console.log(`Using fixed URL directly: ${fixedUrl}`)
+    return fixedUrl
   } catch (error) {
     console.error(`Error getting direct download URL for ${url}:`, error)
-    // Return the original URL as a fallback
-    return url
+    // Return the original URL as a fallback, but fix double slashes
+    return url.replace(/(https?:\/\/)|(\/\/+)/g, (match, protocol) => {
+      return protocol || "/"
+    })
   }
 }
 
 // Function to construct a URL with the specific pattern observed in your storage
 export function constructChannelVideoUrl(channelId: string, fileName: string): string {
-  // Use the specific pattern with double slash that works for your storage
-  return `${supabaseUrl}/storage/v1/object/public/channel${channelId}//${fileName}`
+  // Ensure there's only a single slash between path segments
+  return `${supabaseUrl}/storage/v1/object/public/channel${channelId}/${fileName.replace(/^\/+/, "")}`
 }
 
 // These functions are required by the video player component
