@@ -22,6 +22,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const [lastProgramCheck, setLastProgramCheck] = useState(Date.now())
   const [videoUrl, setVideoUrl] = useState("")
   const [error, setError] = useState<string | null>(null)
+  const [errorDetails, setErrorDetails] = useState<string | null>(null)
 
   // Go back
   const handleBack = () => {
@@ -73,6 +74,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     setVideoUrl(fixedUrl)
     setIsLoading(true)
     setError(null)
+    setErrorDetails(null)
   }
 
   // Check for program updates
@@ -118,44 +120,60 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     checkForProgramUpdates()
   }
 
-  // Handle video error
+  // Handle video error with improved error logging
   const handleVideoError = (e: React.SyntheticEvent<HTMLVideoElement>) => {
-  const video = e.currentTarget;
-  const err = video?.error;
+    const videoElement = e.currentTarget
+    const videoError = videoElement.error
 
-  console.error("🎬 Video error triggered at:", videoUrl);
+    console.log("Video error event triggered")
 
-  if (!err) {
-    console.error("⚠️ No error object found on video element.");
-    setError("Unknown video error. Try refreshing.");
-    return;
+    if (videoError) {
+      // Log the error code and message
+      console.error("Video error code:", videoError.code)
+      console.error("Video error message:", videoError.message)
+
+      // Provide specific error messages based on the error code
+      let errorMessage = "Unknown video error"
+
+      switch (videoError.code) {
+        case MediaError.MEDIA_ERR_ABORTED:
+          errorMessage = "Video playback was aborted"
+          console.error("MEDIA_ERR_ABORTED: Video playback was aborted")
+          break
+        case MediaError.MEDIA_ERR_NETWORK:
+          errorMessage = "A network error occurred while loading the video"
+          console.error("MEDIA_ERR_NETWORK: A network error occurred")
+          break
+        case MediaError.MEDIA_ERR_DECODE:
+          errorMessage = "The video could not be decoded"
+          console.error("MEDIA_ERR_DECODE: Failed to decode the video")
+          break
+        case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
+          errorMessage = "The video format is not supported or the URL is invalid"
+          console.error("MEDIA_ERR_SRC_NOT_SUPPORTED: Unsupported video source")
+          break
+        default:
+          console.error("Unknown video error")
+      }
+
+      // Add the error message if available
+      if (videoError.message) {
+        errorMessage += `: ${videoError.message}`
+      }
+
+      // Log the current URL
+      console.error("Current video URL when error occurred:", videoUrl)
+
+      // Set the error state
+      setError(`Video error: ${errorMessage}`)
+      setErrorDetails(`Error code: ${videoError.code}, URL: ${videoUrl}`)
+    } else {
+      console.error("Video error event but no error object available")
+      setError("Video error occurred")
+    }
+
+    setIsLoading(false)
   }
-
-  let message = "";
-
-  switch (err.code) {
-    case 1:
-      message = "MEDIA_ERR_ABORTED: The video was aborted.";
-      break;
-    case 2:
-      message = "MEDIA_ERR_NETWORK: A network error occurred.";
-      break;
-    case 3:
-      message = "MEDIA_ERR_DECODE: Failed to decode the video.";
-      break;
-    case 4:
-      message = "MEDIA_ERR_SRC_NOT_SUPPORTED: Video source is unsupported or unreachable.";
-      break;
-    default:
-      message = "An unknown video error occurred.";
-      break;
-  }
-
-  console.error("🧨 VIDEO ERROR CODE:", err.code, "-", message);
-  setError(message);
-  setIsLoading(false);
-}
-
 
   // Handle video can play
   const handleCanPlay = () => {
@@ -233,6 +251,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         <div className="absolute inset-0 flex items-center justify-center bg-black z-20">
           <div className="text-center p-4">
             <p className="text-red-500 mb-4">{error}</p>
+            {errorDetails && <p className="text-gray-400 text-sm mb-4">{errorDetails}</p>}
             <button
               onClick={() => currentProgram && loadVideo(currentProgram.mp4_url)}
               className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition-colors"

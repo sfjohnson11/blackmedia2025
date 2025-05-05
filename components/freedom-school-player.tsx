@@ -17,6 +17,7 @@ export function FreedomSchoolPlayer({ videoId, videoUrl, title, fallbackUrl }: F
   const router = useRouter()
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [errorDetails, setErrorDetails] = useState<string | null>(null)
   const [currentUrl, setCurrentUrl] = useState("")
   const [usedFallback, setUsedFallback] = useState(false)
 
@@ -70,6 +71,7 @@ export function FreedomSchoolPlayer({ videoId, videoUrl, title, fallbackUrl }: F
     setCurrentUrl(fixedUrl)
     setIsLoading(true)
     setError(null)
+    setErrorDetails(null)
   }
 
   // Try fallback
@@ -84,17 +86,61 @@ export function FreedomSchoolPlayer({ videoId, videoUrl, title, fallbackUrl }: F
     loadVideo(fallbackUrl)
   }
 
-  // Handle video error
+  // Handle video error with improved error logging
   const handleVideoError = (e: React.SyntheticEvent<HTMLVideoElement>) => {
     const videoElement = e.currentTarget
-    console.error("Freedom School: Video error event:", e)
-    console.error("Freedom School: Video error details:", videoElement.error)
-    console.error("Freedom School: Current video URL when error occurred:", currentUrl)
+    const videoError = videoElement.error
+
+    console.log("Freedom School: Video error event triggered")
+
+    if (videoError) {
+      // Log the error code and message
+      console.error("Freedom School: Video error code:", videoError.code)
+      console.error("Freedom School: Video error message:", videoError.message)
+
+      // Provide specific error messages based on the error code
+      let errorMessage = "Unknown video error"
+
+      switch (videoError.code) {
+        case MediaError.MEDIA_ERR_ABORTED:
+          errorMessage = "Video playback was aborted"
+          console.error("Freedom School: MEDIA_ERR_ABORTED: Video playback was aborted")
+          break
+        case MediaError.MEDIA_ERR_NETWORK:
+          errorMessage = "A network error occurred while loading the video"
+          console.error("Freedom School: MEDIA_ERR_NETWORK: A network error occurred")
+          break
+        case MediaError.MEDIA_ERR_DECODE:
+          errorMessage = "The video could not be decoded"
+          console.error("Freedom School: MEDIA_ERR_DECODE: Failed to decode the video")
+          break
+        case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
+          errorMessage = "The video format is not supported or the URL is invalid"
+          console.error("Freedom School: MEDIA_ERR_SRC_NOT_SUPPORTED: Unsupported video source")
+          break
+        default:
+          console.error("Freedom School: Unknown video error")
+      }
+
+      // Add the error message if available
+      if (videoError.message) {
+        errorMessage += `: ${videoError.message}`
+      }
+
+      // Log the current URL
+      console.error("Freedom School: Current video URL when error occurred:", currentUrl)
+
+      // Set the error state
+      setError(`Video error: ${errorMessage}`)
+      setErrorDetails(`Error code: ${videoError.code}, URL: ${currentUrl}`)
+    } else {
+      console.error("Freedom School: Video error event but no error object available")
+      setError("Video error occurred")
+    }
 
     if (!usedFallback && fallbackUrl) {
       tryFallback()
     } else {
-      setError("Error playing video. Please try again.")
       setIsLoading(false)
     }
   }
@@ -150,6 +196,7 @@ export function FreedomSchoolPlayer({ videoId, videoUrl, title, fallbackUrl }: F
         <div className="absolute inset-0 flex items-center justify-center bg-black z-20">
           <div className="text-center p-4">
             <p className="text-red-500 mb-4">{error}</p>
+            {errorDetails && <p className="text-gray-400 text-sm mb-4">{errorDetails}</p>}
             <button
               onClick={() => loadVideo(usedFallback && fallbackUrl ? fallbackUrl : videoUrl)}
               className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition-colors"
