@@ -5,7 +5,7 @@ import type React from "react"
 import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { Loader2, ChevronLeft, RefreshCw, AlertTriangle } from "lucide-react"
-import { getCurrentProgram, getUpcomingPrograms } from "@/lib/supabase"
+import { getCurrentProgram, getUpcomingPrograms, fixUrl } from "@/lib/supabase"
 
 // Add this at the top of your component (using your Supabase URL from environment variables)
 const SUPABASE_PUBLIC_BUCKET_BASE = process.env.NEXT_PUBLIC_SUPABASE_URL + "/storage/v1/object/public/videos/"
@@ -29,43 +29,36 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const [errorDetails, setErrorDetails] = useState<string | null>(null)
   const [currentTime, setCurrentTime] = useState(new Date())
   const [lastRefreshTime, setLastRefreshTime] = useState(new Date())
-  const [retryCount, setRetryCount] = useState(0)
-  const [fallbackMode, setFallbackMode] = useState(false)
+  const [loadingTimeout, setLoadingTimeout] = useState<NodeJS.Timeout | null>(null)
+  const [debugInfo, setDebugInfo] = useState<Record<string, any>>({})
 
   // Go back
   const handleBack = () => {
     router.back()
   }
 
-  // Fix double slashes in URLs (but preserve http://)
-  const fixUrl = (url: string): string => {
-    if (!url) {
-      console.log("WARNING: Empty URL passed to fixUrl")
-      return ""
-    }
-
-    console.log("Original URL before fixing:", url)
-
-    // First preserve the protocol (http:// or https://)
-    let protocol = ""
-    const protocolMatch = url.match(/^(https?:\/\/)/)
-    if (protocolMatch) {
-      protocol = protocolMatch[0]
-      url = url.substring(protocol.length)
-    }
-
-    // Replace any double slashes with single slashes
-    url = url.replace(/\/+/g, "/")
-
-    // Put the protocol back
-    const fixedUrl = protocol + url
-    console.log("Fixed URL after processing:", fixedUrl)
-    return fixedUrl
+  // Add debug info
+  const addDebugInfo = (key: string, value: any) => {
+    setDebugInfo((prev) => ({
+      ...prev,
+      [key]: value,
+    }))
   }
 
-  // Replace this function inside your VideoPlayer component
+  // Clear loading timeout if it exists
+  const clearLoadingTimeout = () => {
+    if (loadingTimeout) {
+      clearTimeout(loadingTimeout)
+      setLoadingTimeout(null)
+    }
+  }
+
+  // Load video with updated handling and timeout
   const loadVideo = (url: string) => {
     console.log("loadVideo called with URL:", url)
+    addDebugInfo("loadVideoUrl", url)
+
+    clearLoadingTimeout()
 
     if (!url) {
       console.error("ERROR: Empty URL passed to loadVideo")
@@ -74,26 +67,62 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       return
     }
 
-    // Reset retry count and fallback mode when loading a new video
-    setRetryCount(0)
-    setFallbackMode(false)
-
     // Check if the URL is already a full URL or just a filename
     let fullUrl
-    if (url.startsWith("http")) {
-      // It's already a full URL, just fix any double slashes
-      fullUrl = fixUrl(url)
+    const originalUrl = url
+
+    // Special handling for channel 10
+    if (channel.id === "10") {
+      console.log("Special handling for channel 10")
+      addDebugInfo("channelSpecialHandling", channel.id)
+
+      // If it's just a filename (not a full URL)
+      if (!url.startsWith("http")) {
+        // Remove any leading slashes and ensure clean filename
+        const cleanFileName = url.replace(/^\/+/, "")
+        // Use a specific structure for channel 10
+        fullUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/videos/${cleanFileName}`
+      } else {
+        fullUrl = url
+      }
     } else {
-      // It's just a filename, combine with Supabase path
-      fullUrl = fixUrl(SUPABASE_PUBLIC_BUCKET_BASE + url)
+      // Normal handling for other channels
+      if (url.startsWith("http")) {
+        // It's already a full URL
+        fullUrl = url
+      } else {
+        // It's just a filename, combine with Supabase path
+        // Remove any leading slashes
+        const cleanFileName = url.replace(/^\/+/, "")
+        fullUrl = `${SUPABASE_PUBLIC_BUCKET_BASE}${cleanFileName}`
+      }
     }
 
-    console.log("Setting video URL to:", fullUrl)
+    // Fix any double slashes in the URL (except in http://)
+    fullUrl = fixUrl(fullUrl)
 
-    setVideoUrl(fullUrl) // This will trigger the <video> to reload
+    console.log("Setting video URL to:", fullUrl)
+    addDebugInfo("finalVideoUrl", fullUrl)
+    addDebugInfo("originalVideoUrl", originalUrl)
+
+    setVideoUrl(fullUrl)
     setIsLoading(true)
     setError(null)
     setErrorDetails(null)
+
+    // Set a timeout to catch silent failures
+    const timeout = setTimeout(() => {
+      console.log("Video loading timeout reached")
+
+      if (isLoading) {
+        console.error("Video failed to load within timeout period")
+        setError("Video failed to load (timeout)")
+        setErrorDetails(`URL: ${fullUrl}`)
+        setIsLoading(false)
+      }
+    }, 15000) // 15 second timeout
+
+    setLoadingTimeout(timeout)
   }
 
   // Update current time every second
@@ -105,6 +134,13 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     return () => clearInterval(timer)
   }, [])
 
+  // Cleanup loading timeout on unmount
+  useEffect(() => {
+    return () => {
+      clearLoadingTimeout()
+    }
+  }, [])
+
   // Format current time for display
   const formattedTime = currentTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
 
@@ -114,17 +150,23 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     setError(null)
     setErrorDetails(null)
     setLastRefreshTime(new Date())
+    clearLoadingTimeout()
 
     console.log("Force refreshing program for channel:", channel.id)
+    addDebugInfo("forceRefreshChannel", channel.id)
 
     try {
       const { program } = await getCurrentProgram(channel.id)
       const { programs } = await getUpcomingPrograms(channel.id)
 
       console.log("Force refresh result - Current program:", program)
+      addDebugInfo("refreshedProgram", program?.title || "None")
 
       if (program) {
         setCurrentProgram(program)
+        addDebugInfo("currentProgram", program.title)
+        addDebugInfo("programStartTime", program.start_time)
+        addDebugInfo("programDuration", program.duration)
 
         if (program.mp4_url) {
           loadVideo(program.mp4_url)
@@ -141,6 +183,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     } catch (err) {
       console.error("Error force refreshing program:", err)
       setError("Error refreshing program")
+      addDebugInfo("refreshError", err instanceof Error ? err.message : String(err))
       setIsLoading(false)
     }
   }
@@ -162,11 +205,13 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       const { programs } = await getUpcomingPrograms(channel.id)
 
       console.log("Program check result - Current program:", program)
+      addDebugInfo("scheduledCheckProgram", program?.title || "None")
 
       // If we have a new program, switch to it
       if (program && (!currentProgram || program.id !== currentProgram.id)) {
         console.log("New program detected:", program.title)
         setCurrentProgram(program)
+        addDebugInfo("switchedToProgram", program.title)
 
         if (program.mp4_url) {
           loadVideo(program.mp4_url)
@@ -184,6 +229,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       setUpcomingPrograms(programs)
     } catch (err) {
       console.error("Error checking for program updates:", err)
+      addDebugInfo("checkError", err instanceof Error ? err.message : String(err))
     }
   }
 
@@ -193,61 +239,27 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     checkForProgramUpdates()
   }
 
-  // Try alternative URL formats if the current one fails
-  const tryAlternativeUrl = () => {
-    if (!currentProgram?.mp4_url) return false
-
-    const url = currentProgram.mp4_url
-    const retryOptions = [
-      // Option 1: Try with a different path structure
-      url.startsWith("http")
-        ? url
-        : `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/channel${channel.id}/${url}`,
-
-      // Option 2: Try with a different bucket name
-      url.startsWith("http")
-        ? url
-        : `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/ch${channel.id}/${url}`,
-
-      // Option 3: Try with videos prefix
-      url.startsWith("http")
-        ? url
-        : `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/videos/ch${channel.id}/${url}`,
-    ]
-
-    if (retryCount < retryOptions.length) {
-      const alternativeUrl = retryOptions[retryCount]
-      console.log(`Trying alternative URL format (${retryCount + 1}/${retryOptions.length}):`, alternativeUrl)
-      setVideoUrl(alternativeUrl)
-      setRetryCount(retryCount + 1)
-      return true
-    }
-
-    return false
-  }
-
-  // Handle video error with improved error recovery
+  // Improved error handling specifically for the case where no error object is available
   const handleVideoError = (e: React.SyntheticEvent<HTMLVideoElement>) => {
+    console.log("Video error event triggered")
+    addDebugInfo("errorTriggered", new Date().toISOString())
+
+    // Clear the loading timeout since we've received an error event
+    clearLoadingTimeout()
+
     const videoElement = e.currentTarget
     const videoError = videoElement.error
+    let errorMessage = "Unknown video error"
+    let errorDetailsText = ""
 
-    console.log("Video error event triggered")
-
-    // First try alternative URL formats
-    if (tryAlternativeUrl()) {
-      console.log("Trying alternative URL format...")
-      return
-    }
-
-    // If we've tried all alternative URLs and still have errors, show error state
     if (videoError) {
       // Log the error code and message
       console.error("Video error code:", videoError.code)
       console.error("Video error message:", videoError.message)
+      addDebugInfo("errorCode", videoError.code)
+      addDebugInfo("errorMessage", videoError.message)
 
       // Provide specific error messages based on the error code
-      let errorMessage = "Unknown video error"
-
       switch (videoError.code) {
         case MediaError.MEDIA_ERR_ABORTED:
           errorMessage = "Video playback was aborted"
@@ -274,33 +286,61 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         errorMessage += `: ${videoError.message}`
       }
 
-      // Log the current URL
-      console.error("Current video URL when error occurred:", videoUrl)
-
-      // Set the error state
-      setError(`Video error: ${errorMessage}`)
-      setErrorDetails(`Error code: ${videoError.code}, URL: ${videoUrl}`)
+      errorDetailsText = `Error code: ${videoError.code}, URL: ${videoUrl}`
     } else {
       console.error("Video error event but no error object available")
+      addDebugInfo("emptyErrorObject", true)
 
-      // Even without an error object, we can try to recover
-      if (!fallbackMode) {
-        console.log("Switching to fallback mode...")
-        setFallbackMode(true)
-        forceRefreshProgram() // Try to refresh the program
-      } else {
-        setError("Video error occurred")
-        setErrorDetails("No error details available. URL: " + videoUrl)
+      // CORS or security errors often trigger without an error object
+      errorMessage = "Video loading failed"
+      errorDetailsText = "This could be due to a CORS issue, invalid URL, or unsupported file format."
+
+      // Add additional debug info for troubleshooting
+      addDebugInfo("videoElement", {
+        src: videoElement.src,
+        networkState: videoElement.networkState,
+        readyState: videoElement.readyState,
+        paused: videoElement.paused,
+        ended: videoElement.ended,
+        currentSrc: videoElement.currentSrc,
+      })
+
+      // Map network state to helpful text
+      let networkStateText = "Unknown"
+      switch (videoElement.networkState) {
+        case HTMLMediaElement.NETWORK_EMPTY:
+          networkStateText = "NETWORK_EMPTY"
+          break
+        case HTMLMediaElement.NETWORK_IDLE:
+          networkStateText = "NETWORK_IDLE"
+          break
+        case HTMLMediaElement.NETWORK_LOADING:
+          networkStateText = "NETWORK_LOADING"
+          break
+        case HTMLMediaElement.NETWORK_NO_SOURCE:
+          networkStateText = "NETWORK_NO_SOURCE"
+          break
       }
+
+      errorDetailsText += ` Network state: ${networkStateText}. URL: ${videoUrl}`
     }
 
+    // Log the current URL
+    console.error("Current video URL when error occurred:", videoUrl)
+
+    // Set the error state
+    setError(`Video error: ${errorMessage}`)
+    setErrorDetails(errorDetailsText)
     setIsLoading(false)
   }
 
   // Handle video can play
   const handleCanPlay = () => {
     console.log("Video can play event triggered for URL:", videoUrl)
+    addDebugInfo("canPlay", true)
+    clearLoadingTimeout()
     setIsLoading(false)
+    setError(null)
   }
 
   // Initial setup
@@ -310,6 +350,11 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     console.log("Initial program URL:", initialProgram?.mp4_url)
     console.log("Current time (ISO):", new Date().toISOString())
     console.log("Current time (local):", new Date().toLocaleString())
+
+    addDebugInfo("initialSetupTime", new Date().toISOString())
+    addDebugInfo("channelId", channel.id)
+    addDebugInfo("initialProgramTitle", initialProgram?.title || "None")
+    addDebugInfo("initialProgramUrl", initialProgram?.mp4_url || "None")
 
     // Force refresh to get the current program
     forceRefreshProgram()
@@ -336,12 +381,14 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     return () => {
       clearInterval(programCheckInterval)
       clearInterval(scheduleCheckInterval)
+      clearLoadingTimeout()
     }
   }, [])
 
   // Log whenever videoUrl changes
   useEffect(() => {
     console.log("Video URL state changed to:", videoUrl)
+    addDebugInfo("videoUrlChanged", videoUrl)
   }, [videoUrl])
 
   return (
@@ -396,8 +443,14 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
             onCanPlay={handleCanPlay}
             onEnded={handleVideoEnd}
             onError={handleVideoError}
-            onLoadStart={() => console.log("Video load started for URL:", videoUrl)}
-            onLoadedData={() => console.log("Video data loaded for URL:", videoUrl)}
+            onLoadStart={() => {
+              console.log("Video load started for URL:", videoUrl)
+              addDebugInfo("loadStarted", new Date().toISOString())
+            }}
+            onLoadedData={() => {
+              console.log("Video data loaded for URL:", videoUrl)
+              addDebugInfo("loadedData", new Date().toISOString())
+            }}
             crossOrigin="anonymous" // Add crossOrigin to help with CORS issues
           >
             <source src={videoUrl} type="video/mp4" />
@@ -457,8 +510,18 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         <p>Last Refresh: {lastRefreshTime.toLocaleString()}</p>
         <p>Loading: {isLoading ? "Yes" : "No"}</p>
         <p>Error: {error || "None"}</p>
-        <p>Retry Count: {retryCount}</p>
-        <p>Fallback Mode: {fallbackMode ? "Yes" : "No"}</p>
+
+        {/* Advanced Debug Info */}
+        <details className="mt-2">
+          <summary className="cursor-pointer text-gray-400">Advanced Debug Info</summary>
+          <div className="mt-2 pl-2 border-l border-gray-700">
+            {Object.entries(debugInfo).map(([key, value]) => (
+              <p key={key}>
+                {key}: {typeof value === "object" ? JSON.stringify(value) : String(value)}
+              </p>
+            ))}
+          </div>
+        </details>
       </div>
     </div>
   )

@@ -1,19 +1,12 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import Link from "next/link"
 import { supabase } from "@/lib/supabase"
 import { Button } from "@/components/ui/button"
 import { ArrowLeft, Calendar, Clock, RefreshCw, CheckCircle, XCircle, AlertTriangle } from "lucide-react"
 
 export default function MondaySchedulePage() {
-  const [targetDate, setTargetDate] = useState<string>("")
-  const [isLoading, setIsLoading] = useState(false)
-  const [isPreviewLoading, setIsPreviewLoading] = useState(false)
-  const [result, setResult] = useState<{ success: boolean; message: string } | null>(null)
-  const [previewData, setPreviewData] = useState<any[] | null>(null)
-  const [affectedPrograms, setAffectedPrograms] = useState<number | null>(null)
-
   // Get next Monday's date as default
   const getNextMonday = () => {
     const today = new Date()
@@ -26,6 +19,13 @@ export default function MondaySchedulePage() {
 
     return nextMonday.toISOString().split("T")[0]
   }
+
+  const [targetDate, setTargetDate] = useState<string>(getNextMonday())
+  const [isLoading, setIsLoading] = useState(false)
+  const [isPreviewLoading, setIsPreviewLoading] = useState(false)
+  const [result, setResult] = useState<{ success: boolean; message: string } | null>(null)
+  const [previewData, setPreviewData] = useState<any[] | null>(null)
+  const [affectedPrograms, setAffectedPrograms] = useState<number | null>(null)
 
   // Calculate UTC time (7:00 AM) for Sacramento midnight
   const getSacramentoMidnightInUTC = (dateString: string) => {
@@ -203,9 +203,13 @@ export default function MondaySchedulePage() {
     }
   }
 
+  useEffect(() => {
+    window.scrollTo(0, 0)
+  }, [])
+
   return (
-    <div className="pt-24 px-4 md:px-10 flex flex-col items-center justify-center min-h-[80vh]">
-      <div className="bg-gray-800 p-6 rounded-lg max-w-4xl w-full">
+    <div className="container mx-auto py-8 max-w-4xl">
+      <div className="bg-gray-800 p-6 rounded-lg w-full">
         <div className="flex items-center mb-6">
           <Link href="/admin" className="mr-4">
             <Button variant="ghost" size="sm">
@@ -286,7 +290,7 @@ export default function MondaySchedulePage() {
                 </p>
               </div>
 
-              <div className="space-y-4 max-h-80 overflow-y-auto">
+              <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2">
                 {previewData.map((channel, index) => (
                   <div key={index} className="border border-gray-700 rounded-md p-3">
                     <h4 className="font-medium mb-2">
