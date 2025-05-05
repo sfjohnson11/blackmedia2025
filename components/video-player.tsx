@@ -74,22 +74,15 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       setRetryCount(0)
     }
 
-    // Check if the URL is already a full URL or just a filename
+    // Process the URL
     let fullUrl
-    const originalUrl = url
 
-    // Handle all channels consistently
+    // If it's already a full URL, use it directly
     if (url.startsWith("http")) {
-      // It's already a full URL
       fullUrl = url
     } else {
-      // It's just a filename, combine with channel-specific bucket path
-      // Remove any leading slashes
-      const cleanFileName = url.replace(/^\/+/, "")
-      // Use channel-specific bucket with the centralized getFullUrl function
-      fullUrl = getFullUrl(`channel${channel.id}/${cleanFileName}`)
-      console.log(`Constructed URL for channel ${channel.id}: ${fullUrl}`)
-      addDebugInfo("constructedUrl", fullUrl)
+      // Otherwise, use getFullUrl to construct the full path
+      fullUrl = getFullUrl(url)
     }
 
     // Add a cache-busting parameter if this is a retry
@@ -100,7 +93,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
     console.log("Setting video URL to:", fullUrl)
     addDebugInfo("finalVideoUrl", fullUrl)
-    addDebugInfo("originalVideoUrl", originalUrl)
+    addDebugInfo("originalVideoUrl", url)
     addDebugInfo("retryCount", retryCount)
 
     setVideoUrl(fullUrl)
