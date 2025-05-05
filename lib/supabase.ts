@@ -141,7 +141,7 @@ export async function checkUrlExists(url: string): Promise<boolean> {
     }
 
     // For Supabase storage URLs, assume they're valid
-    if (url.includes("supabase.co/storage/v1/object")) {
+    if (url.includes("supabase.co") && url.includes("storage/v1/object")) {
       console.log(`Assuming Supabase storage URL is valid: ${url}`)
       return true
     }
@@ -206,7 +206,7 @@ export async function checkUrlExists(url: string): Promise<boolean> {
 }
 
 // Add a more robust getDirectDownloadUrl function that handles errors better
-export async function getDirectDownloadUrl(url: string | null, channelId: number): Promise<string | null> {
+export async function getDirectDownloadUrl(url: string | null, channelId: string): Promise<string | null> {
   if (!url) return null
 
   console.log(`Getting direct download URL for ${url} (Channel ID: ${channelId})`)
@@ -232,6 +232,23 @@ export async function getDirectDownloadUrl(url: string | null, channelId: number
     if (url.includes("youtube.com") || url.includes("youtu.be")) {
       console.log(`YouTube URL detected, cannot use directly: ${url}`)
       return null
+    }
+
+    // Special handling for channel 8
+    if (channelId === "8") {
+      // Extract filename from URL
+      const fileName = url.split("/").pop() || url
+
+      // Try different URL patterns for channel 8
+      const ch8UrlPatterns = [
+        `${supabaseUrl}/storage/v1/object/public/channel8/${fileName}`,
+        `${supabaseUrl}/storage/v1/object/public/channel8//${fileName}`,
+        `${supabaseUrl}/storage/v1/object/public/ch8/${fileName}`,
+        `${supabaseUrl}/storage/v1/object/public/videos/channel8/${fileName}`,
+      ]
+
+      // Return the first URL pattern (we'll try them all in the video player)
+      return ch8UrlPatterns[0]
     }
 
     // For other URLs, try to use them directly
@@ -286,7 +303,7 @@ export async function testAllVideoFormats(
   channelId: string,
   fileName: string,
 ): Promise<Array<{ url: string; works: boolean }>> {
-  const baseUrl = "https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public"
+  const baseUrl = supabaseUrl + "/storage/v1/object/public"
 
   const urlFormats = [
     `${baseUrl}/channel${channelId}/${fileName}`,
