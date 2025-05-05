@@ -59,13 +59,12 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     }
   }
 
-  // Apply CORS proxy to URL if needed
-  const applyCorsProxy = (url: string): string => {
-    if (!url) return ""
+  // Remove CORS proxy to URL if needed
+  // Disable proxy logic – return original URL directly
+const applyCorsProxy = (url: string): string => {
+  return url
+}
 
-    // Use our own CORS proxy API route
-    return `/api/cors-proxy?url=${encodeURIComponent(url)}`
-  }
 
   // Ensure URL is absolute
   const ensureAbsoluteUrl = (url: string): string => {
@@ -118,36 +117,13 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       return
     }
 
-    // Determine video type
-    const type = getVideoTypeFromUrl(fullUrl)
-    setVideoType(type)
+    // Determine video type (just for logging)
+const type = getVideoTypeFromUrl(fullUrl)
+setVideoType(type)
 
-    // Apply appropriate fallback strategy
-    let finalUrl = fullUrl
+// Use the clean Supabase URL directly — no fallback logic
+const finalUrl = fullUrl
 
-    if (fallbackMode === "proxy") {
-      finalUrl = applyCorsProxy(fullUrl)
-      console.log("Using CORS proxy, new URL:", finalUrl)
-    } else if (fallbackMode === "iframe") {
-      // For iframe mode, we'll just store the original URL
-      // and use it in the iframe src
-      setUseIframe(true)
-      setIframeKey((prev) => prev + 1) // Force iframe refresh
-    } else if (fallbackMode === "embed") {
-      // For embed mode, we'll use a special embed URL format
-      // This is useful for services that provide embed URLs
-      if (fullUrl.includes("youtube.com") || fullUrl.includes("youtu.be")) {
-        // Convert YouTube URLs to embed format
-        const videoId = fullUrl.includes("youtu.be")
-          ? fullUrl.split("/").pop()
-          : new URLSearchParams(new URL(fullUrl).search).get("v")
-        if (videoId) {
-          finalUrl = `https://www.youtube.com/embed/${videoId}`
-          setUseIframe(true)
-          setIframeKey((prev) => prev + 1)
-        }
-      }
-    } else {
       // Direct mode - use the URL as is
       setUseIframe(false)
     }
