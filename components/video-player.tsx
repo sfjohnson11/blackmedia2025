@@ -86,121 +86,78 @@ const applyCorsProxy = (url: string): string => {
 
   // Load video with improved validation and error handling
   const loadVideo = (url: string, forceRetry = false) => {
-    console.log("loadVideo called with URL:", url)
-    addDebugInfo("loadVideoUrl", url)
-    addDebugInfo("channelId", channel.id)
-    addDebugInfo("programTitle", currentProgram?.title || "None")
-    addDebugInfo("fallbackMode", fallbackMode)
+  console.log("loadVideo called with URL:", url)
+  addDebugInfo("loadVideoUrl", url)
+  addDebugInfo("channelId", channel.id)
+  addDebugInfo("programTitle", currentProgram?.title || "None")
 
-    clearLoadingTimeout()
+  clearLoadingTimeout()
 
-    if (!url) {
-      console.error("ERROR: Empty URL passed to loadVideo")
-      setError("No video URL available")
-      setIsLoading(false)
-      return
-    }
-
-    // Reset retry count if this is a new URL or forced retry
-    if (forceRetry || url !== videoUrl) {
-      setRetryCount(0)
-    }
-
-    // Ensure we have an absolute URL
-    const fullUrl = ensureAbsoluteUrl(url)
-
-    // Validate the URL
-    if (!isValidUrl(fullUrl)) {
-      console.error("Invalid URL:", fullUrl)
-      setError(`Invalid URL format: ${fullUrl}`)
-      setIsLoading(false)
-      return
-    }
-
-    // Determine video type (just for logging)
-const type = getVideoTypeFromUrl(fullUrl)
-setVideoType(type)
-
-// Use the clean Supabase URL directly — no fallback logic
-const finalUrl = fullUrl
-
-      // Direct mode - use the URL as is
-      setUseIframe(false)
-    }
-
-    console.log(`Setting video URL to: ${finalUrl} (type: ${type}, mode: ${fallbackMode})`)
-    addDebugInfo("finalVideoUrl", finalUrl)
-    addDebugInfo("originalVideoUrl", url)
-    addDebugInfo("retryCount", retryCount)
-    addDebugInfo("videoType", type)
-
-    setVideoUrl(finalUrl)
-    setIsLoading(true)
-    setError(null)
-    setErrorDetails(null)
-
-    // Set a timeout to catch silent failures
-    const timeout = setTimeout(() => {
-      console.log("Video loading timeout reached")
-      addDebugInfo("loadingTimeout", true)
-
-      if (isLoading) {
-        console.error("Video failed to load within timeout period")
-
-        // If we haven't reached max retries, try the next fallback mode
-        if (retryCount < maxRetries) {
-          console.log(`Retry ${retryCount + 1}/${maxRetries} after timeout`)
-          setRetryCount((prev) => prev + 1)
-
-          // Try a different approach based on retry count
-          if (fallbackMode === "direct") {
-            // First retry: Try with CORS proxy
-            setFallbackMode("proxy")
-            loadVideo(url, false)
-          } else if (fallbackMode === "proxy") {
-            // Second retry: Try with iframe
-            setFallbackMode("iframe")
-            loadVideo(url, false)
-          } else if (fallbackMode === "iframe") {
-            // Third retry: Try with embed format if applicable
-            setFallbackMode("embed")
-            loadVideo(url, false)
-          } else {
-            // If all fallbacks failed, go back to direct but with a different URL format
-            setFallbackMode("direct")
-
-            // Try adding a cache buster
-            const cacheBuster = `?cb=${Date.now()}`
-            const urlWithCache = url.includes("?") ? `${url}&cb=${Date.now()}` : `${url}${cacheBuster}`
-
-            loadVideo(urlWithCache, true)
-          }
-        } else {
-          setError("Video failed to load after multiple attempts")
-          setErrorDetails(`URL: ${fullUrl} | Type: ${type} | Mode: ${fallbackMode}`)
-          setIsLoading(false)
-        }
-      }
-    }, 15000) // 15 second timeout
-
-    setLoadingTimeout(timeout)
+  if (!url) {
+    console.error("ERROR: Empty URL passed to loadVideo")
+    setError("No video URL available")
+    setIsLoading(false)
+    return
   }
 
-  // Update current time every second
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setCurrentTime(new Date())
-    }, 1000)
+  // Reset retry count if this is a new URL or forced retry
+  if (forceRetry || url !== videoUrl) {
+    setRetryCount(0)
+  }
 
-    return () => clearInterval(timer)
-  }, [])
-
-  // Cleanup loading timeout on unmount
-  useEffect(() => {
-    return () => {
-      clearLoadingTimeout()
+  let fullUrl: string
+  if (url.startsWith("http")) {
+    fullUrl = url
+  } else {
+    try {
+      fullUrl = getFullUrl(url)
+    } catch (err) {
+      console.error("Error constructing full URL:", err)
+      setError(`Invalid URL format: ${url}`)
+      setIsLoading(false)
+      return
     }
-  }, [])
+  }
+
+  // Optionally log video type for future expansion
+  const type = getVideoTypeFromUrl(fullUrl)
+  setVideoType(type)
+
+  // Add a cache-busting parameter if this is a retry
+  if (retryCount > 0) {
+    const separator = fullUrl.includes("?") ? "&" : "?"
+    fullUrl = `${fullUrl}${separator}retry=${Date.now()}`
+  }
+
+  console.log("Setting video URL to:", fullUrl)
+  addDebugInfo("finalVideoUrl", fullUrl)
+  addDebugInfo("retryCount", retryCount)
+  addDebugInfo("videoType", type)
+
+  setVideoUrl(fullUrl)
+  setIsLoading(true)
+  setError(null)
+  setErrorDetails(null)
+
+  // Set a timeout to catch silent failures
+  const timeout = setTimeout(() => {
+    console.log("Video loading timeout reached")
+    if (isLoading) {
+      console.error("Video failed to load within timeout period")
+      if (retryCount < maxRetries) {
+        console.log(`Retry ${retryCount + 1}/${maxRetries}`)
+        setRetryCount(prev => prev + 1)
+        loadVideo(url, false)
+      } else {
+        setError("Video failed to load (timeout)")
+        setErrorDetails(`URL: ${fullUrl}`)
+        setIsLoading(false)
+      }
+    }
+  }, 15000)
+
+  setLoadingTimeout(timeout)
+}
 
   // Format current time for display
   const formattedTime = currentTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
