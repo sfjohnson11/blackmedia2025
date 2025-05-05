@@ -25,20 +25,6 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     router.back()
   }
 
-  // Fix URL - ONLY fix double slashes, nothing else
-  const fixUrl = (url: string): string => {
-    if (!url) return ""
-
-    // First preserve the protocol (http:// or https://)
-    const parts = url.split("://")
-    if (parts.length <= 1) return url
-
-    const protocol = parts[0] + "://"
-    const path = parts[1].replace(/\/+/g, "/")
-
-    return protocol + path
-  }
-
   // Check for program updates
   const checkForProgramUpdates = async () => {
     try {
@@ -46,8 +32,9 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       const { programs } = await getUpcomingPrograms(channel.id)
 
       if (program && (!currentProgram || program.id !== currentProgram.id)) {
+        console.log("New program detected:", program.title)
         setCurrentProgram(program)
-        loadVideo(program)
+        playVideo(program.mp4_url)
       }
 
       setUpcomingPrograms(programs)
@@ -56,20 +43,18 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     }
   }
 
-  // Load video
-  const loadVideo = (program: any) => {
-    if (!program || !program.mp4_url || !videoRef.current) return
+  // Play video with direct URL
+  const playVideo = (url: string) => {
+    if (!videoRef.current || !url) return
 
     setIsLoading(true)
     setError(null)
 
     try {
-      // Get the URL and fix any double slashes
-      const fixedUrl = fixUrl(program.mp4_url)
-      console.log("Loading video with URL:", fixedUrl)
+      console.log("Playing video with URL:", url)
 
-      // Set the video source
-      videoRef.current.src = fixedUrl
+      // Set the video source directly
+      videoRef.current.src = url
       videoRef.current.load()
 
       // Play the video
@@ -90,21 +75,22 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     }
   }
 
-  // Handle video error
-  const handleVideoError = () => {
-    setError("Error loading video. Please try again.")
-    setIsLoading(false)
-  }
-
   // Handle video end
   const handleVideoEnd = () => {
+    console.log("Video ended, checking for next program")
     checkForProgramUpdates()
   }
 
   // Initial setup
   useEffect(() => {
-    if (initialProgram) {
-      loadVideo(initialProgram)
+    console.log("Initial setup for channel:", channel.id)
+
+    if (initialProgram && initialProgram.mp4_url) {
+      console.log("Initial program:", initialProgram.title)
+      playVideo(initialProgram.mp4_url)
+    } else {
+      console.log("No initial program, checking for current program")
+      checkForProgramUpdates()
     }
 
     // Check for program updates every minute
@@ -139,7 +125,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
           <div className="text-center p-4">
             <p className="text-red-500 mb-4">{error}</p>
             <button
-              onClick={() => loadVideo(currentProgram)}
+              onClick={() => currentProgram && playVideo(currentProgram.mp4_url)}
               className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition-colors"
             >
               Try Again
@@ -155,7 +141,10 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
           className="w-full h-full"
           controls
           playsInline
-          onError={handleVideoError}
+          onError={() => {
+            setError("Error loading video. Please try again.")
+            setIsLoading(false)
+          }}
           onEnded={handleVideoEnd}
           onCanPlay={() => setIsLoading(false)}
         >
@@ -173,15 +162,18 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         </div>
       )}
 
-      {/* Debug info - only visible in development */}
-      {process.env.NODE_ENV === "development" && currentProgram && (
-        <div className="bg-gray-900 p-2 text-xs text-gray-400">
-          <p>Channel ID: {channel.id}</p>
-          <p>Program ID: {currentProgram.id}</p>
-          <p>Original URL: {currentProgram.mp4_url}</p>
-          <p>Fixed URL: {fixUrl(currentProgram.mp4_url)}</p>
-        </div>
-      )}
+      {/* Debug info */}
+      <div className="bg-gray-900 p-2 text-xs text-gray-400">
+        <p>Channel ID: {channel.id}</p>
+        <p>Current Program: {currentProgram?.title || "None"}</p>
+        <p>URL: {currentProgram?.mp4_url || "None"}</p>
+        <button
+          onClick={checkForProgramUpdates}
+          className="bg-gray-800 text-gray-300 px-2 py-1 rounded text-xs mt-1 hover:bg-gray-700"
+        >
+          Check for Updates
+        </button>
+      </div>
     </div>
   )
 }

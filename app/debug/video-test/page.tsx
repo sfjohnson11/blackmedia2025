@@ -1,170 +1,228 @@
 "use client"
 
-import { useState } from "react"
-import { Button } from "@/components/ui/button"
-import Link from "next/link"
-import { ArrowLeft, RefreshCw, Play, AlertTriangle } from "lucide-react"
-import { testAllVideoFormats } from "@/lib/supabase"
+import { useState, useEffect } from "react"
+import { supabase } from "@/lib/supabase"
 
 export default function VideoTestPage() {
-  const [channelId, setChannelId] = useState("")
-  const [fileName, setFileName] = useState("")
+  const [channels, setChannels] = useState<any[]>([])
+  const [selectedChannel, setSelectedChannel] = useState<string>("")
+  const [programs, setPrograms] = useState<any[]>([])
+  const [selectedProgram, setSelectedProgram] = useState<string>("")
+  const [videoUrl, setVideoUrl] = useState<string>("")
+  const [testResults, setTestResults] = useState<any>(null)
   const [isLoading, setIsLoading] = useState(false)
-  const [results, setResults] = useState<Array<{ url: string; works: boolean }>>([])
-  const [selectedUrl, setSelectedUrl] = useState<string>("")
-  const [videoError, setVideoError] = useState<string>("")
 
-  const handleTest = async () => {
-    if (!channelId || !fileName) return
+  // Fetch channels
+  useEffect(() => {
+    async function fetchChannels() {
+      const { data, error } = await supabase.from("channels").select("*")
+      if (error) {
+        console.error("Error fetching channels:", error)
+        return
+      }
+      setChannels(data || [])
+    }
+    fetchChannels()
+  }, [])
+
+  // Fetch programs for selected channel
+  useEffect(() => {
+    if (!selectedChannel) {
+      setPrograms([])
+      return
+    }
+
+    async function fetchPrograms() {
+      const { data, error } = await supabase
+        .from("programs")
+        .select("*")
+        .eq("channel_id", selectedChannel)
+        .order("start_time", { ascending: false })
+        .limit(20)
+
+      if (error) {
+        console.error("Error fetching programs:", error)
+        return
+      }
+      setPrograms(data || [])
+    }
+    fetchPrograms()
+  }, [selectedChannel])
+
+  // Update video URL when program is selected
+  useEffect(() => {
+    if (!selectedProgram) {
+      setVideoUrl("")
+      return
+    }
+
+    const program = programs.find((p) => p.id.toString() === selectedProgram)
+    if (program && program.mp4_url) {
+      setVideoUrl(program.mp4_url)
+    } else {
+      setVideoUrl("")
+    }
+  }, [selectedProgram, programs])
+
+  // Test video URL
+  const testVideoUrl = async () => {
+    if (!videoUrl) return
 
     setIsLoading(true)
-    try {
-      const testResults = await testAllVideoFormats(channelId, fileName)
-      setResults(testResults)
+    setTestResults(null)
 
-      // If we found a working URL, select it
-      const workingUrl = testResults.find((r) => r.works)
-      if (workingUrl) {
-        setSelectedUrl(workingUrl.url)
-      } else {
-        setSelectedUrl("")
-      }
+    try {
+      // Test with HEAD request
+      const headResult = await fetch(videoUrl, { method: "HEAD" })
+        .then((response) => ({
+          ok: response.ok,
+          status: response.status,
+          statusText: response.statusText,
+          headers: Object.fromEntries(response.headers.entries()),
+        }))
+        .catch((error) => ({ error: error.message }))
+
+      setTestResults({
+        url: videoUrl,
+        headResult,
+      })
     } catch (error) {
-      console.error("Error testing video formats:", error)
+      setTestResults({
+        url: videoUrl,
+        error: error instanceof Error ? error.message : String(error),
+      })
     } finally {
       setIsLoading(false)
     }
   }
 
+  // Open URL directly
+  const openUrlDirectly = () => {
+    if (videoUrl) {
+      window.open(videoUrl, "_blank")
+    }
+  }
+
   return (
-    <div className="pt-24 px-4 md:px-10 flex flex-col items-center justify-center min-h-[80vh]">
-      <div className="bg-gray-800 p-6 rounded-lg max-w-4xl w-full">
-        <div className="flex items-center mb-6">
-          <Link href="/debug" className="mr-4">
-            <Button variant="ghost" size="sm">
-              <ArrowLeft className="h-4 w-4 mr-2" />
-              Back to Debug
-            </Button>
-          </Link>
-          <h1 className="text-2xl font-bold">Supabase Video URL Tester</h1>
-        </div>
+    <div className="container mx-auto p-4">
+      <h1 className="text-2xl font-bold mb-4">Video URL Tester</h1>
 
-        <div className="mb-6">
-          <p className="mb-4">
-            This tool tests different Supabase URL formats to find which one works for your videos.
-          </p>
+      <div className="mb-4">
+        <label className="block text-sm font-medium mb-1">Select Channel</label>
+        <select
+          value={selectedChannel}
+          onChange={(e) => setSelectedChannel(e.target.value)}
+          className="w-full p-2 border rounded"
+        >
+          <option value="">Select a channel</option>
+          {channels.map((channel) => (
+            <option key={channel.id} value={channel.id}>
+              {channel.name} (ID: {channel.id})
+            </option>
+          ))}
+        </select>
+      </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-            <div>
-              <label htmlFor="channelId" className="block text-sm font-medium mb-1">
-                Channel ID:
-              </label>
-              <input
-                id="channelId"
-                type="text"
-                value={channelId}
-                onChange={(e) => setChannelId(e.target.value)}
-                placeholder="Enter channel ID (e.g. 1)"
-                className="w-full p-2 bg-gray-900 border border-gray-700 rounded-md"
-              />
-            </div>
-            <div>
-              <label htmlFor="fileName" className="block text-sm font-medium mb-1">
-                MP4 Filename:
-              </label>
-              <input
-                id="fileName"
-                type="text"
-                value={fileName}
-                onChange={(e) => setFileName(e.target.value)}
-                placeholder="Enter filename (e.g. video.mp4)"
-                className="w-full p-2 bg-gray-900 border border-gray-700 rounded-md"
-              />
-            </div>
+      <div className="mb-4">
+        <label className="block text-sm font-medium mb-1">Select Program</label>
+        <select
+          value={selectedProgram}
+          onChange={(e) => setSelectedProgram(e.target.value)}
+          className="w-full p-2 border rounded"
+          disabled={!selectedChannel}
+        >
+          <option value="">Select a program</option>
+          {programs.map((program) => (
+            <option key={program.id} value={program.id}>
+              {program.title} (ID: {program.id})
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="mb-4">
+        <label className="block text-sm font-medium mb-1">Video URL</label>
+        <input
+          type="text"
+          value={videoUrl}
+          onChange={(e) => setVideoUrl(e.target.value)}
+          className="w-full p-2 border rounded"
+        />
+      </div>
+
+      <div className="flex space-x-2 mb-6">
+        <button
+          onClick={testVideoUrl}
+          disabled={!videoUrl || isLoading}
+          className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50"
+        >
+          {isLoading ? "Testing..." : "Test URL"}
+        </button>
+
+        <button
+          onClick={openUrlDirectly}
+          disabled={!videoUrl}
+          className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 disabled:opacity-50"
+        >
+          Open Directly
+        </button>
+      </div>
+
+      {testResults && (
+        <div className="mt-4 border rounded p-4">
+          <h2 className="text-xl font-bold mb-2">Test Results</h2>
+
+          <div className="mb-2">
+            <strong>URL:</strong> {testResults.url}
           </div>
 
-          <Button
-            onClick={handleTest}
-            disabled={isLoading || !channelId || !fileName}
-            className="bg-blue-600 hover:bg-blue-700 w-full"
-          >
-            {isLoading ? (
-              <>
-                <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                Testing URL Formats...
-              </>
-            ) : (
-              "Test Supabase URL Formats"
-            )}
-          </Button>
-        </div>
-
-        {results.length > 0 && (
-          <div className="mt-6">
-            <h2 className="text-xl font-semibold mb-4">Test Results</h2>
-            <div className="bg-gray-900 p-4 rounded-lg mb-6">
-              <div className="grid gap-2">
-                {results.map((result, index) => (
-                  <div
-                    key={index}
-                    className={`p-3 rounded-md ${result.works ? "bg-green-900/30" : "bg-red-900/30"} flex justify-between items-start`}
-                  >
-                    <div className="flex-1">
-                      <div className="flex items-center">
-                        <div
-                          className={`w-3 h-3 rounded-full mr-2 ${result.works ? "bg-green-500" : "bg-red-500"}`}
-                        ></div>
-                        <span className="text-sm font-medium">Format {index + 1}</span>
-                      </div>
-                      <p className="text-xs break-all mt-1">{result.url}</p>
-                    </div>
-                    {result.works && (
-                      <Button
-                        size="sm"
-                        onClick={() => setSelectedUrl(result.url)}
-                        className="ml-2 bg-green-600 hover:bg-green-700"
-                      >
-                        <Play className="h-3 w-3 mr-1" /> Play
-                      </Button>
-                    )}
-                  </div>
-                ))}
-              </div>
+          {testResults.error ? (
+            <div className="text-red-500">
+              <strong>Error:</strong> {testResults.error}
             </div>
+          ) : (
+            <>
+              <div className="mb-2">
+                <strong>Status:</strong> {testResults.headResult.status} {testResults.headResult.statusText}
+              </div>
 
-            {selectedUrl && (
-              <div className="mt-6">
-                <h2 className="text-xl font-semibold mb-4">Video Preview</h2>
-                <div className="aspect-video bg-black rounded-md overflow-hidden relative">
-                  <video
-                    src={selectedUrl}
-                    controls
-                    className="w-full h-full"
-                    onError={(e) => setVideoError("Error playing this video. It may not be accessible in the browser.")}
-                    onPlay={() => setVideoError("")}
-                  />
-                  {videoError && (
-                    <div className="absolute inset-0 bg-black/80 flex items-center justify-center">
-                      <div className="text-center p-4">
-                        <AlertTriangle className="h-10 w-10 text-yellow-500 mx-auto mb-2" />
-                        <p>{videoError}</p>
-                      </div>
-                    </div>
-                  )}
+              <div className="mb-2">
+                <strong>Accessible:</strong> {testResults.headResult.ok ? "Yes" : "No"}
+              </div>
+
+              {testResults.headResult.headers && (
+                <div>
+                  <strong>Headers:</strong>
+                  <pre className="bg-gray-100 p-2 rounded mt-1 text-xs overflow-auto">
+                    {JSON.stringify(testResults.headResult.headers, null, 2)}
+                  </pre>
                 </div>
-                <p className="text-xs text-gray-400 mt-2 break-all">URL: {selectedUrl}</p>
-              </div>
-            )}
+              )}
+            </>
+          )}
 
-            <div className="mt-6 border-t border-gray-700 pt-6">
-              <h3 className="font-semibold mb-2">Troubleshooting Tips</h3>
-              <ul className="text-sm text-gray-300 space-y-1 list-disc pl-5">
-                <li>Make sure the file exists in your Supabase storage</li>
-                <li>Check that the bucket and file permissions are set to public</li>
-                <li>Verify the channel ID matches the storage bucket structure</li>
-                <li>Try using the exact filename from your database's mp4_url field</li>
-              </ul>
-            </div>
+          <div className="mt-4">
+            <button onClick={openUrlDirectly} className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">
+              Open URL in Browser
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="mt-8">
+        <h2 className="text-xl font-bold mb-2">Video Preview</h2>
+        {videoUrl ? (
+          <video
+            src={videoUrl}
+            controls
+            className="w-full max-h-96 bg-black"
+            onError={() => console.error("Error loading video preview")}
+          >
+            Your browser does not support the video tag.
+          </video>
+        ) : (
+          <div className="bg-gray-200 w-full h-48 flex items-center justify-center text-gray-500">
+            Select a program to preview video
           </div>
         )}
       </div>
