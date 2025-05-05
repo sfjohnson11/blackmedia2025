@@ -15,40 +15,10 @@ export function getFullUrl(path: string): string {
 }
 
 // Get the current program for a channel
-export async function getCurrentProgram(channelId: string) {
-  // Check if this is a live channel
-  if (isLiveChannel(channelId)) {
-    try {
-      // Get the live stream URL
-      const liveUrl = await getLiveStreamUrl(channelId)
-
-      if (!liveUrl) {
-        console.error("No live stream URL found for channel:", channelId)
-        return { program: null, error: "No live stream URL found" }
-      }
-
-      // Create a virtual "program" for the live stream
-      const liveProgram = {
-        id: -1, // Use a negative ID to indicate it's a live program
-        channel_id: channelId,
-        title: "LIVE: Channel " + channelId,
-        mp4_url: liveUrl,
-        start_time: new Date().toISOString(),
-        duration: 86400, // 24 hours in seconds
-        is_live: true,
-      }
-
-      return { program: liveProgram, error: null }
-    } catch (err) {
-      console.error("Error handling live channel:", err)
-      return { program: null, error: err }
-    }
-  }
-
-  // For non-live channels, use the existing logic
-  const now = new Date().toISOString()
-
+export const getCurrentProgram = async (channelId: string) => {
   try {
+    const now = new Date().toISOString()
+
     const { data, error } = await supabase
       .from("programs")
       .select("*")
@@ -99,11 +69,10 @@ export async function forceRefreshAllData() {
   try {
     // Call the refresh-cache API route
     const response = await fetch("/api/refresh-cache", {
-      method: "POST",
+      method: "GET",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ force: true }),
     })
 
     if (!response.ok) {
@@ -120,9 +89,6 @@ export async function forceRefreshAllData() {
 // Save watch progress for a program
 export async function saveWatchProgress(programId: number, position: number) {
   try {
-    // Only save if we have a valid position
-    if (position <= 0) return { success: false, error: "Invalid position" }
-
     // Store in localStorage for now
     localStorage.setItem(`watch_progress_${programId}`, position.toString())
     return { success: true, error: null }
@@ -133,14 +99,15 @@ export async function saveWatchProgress(programId: number, position: number) {
 }
 
 // Get watch progress for a program
-export async function getWatchProgress(programId: number): Promise<number> {
+export async function getWatchProgress(): Promise<{
+  [key: number]: { timestamp: number; progress: number; duration: number }
+}> {
   try {
-    // Get from localStorage
-    const progress = localStorage.getItem(`watch_progress_${programId}`)
-    return progress ? Number.parseFloat(progress) : 0
+    const storedProgress = localStorage.getItem("watchProgress")
+    return storedProgress ? JSON.parse(storedProgress) : {}
   } catch (err) {
     console.error("Error getting watch progress:", err)
-    return 0
+    return {}
   }
 }
 
@@ -150,39 +117,10 @@ export function shouldDisableAutoRefresh(duration: number): boolean {
   return duration > 600
 }
 
-// Add the missing exports after the existing code
-
 // Add isLiveChannel function
 export const isLiveChannel = (channelId: string): boolean => {
   // Only Channel 21 is live
   return channelId === "21"
-}
-
-// Replace the current getLiveStreamUrl function with this version that queries the database
-
-export const getLiveStreamUrl = async (channelId: string): Promise<string | null> => {
-  // Only Channel 21 is live
-  if (channelId === "21") {
-    try {
-      // Query the database for the live stream URL
-      const { data, error } = await supabase
-        .from("live_streams")
-        .select("stream_url")
-        .eq("channel_id", channelId)
-        .single()
-
-      if (error || !data) {
-        console.error("Error fetching live stream URL:", error)
-        return null
-      }
-
-      return data.stream_url
-    } catch (err) {
-      console.error("Error in getLiveStreamUrl:", err)
-      return null
-    }
-  }
-  return null
 }
 
 // Add createTables function

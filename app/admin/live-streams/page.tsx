@@ -4,8 +4,10 @@ import type React from "react"
 
 import { useState, useEffect } from "react"
 import { supabase } from "@/lib/supabase"
-import { Loader2, Save, AlertTriangle } from "lucide-react"
+import { Loader2, Save, AlertTriangle, ArrowLeft } from "lucide-react"
 import Link from "next/link"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 
 export default function LiveStreamsAdmin() {
   const [loading, setLoading] = useState(true)
@@ -127,114 +129,126 @@ export default function LiveStreamsAdmin() {
   }
 
   return (
-    <div className="p-8 max-w-4xl mx-auto">
+    <div className="p-4">
       <div className="flex justify-between items-center mb-8">
         <h1 className="text-3xl font-bold">Live Stream Management</h1>
-        <Link href="/" className="text-red-500 hover:underline">
-          Back to Home
+        <Link href="/admin">
+          <Button variant="outline" className="flex items-center gap-2">
+            <ArrowLeft className="h-4 w-4" />
+            Back to Admin
+          </Button>
         </Link>
       </div>
 
       {error && (
-        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-6 flex items-start">
+        <div className="bg-red-900/30 border border-red-700 text-red-400 px-4 py-3 rounded mb-6 flex items-start">
           <AlertTriangle className="h-5 w-5 mr-2 mt-0.5" />
           <span>{error}</span>
         </div>
       )}
 
       {success && (
-        <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded mb-6">{success}</div>
+        <div className="bg-green-900/30 border border-green-700 text-green-400 px-4 py-3 rounded mb-6">{success}</div>
       )}
 
-      <div className="bg-gray-800 p-6 rounded-lg mb-8">
-        <h2 className="text-xl font-semibold mb-4">Add/Update Live Stream</h2>
+      <Card className="mb-8">
+        <CardHeader>
+          <CardTitle>Add/Update Live Stream</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="mb-4">
+            <label className="block text-sm font-medium mb-2">Channel</label>
+            <select
+              value={selectedChannelId}
+              onChange={handleChannelChange}
+              className="w-full p-2 bg-gray-700 border border-gray-600 rounded-md"
+            >
+              {channels.map((channel) => (
+                <option key={channel.id} value={channel.id}>
+                  Channel {channel.id}: {channel.name}
+                </option>
+              ))}
+            </select>
+          </div>
 
-        <div className="mb-4">
-          <label className="block text-sm font-medium mb-2">Channel</label>
-          <select
-            value={selectedChannelId}
-            onChange={handleChannelChange}
-            className="w-full p-2 bg-gray-700 border border-gray-600 rounded-md"
+          <div className="mb-6">
+            <label className="block text-sm font-medium mb-2">Stream URL (HLS .m3u8 format recommended)</label>
+            <input
+              type="text"
+              value={newStreamUrl}
+              onChange={(e) => setNewStreamUrl(e.target.value)}
+              placeholder="https://example.com/stream.m3u8"
+              className="w-full p-2 bg-gray-700 border border-gray-600 rounded-md"
+            />
+            <p className="text-xs text-gray-400 mt-1">
+              For testing, you can use: https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8
+            </p>
+          </div>
+
+          <Button
+            onClick={handleSave}
+            disabled={saving}
+            className="flex items-center bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md"
           >
-            {channels.map((channel) => (
-              <option key={channel.id} value={channel.id}>
-                Channel {channel.id}: {channel.name}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="mb-6">
-          <label className="block text-sm font-medium mb-2">Stream URL (HLS .m3u8 format recommended)</label>
-          <input
-            type="text"
-            value={newStreamUrl}
-            onChange={(e) => setNewStreamUrl(e.target.value)}
-            placeholder="https://example.com/stream.m3u8"
-            className="w-full p-2 bg-gray-700 border border-gray-600 rounded-md"
-          />
-          <p className="text-xs text-gray-400 mt-1">
-            For testing, you can use: https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8
-          </p>
-        </div>
-
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="flex items-center bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md"
-        >
-          {saving ? (
-            <>
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              Saving...
-            </>
-          ) : (
-            <>
-              <Save className="h-4 w-4 mr-2" />
-              Save Stream URL
-            </>
-          )}
-        </button>
-      </div>
+            {saving ? (
+              <>
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                Saving...
+              </>
+            ) : (
+              <>
+                <Save className="h-4 w-4 mr-2" />
+                Save Stream URL
+              </>
+            )}
+          </Button>
+        </CardContent>
+      </Card>
 
       {liveStreams.length > 0 ? (
-        <div>
-          <h2 className="text-xl font-semibold mb-4">Current Live Streams</h2>
-          <div className="bg-gray-800 rounded-lg overflow-hidden">
-            <table className="min-w-full">
-              <thead className="bg-gray-900">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
-                    Channel
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
-                    Stream URL
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
-                    Last Updated
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-700">
-                {liveStreams.map((stream) => (
-                  <tr key={stream.id}>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      {channels.find((c) => c.id === stream.channel_id)?.name || `Channel ${stream.channel_id}`}
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="truncate max-w-xs">{stream.stream_url}</div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">{new Date(stream.updated_at).toLocaleString()}</td>
+        <Card>
+          <CardHeader>
+            <CardTitle>Current Live Streams</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="min-w-full">
+                <thead className="bg-gray-900">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
+                      Channel
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
+                      Stream URL
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
+                      Last Updated
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+                </thead>
+                <tbody className="divide-y divide-gray-700">
+                  {liveStreams.map((stream) => (
+                    <tr key={stream.id}>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        {channels.find((c) => c.id === stream.channel_id)?.name || `Channel ${stream.channel_id}`}
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="truncate max-w-xs">{stream.stream_url}</div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">{new Date(stream.updated_at).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
       ) : (
-        <div className="bg-gray-800 p-6 rounded-lg text-center">
-          <p>No live streams configured yet. Add your first stream above.</p>
-        </div>
+        <Card>
+          <CardContent className="p-6 text-center">
+            <p>No live streams configured yet. Add your first stream above.</p>
+          </CardContent>
+        </Card>
       )}
     </div>
   )
