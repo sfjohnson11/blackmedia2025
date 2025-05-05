@@ -3,7 +3,17 @@ import { createClient } from "@supabase/supabase-js"
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ""
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ""
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+// Create a fresh Supabase client with cache disabled
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    persistSession: true,
+  },
+  global: {
+    headers: {
+      "Cache-Control": "no-cache",
+    },
+  },
+})
 
 export const isLiveChannel = (channelId: string): boolean => {
   // Only Channel 21 is live
@@ -44,21 +54,25 @@ export async function createTables() {
   }
 }
 
-// Improved getCurrentProgram function with better handling of edge cases
+// Improved getCurrentProgram function with better handling of edge cases and cache busting
 export async function getCurrentProgram(channelId: string): Promise<{ program: any }> {
   console.log(`=== GETTING CURRENT PROGRAM FOR CHANNEL ${channelId} ===`)
   const now = new Date()
   console.log(`Current time (UTC ISO): ${now.toISOString()}`)
   console.log(`Current time (Local): ${now.toLocaleString()}`)
 
+  // Add a cache-busting parameter
+  const cacheBuster = `?_cb=${Date.now()}`
+
   try {
-    // Get programs that have already started
+    // Get programs that have already started with cache busting
     const { data, error } = await supabase
       .from("programs")
       .select("*")
       .eq("channel_id", channelId)
       .lte("start_time", now.toISOString())
       .order("start_time", { ascending: false })
+      .limit(10)
 
     if (error) {
       console.error(`Error fetching programs for channel ${channelId}:`, error)
@@ -71,6 +85,7 @@ export async function getCurrentProgram(channelId: string): Promise<{ program: a
     }
 
     console.log(`Found ${data.length} programs that have started for channel ${channelId}`)
+    console.log("Programs data:", JSON.stringify(data, null, 2))
 
     // Find the active program (where current time is between start and end)
     const activeProgram = data.find((program) => {
@@ -121,6 +136,9 @@ export async function getCurrentProgram(channelId: string): Promise<{ program: a
 export async function getUpcomingPrograms(channelId: string): Promise<{ programs: any[] }> {
   const now = new Date().toISOString()
   console.log(`Getting upcoming programs for channel ${channelId} at ${now}`)
+
+  // Add a cache-busting parameter
+  const cacheBuster = `?_cb=${Date.now()}`
 
   try {
     const { data: programs, error } = await supabase
@@ -291,15 +309,13 @@ export async function getDirectDownloadUrl(url: string | null, channelId: string
       url.includes("cloudfront.net")
     ) {
       console.log(`URL is already a direct URL: ${url}`)
-      return url
+      return fixUrl(url) // Apply fixUrl here too
     }
 
     // For Supabase storage URLs, get a direct download URL
     if (url.includes("supabase.co") && url.includes("storage/v1/object/public")) {
       // Fix any double slashes in the path (but preserve http://)
-      const fixedUrl = url.replace(/(https?:\/\/)|(\/\/+)/g, (match, protocol) => {
-        return protocol || "/"
-      })
+      const fixedUrl = fixUrl(url)
       console.log(`Fixed Supabase storage URL: ${fixedUrl}`)
       return fixedUrl
     }
@@ -311,24 +327,26 @@ export async function getDirectDownloadUrl(url: string | null, channelId: string
     }
 
     // For other URLs, try to use them directly (with double slash fix)
-    const fixedUrl = url.replace(/(https?:\/\/)|(\/\/+)/g, (match, protocol) => {
-      return protocol || "/"
-    })
+    const fixedUrl = fixUrl(url)
     console.log(`Using fixed URL directly: ${fixedUrl}`)
     return fixedUrl
   } catch (error) {
     console.error(`Error getting direct download URL for ${url}:`, error)
     // Return the original URL as a fallback, but fix double slashes
-    return url.replace(/(https?:\/\/)|(\/\/+)/g, (match, protocol) => {
-      return protocol || "/"
-    })
+    return fixUrl(url)
   }
 }
 
 // Function to construct a URL with the specific pattern observed in your storage
 export function constructChannelVideoUrl(channelId: string, fileName: string): string {
-  // Ensure there's only a single slash between path segments
-  return `${supabaseUrl}/storage/v1/object/public/channel${channelId}/${fileName.replace(/^\/+/, "")}`
+  // First clean the filename by removing any leading slashes
+  const cleanFileName = fileName.replace(/^\/+/, "")
+
+  // Construct the URL with the channel-specific bucket
+  const url = `${supabaseUrl}/storage/v1/object/public/channel${channelId}/${cleanFileName}`
+
+  // Fix any double slashes in the URL (except in http://)
+  return fixUrl(url)
 }
 
 // These functions are required by the video player component
@@ -366,6 +384,38 @@ export function shouldDisableAutoRefresh(duration: number): boolean {
   return duration > 300
 }
 
+// Add a function to force refresh all data
+export async function forceRefreshAllData(): Promise<boolean> {
+  try {
+    // Clear any client-side caches
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("btv_programs_cache")
+      localStorage.removeItem("btv_last_fetch")
+      localStorage.removeItem("btv_channel_data")
+      localStorage.removeItem("btv_current_programs")
+    }
+
+    // Make a request to the refresh-cache API endpoint
+    const response = await fetch("/api/refresh-cache", {
+      method: "GET",
+      headers: {
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        Pragma: "no-cache",
+        Expires: "0",
+      },
+    })
+
+    if (!response.ok) {
+      throw new Error(`API returned status ${response.status}`)
+    }
+
+    return true
+  } catch (error) {
+    console.error("Error forcing data refresh:", error)
+    return false
+  }
+}
+
 export async function checkRLSStatus(bucketName: string): Promise<{
   enabled: boolean
   hasPublicPolicy: boolean
@@ -373,37 +423,31 @@ export async function checkRLSStatus(bucketName: string): Promise<{
 }> {
   try {
     // Check if RLS is enabled
-    const { data: policyData, error: policyError } = await supabase
+    const { data: rlsData, error: rlsError } = await supabase
       .from("pg_policies")
       .select("*")
       .eq("tablename", bucketName)
 
-    const rlsEnabled = policyData && policyData.length > 0
+    const enabled = !rlsError && rlsData && rlsData.length > 0
 
     // Check if there's a public policy
-    const hasPublicPolicy = policyData?.some((policy) => policy.definition === "true") || false
+    const hasPublicPolicy = enabled && rlsData.some((policy) => policy.name === "Enable read access for all users")
 
-    // Try to access a file in the bucket
+    // Try to access a file
     let canAccess = false
-    try {
+    if (bucketName) {
       const { data: listData, error: listError } = await supabase.storage.from(bucketName).list()
       canAccess = !listError
-    } catch (accessError) {
-      console.warn(`Could not access bucket ${bucketName}:`, accessError)
     }
 
     return {
-      enabled: rlsEnabled,
+      enabled,
       hasPublicPolicy,
       canAccess,
     }
   } catch (error) {
-    console.error(`Error checking RLS status for bucket ${bucketName}:`, error)
-    return {
-      enabled: false,
-      hasPublicPolicy: false,
-      canAccess: false,
-    }
+    console.error("Error checking RLS status:", error)
+    throw error
   }
 }
 
@@ -420,32 +464,4 @@ export async function listBuckets(): Promise<any[]> {
     console.error("Error listing buckets:", error)
     return []
   }
-}
-
-export async function testAllVideoFormats(
-  channelId: string,
-  fileName: string,
-): Promise<Array<{ url: string; works: boolean }>> {
-  const baseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ""
-  const formats = [
-    `${baseUrl}/storage/v1/object/public/channel${channelId}/${fileName}`,
-    `${baseUrl}/storage/v1/object/public/videos/channel${channelId}/${fileName}`,
-    `${baseUrl}/storage/v1/object/public/videos/channel-${channelId}/${fileName}`,
-    `${baseUrl}/storage/v1/object/public/videos/${fileName}`,
-    `${baseUrl}/storage/v1/object/public/${channelId}/${fileName}`,
-    `${baseUrl}/storage/v1/object/public/ch${channelId}/${fileName}`,
-  ]
-
-  const results = []
-
-  for (const url of formats) {
-    try {
-      const response = await fetch(url, { method: "HEAD" })
-      results.push({ url, works: response.ok })
-    } catch (error) {
-      results.push({ url, works: false })
-    }
-  }
-
-  return results
 }

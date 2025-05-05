@@ -4,11 +4,11 @@ import { useState, useEffect } from "react"
 import { VideoPlayer } from "@/components/video-player"
 import { ChannelInfo } from "@/components/channel-info"
 import { ChannelPassword } from "@/components/channel-password"
-import { supabase, getCurrentProgram, getUpcomingPrograms } from "@/lib/supabase"
+import { supabase, getCurrentProgram, getUpcomingPrograms, forceRefreshAllData } from "@/lib/supabase"
 import { isPasswordProtected, hasChannelAccess } from "@/lib/channel-access"
 import type { Channel, Program } from "@/types"
 import Link from "next/link"
-import { Loader2 } from "lucide-react"
+import { Loader2, RefreshCw } from "lucide-react"
 
 interface WatchPageProps {
   params: {
@@ -21,48 +21,75 @@ export default function WatchPage({ params }: WatchPageProps) {
   const [currentProgram, setCurrentProgram] = useState<Program | null>(null)
   const [upcomingPrograms, setUpcomingPrograms] = useState<Program[]>([])
   const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [hasAccess, setHasAccess] = useState(false)
+  const [lastRefresh, setLastRefresh] = useState<Date>(new Date())
 
-  useEffect(() => {
-    async function fetchData() {
-      try {
-        setLoading(true)
+  // Function to fetch fresh data
+  async function fetchData(forceClear = false) {
+    try {
+      setLoading(true)
+      setError(null)
 
-        // Fetch channel data
-        const { data, error } = await supabase.from("channels").select("*").eq("id", params.channelId).single()
-
-        if (error) {
-          throw error
-        }
-
-        const channelData = data as Channel
-        setChannel(channelData)
-
-        // Check if channel is password protected and if user has access
-        const needsPassword = isPasswordProtected(params.channelId)
-        const userHasAccess = hasChannelAccess(params.channelId)
-
-        setHasAccess(!needsPassword || userHasAccess)
-
-        // If user has access, fetch program data
-        if (!needsPassword || userHasAccess) {
-          const { program } = await getCurrentProgram(params.channelId)
-          const { programs } = await getUpcomingPrograms(params.channelId)
-
-          setCurrentProgram(program)
-          setUpcomingPrograms(programs)
-        }
-      } catch (err) {
-        console.error("Error fetching channel:", err)
-        setError("Failed to load channel data")
-      } finally {
-        setLoading(false)
+      if (forceClear) {
+        // Force a complete refresh of all data
+        await forceRefreshAllData()
       }
-    }
 
-    fetchData()
+      // Add a cache-busting parameter to ensure we get fresh data
+      const cacheBuster = `?_cb=${Date.now()}`
+
+      // Fetch channel data with cache busting
+      const { data, error } = await supabase.from("channels").select("*").eq("id", params.channelId).single().headers({
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        Pragma: "no-cache",
+        Expires: "0",
+      })
+
+      if (error) {
+        throw error
+      }
+
+      const channelData = data as Channel
+      setChannel(channelData)
+
+      // Check if channel is password protected and if user has access
+      const needsPassword = isPasswordProtected(params.channelId)
+      const userHasAccess = hasChannelAccess(params.channelId)
+
+      setHasAccess(!needsPassword || userHasAccess)
+
+      // If user has access, fetch program data
+      if (!needsPassword || userHasAccess) {
+        const { program } = await getCurrentProgram(params.channelId)
+        const { programs } = await getUpcomingPrograms(params.channelId)
+
+        setCurrentProgram(program)
+        setUpcomingPrograms(programs)
+      }
+
+      // Update last refresh time
+      setLastRefresh(new Date())
+    } catch (err) {
+      console.error("Error fetching channel:", err)
+      setError("Failed to load channel data")
+    } finally {
+      setLoading(false)
+      setRefreshing(false)
+    }
+  }
+
+  // Initial data fetch
+  useEffect(() => {
+    fetchData(true) // Force clear on initial load
   }, [params.channelId])
+
+  // Handle manual refresh
+  const handleManualRefresh = async () => {
+    setRefreshing(true)
+    await fetchData(true) // Force clear on manual refresh
+  }
 
   const handleAccessGranted = async () => {
     setHasAccess(true)
@@ -112,6 +139,23 @@ export default function WatchPage({ params }: WatchPageProps) {
         <>
           <VideoPlayer channel={channel} initialProgram={currentProgram} upcomingPrograms={upcomingPrograms} />
           <div className="px-4 md:px-10 py-6">
+            <div className="flex justify-between items-center mb-6">
+              <h1 className="text-2xl font-bold">
+                Channel {channel.id}: {channel.name}
+              </h1>
+              <button
+                onClick={handleManualRefresh}
+                disabled={refreshing}
+                className="flex items-center bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md"
+              >
+                <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? "animate-spin" : ""}`} />
+                {refreshing ? "Refreshing..." : "Refresh Data"}
+              </button>
+            </div>
+
+            {/* Last refresh time */}
+            <p className="text-sm text-gray-400 mb-4">Last refreshed: {lastRefresh.toLocaleTimeString()}</p>
+
             <ChannelInfo channel={channel} currentProgram={currentProgram} />
 
             {!currentProgram && upcomingPrograms.length === 0 && (

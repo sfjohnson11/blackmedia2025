@@ -5,10 +5,10 @@ import type React from "react"
 import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { Loader2, ChevronLeft, RefreshCw, AlertTriangle } from "lucide-react"
-import { getCurrentProgram, getUpcomingPrograms, fixUrl } from "@/lib/supabase"
+import { getCurrentProgram, getUpcomingPrograms, forceRefreshAllData } from "@/lib/supabase"
 
-// Add this at the top of your component (using your Supabase URL from environment variables)
-const SUPABASE_PUBLIC_BUCKET_BASE = process.env.NEXT_PUBLIC_SUPABASE_URL + "/storage/v1/object/public/videos/"
+// Remove the hardcoded "videos" path
+const SUPABASE_PUBLIC_BUCKET_BASE = process.env.NEXT_PUBLIC_SUPABASE_URL + "/storage/v1/object/public/"
 
 interface VideoPlayerProps {
   channel: any
@@ -30,7 +30,10 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const [currentTime, setCurrentTime] = useState(new Date())
   const [lastRefreshTime, setLastRefreshTime] = useState(new Date())
   const [loadingTimeout, setLoadingTimeout] = useState<NodeJS.Timeout | null>(null)
+  const [retryCount, setRetryCount] = useState(0)
+  const maxRetries = 2
   const [debugInfo, setDebugInfo] = useState<Record<string, any>>({})
+  const [isRefreshing, setIsRefreshing] = useState(false)
 
   // Go back
   const handleBack = () => {
@@ -53,10 +56,40 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     }
   }
 
+  // Fix double slashes in URLs (but preserve http://)
+  const fixUrl = (url: string): string => {
+    if (!url) {
+      console.log("WARNING: Empty URL passed to fixUrl")
+      return ""
+    }
+
+    console.log("Original URL before fixing:", url)
+    addDebugInfo("originalUrl", url)
+
+    // First preserve the protocol (http:// or https://)
+    let protocol = ""
+    const protocolMatch = url.match(/^(https?:\/\/)/)
+    if (protocolMatch) {
+      protocol = protocolMatch[0]
+      url = url.substring(protocol.length)
+    }
+
+    // Replace any double slashes with single slashes
+    url = url.replace(/\/+/g, "/")
+
+    // Put the protocol back
+    const fixedUrl = protocol + url
+    console.log("Fixed URL after processing:", fixedUrl)
+    addDebugInfo("fixedUrl", fixedUrl)
+    return fixedUrl
+  }
+
   // Load video with updated handling and timeout
-  const loadVideo = (url: string) => {
+  const loadVideo = (url: string, forceRetry = false) => {
     console.log("loadVideo called with URL:", url)
     addDebugInfo("loadVideoUrl", url)
+    addDebugInfo("channelId", channel.id)
+    addDebugInfo("programTitle", currentProgram?.title || "None")
 
     clearLoadingTimeout()
 
@@ -67,20 +100,25 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       return
     }
 
+    // Reset retry count if this is a new URL or forced retry
+    if (forceRetry || url !== videoUrl) {
+      setRetryCount(0)
+    }
+
     // Check if the URL is already a full URL or just a filename
     let fullUrl
     const originalUrl = url
 
-    // Special handling for channel 10
-    if (channel.id === "10") {
-      console.log("Special handling for channel 10")
+    // Special handling for specific channels
+    if (channel.id === "13" || channel.id === "10") {
+      console.log(`Special handling for channel ${channel.id}`)
       addDebugInfo("channelSpecialHandling", channel.id)
 
       // If it's just a filename (not a full URL)
       if (!url.startsWith("http")) {
         // Remove any leading slashes and ensure clean filename
         const cleanFileName = url.replace(/^\/+/, "")
-        // Use a specific structure for channel 10
+        // Use a specific structure for these channels
         fullUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/videos/${cleanFileName}`
       } else {
         fullUrl = url
@@ -91,19 +129,27 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         // It's already a full URL
         fullUrl = url
       } else {
-        // It's just a filename, combine with Supabase path
+        // It's just a filename, combine with channel-specific bucket path
         // Remove any leading slashes
         const cleanFileName = url.replace(/^\/+/, "")
-        fullUrl = `${SUPABASE_PUBLIC_BUCKET_BASE}${cleanFileName}`
+        // Use channel-specific bucket
+        fullUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/channel${channel.id}/${cleanFileName}`
       }
     }
 
     // Fix any double slashes in the URL (except in http://)
     fullUrl = fixUrl(fullUrl)
 
+    // Add a cache-busting parameter if this is a retry
+    if (retryCount > 0) {
+      const separator = fullUrl.includes("?") ? "&" : "?"
+      fullUrl = `${fullUrl}${separator}retry=${Date.now()}`
+    }
+
     console.log("Setting video URL to:", fullUrl)
     addDebugInfo("finalVideoUrl", fullUrl)
     addDebugInfo("originalVideoUrl", originalUrl)
+    addDebugInfo("retryCount", retryCount)
 
     setVideoUrl(fullUrl)
     setIsLoading(true)
@@ -113,12 +159,21 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     // Set a timeout to catch silent failures
     const timeout = setTimeout(() => {
       console.log("Video loading timeout reached")
+      addDebugInfo("loadingTimeout", true)
 
       if (isLoading) {
         console.error("Video failed to load within timeout period")
-        setError("Video failed to load (timeout)")
-        setErrorDetails(`URL: ${fullUrl}`)
-        setIsLoading(false)
+
+        // If we haven't reached max retries, try again
+        if (retryCount < maxRetries) {
+          console.log(`Retry ${retryCount + 1}/${maxRetries} after timeout`)
+          setRetryCount((prev) => prev + 1)
+          loadVideo(url, false)
+        } else {
+          setError("Video failed to load (timeout)")
+          setErrorDetails(`URL: ${fullUrl}`)
+          setIsLoading(false)
+        }
       }
     }, 15000) // 15 second timeout
 
@@ -144,18 +199,25 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   // Format current time for display
   const formattedTime = currentTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
 
-  // Force refresh the current program
+  // Force refresh the current program with cache busting
   const forceRefreshProgram = async () => {
     setIsLoading(true)
     setError(null)
     setErrorDetails(null)
     setLastRefreshTime(new Date())
+    setRetryCount(0)
     clearLoadingTimeout()
+    setIsRefreshing(true)
 
     console.log("Force refreshing program for channel:", channel.id)
     addDebugInfo("forceRefreshChannel", channel.id)
+    addDebugInfo("forceRefreshTime", new Date().toISOString())
 
     try {
+      // First, force a complete refresh of all data
+      await forceRefreshAllData()
+
+      // Then get the current program with fresh data
       const { program } = await getCurrentProgram(channel.id)
       const { programs } = await getUpcomingPrograms(channel.id)
 
@@ -169,7 +231,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         addDebugInfo("programDuration", program.duration)
 
         if (program.mp4_url) {
-          loadVideo(program.mp4_url)
+          loadVideo(program.mp4_url, true)
         } else {
           setError("Program has no video URL")
           setIsLoading(false)
@@ -185,6 +247,8 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       setError("Error refreshing program")
       addDebugInfo("refreshError", err instanceof Error ? err.message : String(err))
       setIsLoading(false)
+    } finally {
+      setIsRefreshing(false)
     }
   }
 
@@ -200,6 +264,10 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
     try {
       console.log("Checking for program updates at:", new Date().toLocaleString())
+      addDebugInfo("programCheckTime", new Date().toISOString())
+
+      // Force a complete refresh of all data to ensure we get fresh programs
+      await forceRefreshAllData()
 
       const { program } = await getCurrentProgram(channel.id)
       const { programs } = await getUpcomingPrograms(channel.id)
@@ -214,7 +282,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         addDebugInfo("switchedToProgram", program.title)
 
         if (program.mp4_url) {
-          loadVideo(program.mp4_url)
+          loadVideo(program.mp4_url, true)
         } else {
           console.error("ERROR: New program has no mp4_url:", program)
           setError("Program has no video URL")
@@ -236,6 +304,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   // Handle video end
   const handleVideoEnd = () => {
     console.log("Video ended, checking for next program")
+    addDebugInfo("videoEnded", new Date().toISOString())
     checkForProgramUpdates()
   }
 
@@ -291,6 +360,18 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       console.error("Video error event but no error object available")
       addDebugInfo("emptyErrorObject", true)
 
+      // If we haven't reached max retries, try again
+      if (retryCount < maxRetries) {
+        console.log(`Retry ${retryCount + 1}/${maxRetries} after error with no error object`)
+        setRetryCount((prev) => prev + 1)
+
+        // Try loading the video again with the same URL
+        if (currentProgram?.mp4_url) {
+          loadVideo(currentProgram.mp4_url, false)
+          return
+        }
+      }
+
       // CORS or security errors often trigger without an error object
       errorMessage = "Video loading failed"
       errorDetailsText = "This could be due to a CORS issue, invalid URL, or unsupported file format."
@@ -338,9 +419,11 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const handleCanPlay = () => {
     console.log("Video can play event triggered for URL:", videoUrl)
     addDebugInfo("canPlay", true)
+    addDebugInfo("canPlayTime", new Date().toISOString())
     clearLoadingTimeout()
     setIsLoading(false)
     setError(null)
+    setRetryCount(0) // Reset retry count on successful load
   }
 
   // Initial setup
@@ -406,7 +489,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         <div className="absolute inset-0 flex items-center justify-center bg-black z-20">
           <div className="flex flex-col items-center">
             <Loader2 className="h-12 w-12 text-red-600 animate-spin mb-2" />
-            <p className="text-white">Loading video...</p>
+            <p className="text-white">Loading video{retryCount > 0 ? ` (Retry ${retryCount}/${maxRetries})` : ""}...</p>
           </div>
         </div>
       )}
@@ -421,9 +504,11 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
             <div className="flex flex-wrap justify-center gap-3">
               <button
                 onClick={forceRefreshProgram}
+                disabled={isRefreshing}
                 className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition-colors flex items-center"
               >
-                <RefreshCw className="h-4 w-4 mr-2" /> Force Refresh
+                <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshing ? "animate-spin" : ""}`} />
+                {isRefreshing ? "Refreshing..." : "Force Refresh"}
               </button>
             </div>
           </div>
@@ -435,7 +520,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         {videoUrl ? (
           <video
             ref={videoRef}
-            key={videoUrl} // This forces a complete remount when the URL changes
+            key={`${videoUrl}-${retryCount}`} // This forces a complete remount when the URL or retry count changes
             className="w-full h-full"
             controls
             playsInline
@@ -451,7 +536,6 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
               console.log("Video data loaded for URL:", videoUrl)
               addDebugInfo("loadedData", new Date().toISOString())
             }}
-            crossOrigin="anonymous" // Add crossOrigin to help with CORS issues
           >
             <source src={videoUrl} type="video/mp4" />
             Your browser does not support the video tag.
@@ -485,9 +569,11 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       <div className="bg-black p-4 flex justify-center">
         <button
           onClick={forceRefreshProgram}
+          disabled={isRefreshing}
           className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 flex items-center"
         >
-          <RefreshCw className="h-4 w-4 mr-2" /> Force Refresh Program
+          <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshing ? "animate-spin" : ""}`} />
+          {isRefreshing ? "Refreshing..." : "Force Refresh Program"}
         </button>
       </div>
 
@@ -510,6 +596,9 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         <p>Last Refresh: {lastRefreshTime.toLocaleString()}</p>
         <p>Loading: {isLoading ? "Yes" : "No"}</p>
         <p>Error: {error || "None"}</p>
+        <p>
+          Retry Count: {retryCount}/{maxRetries}
+        </p>
 
         {/* Advanced Debug Info */}
         <details className="mt-2">
