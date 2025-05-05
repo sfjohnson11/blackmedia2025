@@ -16,6 +16,36 @@ export function getFullUrl(path: string): string {
 
 // Get the current program for a channel
 export async function getCurrentProgram(channelId: string) {
+  // Check if this is a live channel
+  if (isLiveChannel(channelId)) {
+    try {
+      // Get the live stream URL
+      const liveUrl = await getLiveStreamUrl(channelId)
+
+      if (!liveUrl) {
+        console.error("No live stream URL found for channel:", channelId)
+        return { program: null, error: "No live stream URL found" }
+      }
+
+      // Create a virtual "program" for the live stream
+      const liveProgram = {
+        id: -1, // Use a negative ID to indicate it's a live program
+        channel_id: channelId,
+        title: "LIVE: Channel " + channelId,
+        mp4_url: liveUrl,
+        start_time: new Date().toISOString(),
+        duration: 86400, // 24 hours in seconds
+        is_live: true,
+      }
+
+      return { program: liveProgram, error: null }
+    } catch (err) {
+      console.error("Error handling live channel:", err)
+      return { program: null, error: err }
+    }
+  }
+
+  // For non-live channels, use the existing logic
   const now = new Date().toISOString()
 
   try {
@@ -126,6 +156,33 @@ export function shouldDisableAutoRefresh(duration: number): boolean {
 export const isLiveChannel = (channelId: string): boolean => {
   // Only Channel 21 is live
   return channelId === "21"
+}
+
+// Replace the current getLiveStreamUrl function with this version that queries the database
+
+export const getLiveStreamUrl = async (channelId: string): Promise<string | null> => {
+  // Only Channel 21 is live
+  if (channelId === "21") {
+    try {
+      // Query the database for the live stream URL
+      const { data, error } = await supabase
+        .from("live_streams")
+        .select("stream_url")
+        .eq("channel_id", channelId)
+        .single()
+
+      if (error || !data) {
+        console.error("Error fetching live stream URL:", error)
+        return null
+      }
+
+      return data.stream_url
+    } catch (err) {
+      console.error("Error in getLiveStreamUrl:", err)
+      return null
+    }
+  }
+  return null
 }
 
 // Add createTables function

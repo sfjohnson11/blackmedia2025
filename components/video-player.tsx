@@ -384,6 +384,15 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     addDebugInfo("initialProgramTitle", initialProgram?.title || "None")
     addDebugInfo("initialProgramUrl", initialProgram?.mp4_url || "None")
 
+    // If we have an initial program with a URL, load it
+    if (initialProgram && initialProgram.mp4_url) {
+      loadVideo(initialProgram.mp4_url)
+    } else {
+      console.error("No initial program or URL available")
+      setError("No video available for this channel")
+      setIsLoading(false)
+    }
+
     // Force refresh to get the current program
     forceRefreshProgram()
 
@@ -465,24 +474,31 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         {videoUrl ? (
           <video
             ref={videoRef}
-            key={`${videoUrl}-${retryCount}`} // This forces a complete remount when the URL or retry count changes
+            key={`${videoUrl}-${retryCount}`}
             className="w-full h-full"
             controls
             playsInline
-            autoPlay // Add autoPlay to start playing automatically
+            autoPlay
             onCanPlay={handleCanPlay}
             onEnded={handleVideoEnd}
             onError={handleVideoError}
             onLoadStart={() => {
               console.log("Video load started for URL:", videoUrl)
               addDebugInfo("loadStarted", new Date().toISOString())
+              addDebugInfo("videoType", videoUrl.includes(".m3u8") ? "HLS" : "MP4")
             }}
             onLoadedData={() => {
               console.log("Video data loaded for URL:", videoUrl)
               addDebugInfo("loadedData", new Date().toISOString())
             }}
           >
-            <source src={videoUrl} type="video/mp4" />
+            {videoUrl.includes(".m3u8") ? (
+              // HLS stream
+              <source src={videoUrl} type="application/vnd.apple.mpegurl" />
+            ) : (
+              // Regular MP4
+              <source src={videoUrl} type="video/mp4" />
+            )}
             Your browser does not support the video tag.
           </video>
         ) : (
