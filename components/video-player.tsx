@@ -14,11 +14,10 @@ interface VideoPlayerProps {
 export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initialUpcoming }: VideoPlayerProps) {
   const router = useRouter()
   const videoRef = useRef<HTMLVideoElement>(null)
-
   const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   const [currentProgram, setCurrentProgram] = useState(initialProgram)
   const [upcomingPrograms, setUpcomingPrograms] = useState(initialUpcoming)
+  const [programCheckInterval, setProgramCheckInterval] = useState<NodeJS.Timeout | null>(null)
 
   // Go back
   const handleBack = () => {
@@ -34,44 +33,19 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       if (program && (!currentProgram || program.id !== currentProgram.id)) {
         console.log("New program detected:", program.title)
         setCurrentProgram(program)
-        playVideo(program.mp4_url)
+
+        if (videoRef.current) {
+          videoRef.current.src = program.mp4_url
+          videoRef.current.load()
+          videoRef.current.play().catch((err) => {
+            console.error("Error playing video:", err)
+          })
+        }
       }
 
       setUpcomingPrograms(programs)
     } catch (err) {
       console.error("Error checking for program updates:", err)
-    }
-  }
-
-  // Play video with direct URL
-  const playVideo = (url: string) => {
-    if (!videoRef.current || !url) return
-
-    setIsLoading(true)
-    setError(null)
-
-    try {
-      console.log("Playing video with URL:", url)
-
-      // Set the video source directly
-      videoRef.current.src = url
-      videoRef.current.load()
-
-      // Play the video
-      videoRef.current
-        .play()
-        .then(() => {
-          setIsLoading(false)
-        })
-        .catch((err) => {
-          console.error("Error playing video:", err)
-          setError("Error playing video. Please try again.")
-          setIsLoading(false)
-        })
-    } catch (err) {
-      console.error("Error loading video:", err)
-      setError("Error loading video. Please try again.")
-      setIsLoading(false)
     }
   }
 
@@ -85,9 +59,16 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   useEffect(() => {
     console.log("Initial setup for channel:", channel.id)
 
-    if (initialProgram && initialProgram.mp4_url) {
-      console.log("Initial program:", initialProgram.title)
-      playVideo(initialProgram.mp4_url)
+    // Set up video player
+    if (initialProgram && initialProgram.mp4_url && videoRef.current) {
+      console.log("Loading initial program:", initialProgram.title)
+      console.log("URL:", initialProgram.mp4_url)
+
+      videoRef.current.src = initialProgram.mp4_url
+      videoRef.current.load()
+      videoRef.current.play().catch((err) => {
+        console.error("Error playing initial video:", err)
+      })
     } else {
       console.log("No initial program, checking for current program")
       checkForProgramUpdates()
@@ -95,8 +76,11 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
     // Check for program updates every minute
     const interval = setInterval(checkForProgramUpdates, 60000)
+    setProgramCheckInterval(interval)
 
-    return () => clearInterval(interval)
+    return () => {
+      if (interval) clearInterval(interval)
+    }
   }, [])
 
   return (
@@ -119,21 +103,6 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         </div>
       )}
 
-      {/* Error state */}
-      {error && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black z-20">
-          <div className="text-center p-4">
-            <p className="text-red-500 mb-4">{error}</p>
-            <button
-              onClick={() => currentProgram && playVideo(currentProgram.mp4_url)}
-              className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition-colors"
-            >
-              Try Again
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Video element */}
       <div className="w-full aspect-video bg-black">
         <video
@@ -141,12 +110,8 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
           className="w-full h-full"
           controls
           playsInline
-          onError={() => {
-            setError("Error loading video. Please try again.")
-            setIsLoading(false)
-          }}
-          onEnded={handleVideoEnd}
           onCanPlay={() => setIsLoading(false)}
+          onEnded={handleVideoEnd}
         >
           Your browser does not support the video tag.
         </video>
@@ -162,16 +127,10 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         </div>
       )}
 
-      {/* Debug info */}
-      <div className="bg-gray-900 p-2 text-xs text-gray-400">
-        <p>Channel ID: {channel.id}</p>
-        <p>Current Program: {currentProgram?.title || "None"}</p>
-        <p>URL: {currentProgram?.mp4_url || "None"}</p>
-        <button
-          onClick={checkForProgramUpdates}
-          className="bg-gray-800 text-gray-300 px-2 py-1 rounded text-xs mt-1 hover:bg-gray-700"
-        >
-          Check for Updates
+      {/* Manual refresh button */}
+      <div className="bg-black p-4 flex justify-center">
+        <button onClick={checkForProgramUpdates} className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700">
+          Refresh Program
         </button>
       </div>
     </div>
