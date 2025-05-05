@@ -29,6 +29,8 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const [currentVideoUrl, setCurrentVideoUrl] = useState<string | null>(null)
   const [attemptedUrls, setAttemptedUrls] = useState<string[]>([])
   const [debugInfo, setDebugInfo] = useState<string>("")
+  const [formatError, setFormatError] = useState(false)
+  const [directPlayMode, setDirectPlayMode] = useState(false)
 
   // Reliable fallback video
   const fallbackVideoUrl = "https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
@@ -65,6 +67,17 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     // Extract filename from mp4_url
     const fileName = extractFilename(program.mp4_url)
 
+    // Try to detect if the URL is already a direct URL (not in Supabase)
+    const isDirectUrl =
+      program.mp4_url.includes("http") &&
+      !program.mp4_url.includes(supabaseUrl) &&
+      !program.mp4_url.includes("storage/v1/object")
+
+    // If it's a direct URL, prioritize it
+    if (isDirectUrl) {
+      return [fixUrl(program.mp4_url)]
+    }
+
     // Generate different URL patterns - UNIVERSAL for ALL channels
     const urls = [
       // Original URL (fixed)
@@ -95,12 +108,12 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   }
 
   // Try to load video with a specific URL
-  const tryVideoUrl = async (url: string): Promise<boolean> => {
+  const tryVideoUrl = async (url: string, forceDirectPlay = false): Promise<boolean> => {
     if (!videoRef.current) return false
 
     try {
-      setDebugInfo(`Trying URL: ${url}`)
-      console.log(`Trying URL: ${url}`)
+      setDebugInfo(`Trying URL: ${url}${forceDirectPlay ? " (direct play)" : ""}`)
+      console.log(`Trying URL: ${url}${forceDirectPlay ? " (direct play)" : ""}`)
 
       // Add to attempted URLs
       setAttemptedUrls((prev) => [...prev, url])
@@ -108,9 +121,19 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       // Add cache buster
       const urlWithCacheBuster = addCacheBuster(url)
 
+      if (forceDirectPlay) {
+        // For direct play mode, open the URL in a new window/tab
+        setDirectPlayMode(true)
+        window.open(urlWithCacheBuster, "_blank")
+        return true
+      }
+
       // Set the video source
       videoRef.current.src = urlWithCacheBuster
       setCurrentVideoUrl(urlWithCacheBuster)
+
+      // Reset format error flag
+      setFormatError(false)
 
       // Load the video
       videoRef.current.load()
@@ -123,7 +146,14 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
           resolve(true)
         }
 
-        const onError = () => {
+        const onError = (e: Event) => {
+          const videoElement = e.target as HTMLVideoElement
+          if (
+            videoElement.error?.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED ||
+            videoElement.error?.code === MediaError.MEDIA_ERR_DECODE
+          ) {
+            setFormatError(true)
+          }
           videoRef.current?.removeEventListener("canplay", onCanPlay)
           videoRef.current?.removeEventListener("error", onError)
           resolve(false)
@@ -180,9 +210,26 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
           // Continue to next URL
         }
       }
+
+      // If we got a format error, try direct play mode for this URL
+      if (formatError && !directPlayMode) {
+        setDebugInfo(`Format error detected, trying direct play for: ${url}`)
+        return await tryVideoUrl(url, true)
+      }
     }
 
     return false
+  }
+
+  // Try to play the video directly in the browser
+  const tryDirectPlay = () => {
+    if (!currentProgram || !currentProgram.mp4_url) return
+
+    const url = fixUrl(currentProgram.mp4_url)
+    const urlWithCacheBuster = addCacheBuster(url)
+
+    setDebugInfo(`Opening video directly in browser: ${url}`)
+    window.open(urlWithCacheBuster, "_blank")
   }
 
   // Load a program
@@ -191,6 +238,8 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     setIsLoading(true)
     setError(null)
     setCurrentProgram(program)
+    setFormatError(false)
+    setDirectPlayMode(false)
     setDebugInfo(`Loading program: ${program.title} (ID: ${program.id})`)
 
     if (!videoRef.current) return
@@ -220,6 +269,8 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     setIsLoading(true)
     setError(null)
     setAttemptedUrls([])
+    setFormatError(false)
+    setDirectPlayMode(false)
     setDebugInfo("Refreshing program...")
 
     try {
@@ -363,9 +414,13 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
       if (program && (!currentProgram || program.id !== currentProgram.id)) {
         setAttemptedUrls([]) // Reset attempted URLs for new program
+        setFormatError(false)
+        setDirectPlayMode(false)
         await loadProgram(program)
       } else if (programs.length > 0) {
         setAttemptedUrls([]) // Reset attempted URLs for new program
+        setFormatError(false)
+        setDirectPlayMode(false)
         await loadProgram(programs[0])
       } else {
         refreshProgram()
@@ -403,6 +458,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
           break
         case MediaError.MEDIA_ERR_DECODE:
           errorMessage = "Video decoding failed - format may be unsupported"
+          setFormatError(true)
           break
         case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
           errorMessage = "Video not found (404) or access denied"
@@ -418,6 +474,13 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
     console.error("Video error:", errorMessage)
     setDebugInfo(`Video error: ${errorMessage}`)
+
+    // If it's a format error, try direct play mode
+    if (formatError && !directPlayMode && currentVideoUrl) {
+      setDebugInfo(`Format error detected, trying direct play`)
+      tryDirectPlay()
+      return
+    }
 
     // Try next URL if available
     if (currentProgram) {
@@ -449,6 +512,8 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       getCurrentProgram(channel.id).then(({ program }) => {
         if (program && (!currentProgram || program.id !== currentProgram.id)) {
           setAttemptedUrls([]) // Reset attempted URLs for new program
+          setFormatError(false)
+          setDirectPlayMode(false)
           loadProgram(program)
           getUpcomingPrograms(channel.id).then(({ programs }) => {
             setUpcomingPrograms(programs)
@@ -489,10 +554,12 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
             <div className="text-center p-4 max-w-md">
               <AlertTriangle className="h-8 w-8 text-yellow-500 mx-auto mb-2" />
               <p className="text-red-500 mb-4">{error}</p>
-              <div className="flex justify-center space-x-4">
+              <div className="flex flex-wrap justify-center gap-3">
                 <button
                   onClick={() => {
                     setAttemptedUrls([])
+                    setFormatError(false)
+                    setDirectPlayMode(false)
                     refreshProgram()
                   }}
                   className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition-colors flex items-center"
@@ -504,6 +571,12 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
                   className="bg-gray-700 text-white px-4 py-2 rounded hover:bg-gray-600 transition-colors"
                 >
                   Try Fallback Video
+                </button>
+                <button
+                  onClick={tryDirectPlay}
+                  className="bg-gray-700 text-white px-4 py-2 rounded hover:bg-gray-600 transition-colors"
+                >
+                  Open Directly
                 </button>
               </div>
             </div>
@@ -596,15 +669,25 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         <p>Channel ID: {channel.id}</p>
         <p>Current URL: {currentVideoUrl ? currentVideoUrl.substring(0, 50) + "..." : "None"}</p>
         <p>Status: {debugInfo}</p>
-        <button
-          onClick={() => {
-            setAttemptedUrls([])
-            refreshProgram()
-          }}
-          className="bg-gray-800 text-gray-300 px-2 py-1 rounded text-xs mt-1 hover:bg-gray-700"
-        >
-          Refresh Video
-        </button>
+        <div className="flex space-x-2 mt-1">
+          <button
+            onClick={() => {
+              setAttemptedUrls([])
+              setFormatError(false)
+              setDirectPlayMode(false)
+              refreshProgram()
+            }}
+            className="bg-gray-800 text-gray-300 px-2 py-1 rounded text-xs hover:bg-gray-700"
+          >
+            Refresh Video
+          </button>
+          <button
+            onClick={tryDirectPlay}
+            className="bg-gray-800 text-gray-300 px-2 py-1 rounded text-xs hover:bg-gray-700"
+          >
+            Open Directly
+          </button>
+        </div>
       </div>
     </div>
   )
