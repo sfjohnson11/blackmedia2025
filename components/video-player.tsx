@@ -1,5 +1,7 @@
 "use client"
 
+import type React from "react"
+
 import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { Loader2, ChevronLeft } from "lucide-react"
@@ -13,11 +15,13 @@ interface VideoPlayerProps {
 
 export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initialUpcoming }: VideoPlayerProps) {
   const router = useRouter()
-  const videoRef = useRef<HTMLVideoElement>(null)
+  const videoContainerRef = useRef<HTMLDivElement>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [currentProgram, setCurrentProgram] = useState(initialProgram)
   const [upcomingPrograms, setUpcomingPrograms] = useState(initialUpcoming)
   const [lastProgramCheck, setLastProgramCheck] = useState(Date.now())
+  const [videoUrl, setVideoUrl] = useState("")
+  const [error, setError] = useState<string | null>(null)
 
   // Go back
   const handleBack = () => {
@@ -43,6 +47,20 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     return protocol + url
   }
 
+  // Load video with URL
+  const loadVideo = (url: string) => {
+    if (!url) return
+
+    // Fix double slashes in the URL
+    const fixedUrl = fixUrl(url)
+    console.log("Loading video with URL:", fixedUrl)
+
+    // Set the video URL - this will trigger a remount of the video element due to the key prop
+    setVideoUrl(fixedUrl)
+    setIsLoading(true)
+    setError(null)
+  }
+
   // Check for program updates
   const checkForProgramUpdates = async () => {
     // Don't check too frequently
@@ -62,17 +80,8 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         console.log("New program detected:", program.title)
         setCurrentProgram(program)
 
-        if (videoRef.current && program.mp4_url) {
-          // Fix double slashes in the URL
-          const fixedUrl = fixUrl(program.mp4_url)
-          console.log("Playing new program with URL:", fixedUrl)
-
-          // Set the fixed URL as the video source
-          videoRef.current.src = fixedUrl
-          videoRef.current.load()
-          videoRef.current.play().catch((err) => {
-            console.error("Error playing video:", err)
-          })
+        if (program.mp4_url) {
+          loadVideo(program.mp4_url)
         }
       }
 
@@ -88,24 +97,21 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     checkForProgramUpdates()
   }
 
+  // Handle video error
+  const handleVideoError = (e: React.SyntheticEvent<HTMLVideoElement>) => {
+    console.error("Video error:", e)
+    setError("Error playing video. Please try again.")
+    setIsLoading(false)
+  }
+
   // Initial setup
   useEffect(() => {
     console.log("Initial setup for channel:", channel.id)
 
     // Set up video player
-    if (initialProgram && initialProgram.mp4_url && videoRef.current) {
+    if (initialProgram && initialProgram.mp4_url) {
       console.log("Loading initial program:", initialProgram.title)
-
-      // Fix double slashes in the URL
-      const fixedUrl = fixUrl(initialProgram.mp4_url)
-      console.log("Playing initial program with URL:", fixedUrl)
-
-      // Set the fixed URL as the video source
-      videoRef.current.src = fixedUrl
-      videoRef.current.load()
-      videoRef.current.play().catch((err) => {
-        console.error("Error playing initial video:", err)
-      })
+      loadVideo(initialProgram.mp4_url)
     } else {
       console.log("No initial program, checking for current program")
       checkForProgramUpdates()
@@ -156,18 +162,38 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         </div>
       )}
 
-      {/* Video element */}
-      <div className="w-full aspect-video bg-black">
-        <video
-          ref={videoRef}
-          className="w-full h-full"
-          controls
-          playsInline
-          onCanPlay={() => setIsLoading(false)}
-          onEnded={handleVideoEnd}
-        >
-          Your browser does not support the video tag.
-        </video>
+      {/* Error state */}
+      {error && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black z-20">
+          <div className="text-center p-4">
+            <p className="text-red-500 mb-4">{error}</p>
+            <button
+              onClick={() => currentProgram && loadVideo(currentProgram.mp4_url)}
+              className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition-colors"
+            >
+              Try Again
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Video container */}
+      <div ref={videoContainerRef} className="w-full aspect-video bg-black">
+        {videoUrl && (
+          <video
+            key={videoUrl} // This forces a complete remount when the URL changes
+            className="w-full h-full"
+            controls
+            playsInline
+            autoPlay // Add autoPlay to start playing automatically
+            onCanPlay={() => setIsLoading(false)}
+            onEnded={handleVideoEnd}
+            onError={handleVideoError}
+          >
+            <source src={videoUrl} type="video/mp4" />
+            Your browser does not support the video tag.
+          </video>
+        )}
       </div>
 
       {/* Program info */}
@@ -187,6 +213,13 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         <button onClick={checkForProgramUpdates} className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700">
           Refresh Program
         </button>
+      </div>
+
+      {/* Debug info */}
+      <div className="bg-black p-2 text-xs text-gray-500">
+        <p>Channel ID: {channel.id}</p>
+        <p>Current Program: {currentProgram?.title || "None"}</p>
+        <p>Video URL: {videoUrl || "None"}</p>
       </div>
     </div>
   )
