@@ -4,7 +4,7 @@ import type React from "react"
 
 import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
-import { Loader2, Play, Pause, Volume2, VolumeX, Maximize, ChevronLeft, RefreshCw } from "lucide-react"
+import { Loader2, Play, Pause, Volume2, VolumeX, Maximize, ChevronLeft, RefreshCw, AlertTriangle } from "lucide-react"
 import { getCurrentProgram, getUpcomingPrograms } from "@/lib/supabase"
 
 interface VideoPlayerProps {
@@ -27,6 +27,8 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const [progress, setProgress] = useState(0)
   const [volume, setVolume] = useState(1)
   const [currentVideoUrl, setCurrentVideoUrl] = useState<string | null>(null)
+  const [attemptedUrls, setAttemptedUrls] = useState<string[]>([])
+  const [debugInfo, setDebugInfo] = useState<string>("")
 
   // Reliable fallback video
   const fallbackVideoUrl = "https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
@@ -45,43 +47,164 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     return url.includes("?") ? `${url}&${cacheBuster}` : `${url}?${cacheBuster}`
   }
 
+  // Generate alternative URLs for a given program
+  const generateAlternativeUrls = (program: any): string[] => {
+    if (!program || !program.mp4_url) return []
+
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ""
+
+    // Extract filename from mp4_url
+    const urlParts = program.mp4_url.split("/")
+    const fileName = urlParts[urlParts.length - 1]
+
+    // Generate different URL patterns
+    const urls = [
+      // Original URL (fixed)
+      fixUrl(program.mp4_url),
+
+      // Try with channel ID in path
+      `${supabaseUrl}/storage/v1/object/public/channel${channel.id}/${fileName}`,
+
+      // Try with "ch" prefix
+      `${supabaseUrl}/storage/v1/object/public/ch${channel.id}/${fileName}`,
+
+      // Try with videos folder
+      `${supabaseUrl}/storage/v1/object/public/videos/channel${channel.id}/${fileName}`,
+
+      // Try with just the filename in root bucket
+      `${supabaseUrl}/storage/v1/object/public/${fileName}`,
+
+      // Special handling for channel 14
+      `${supabaseUrl}/storage/v1/object/public/channel14/${fileName}`,
+      `${supabaseUrl}/storage/v1/object/public/ch14/${fileName}`,
+      `${supabaseUrl}/storage/v1/object/public/videos/ch14/${fileName}`,
+
+      // Try direct URL without Supabase path
+      fileName.startsWith("http") ? fileName : `https://${fileName}`,
+    ]
+
+    // Filter out duplicates and empty URLs
+    return [...new Set(urls.filter((url) => url && url.length > 10))].map(fixUrl)
+  }
+
+  // Try to load video with a specific URL
+  const tryVideoUrl = async (url: string): Promise<boolean> => {
+    if (!videoRef.current) return false
+
+    try {
+      setDebugInfo(`Trying URL: ${url}`)
+      console.log(`Trying URL: ${url}`)
+
+      // Add to attempted URLs
+      setAttemptedUrls((prev) => [...prev, url])
+
+      // Add cache buster
+      const urlWithCacheBuster = addCacheBuster(url)
+
+      // Set the video source
+      videoRef.current.src = urlWithCacheBuster
+      setCurrentVideoUrl(urlWithCacheBuster)
+
+      // Load the video
+      videoRef.current.load()
+
+      // Return a promise that resolves when the video can play
+      return new Promise((resolve) => {
+        const onCanPlay = () => {
+          videoRef.current?.removeEventListener("canplay", onCanPlay)
+          videoRef.current?.removeEventListener("error", onError)
+          resolve(true)
+        }
+
+        const onError = () => {
+          videoRef.current?.removeEventListener("canplay", onCanPlay)
+          videoRef.current?.removeEventListener("error", onError)
+          resolve(false)
+        }
+
+        videoRef.current?.addEventListener("canplay", onCanPlay)
+        videoRef.current?.addEventListener("error", onError)
+
+        // Set a timeout in case the events don't fire
+        setTimeout(() => resolve(false), 5000)
+      })
+    } catch (err) {
+      console.error(`Error trying URL ${url}:`, err)
+      return false
+    }
+  }
+
+  // Try all alternative URLs
+  const tryAllUrls = async (program: any) => {
+    if (!program) {
+      setError("No program available")
+      setIsLoading(false)
+      return false
+    }
+
+    const urls = generateAlternativeUrls(program)
+    console.log("Generated URLs:", urls)
+
+    // Filter out URLs we've already tried
+    const untried = urls.filter((url) => !attemptedUrls.includes(url))
+
+    if (untried.length === 0) {
+      console.log("All URLs have been tried")
+      return false
+    }
+
+    // Try each URL
+    for (const url of untried) {
+      const success = await tryVideoUrl(url)
+
+      if (success) {
+        console.log(`Successfully loaded URL: ${url}`)
+        setDebugInfo(`Successfully loaded: ${url}`)
+
+        // Try to play
+        try {
+          await videoRef.current?.play()
+          setIsPlaying(true)
+          setIsLoading(false)
+          setError(null)
+          return true
+        } catch (err) {
+          console.error("Error playing video:", err)
+          // Continue to next URL
+        }
+      }
+    }
+
+    return false
+  }
+
   // Load a program
   const loadProgram = async (program: any) => {
     console.log(`Loading program: ${program.title} (ID: ${program.id})`)
     setIsLoading(true)
     setError(null)
     setCurrentProgram(program)
+    setDebugInfo(`Loading program: ${program.title} (ID: ${program.id})`)
 
     if (!videoRef.current) return
 
     try {
-      // Fix any double slashes in the URL
-      const fixedUrl = fixUrl(program.mp4_url)
-      console.log(`Fixed URL: ${fixedUrl}`)
+      // Reset video attributes
+      videoRef.current.crossOrigin = "anonymous"
 
-      // Add cache buster
-      const urlWithCacheBuster = addCacheBuster(fixedUrl)
-      console.log(`URL with cache buster: ${urlWithCacheBuster}`)
+      // Try all URLs
+      const success = await tryAllUrls(program)
 
-      // Set the video source
-      setCurrentVideoUrl(urlWithCacheBuster)
-      videoRef.current.src = urlWithCacheBuster
-      videoRef.current.load()
-
-      // Try to play
-      try {
-        await videoRef.current.play()
-        setIsPlaying(true)
-      } catch (err) {
-        console.error("Error playing video:", err)
-        setError(`Error playing video: ${err instanceof Error ? err.message : String(err)}`)
-      } finally {
-        setIsLoading(false)
+      if (!success) {
+        // If all URLs fail, try the fallback
+        setDebugInfo("All URLs failed, trying fallback")
+        tryFallbackVideo()
       }
     } catch (err) {
       console.error("Error loading program:", err)
       setError(`Error loading program: ${err instanceof Error ? err.message : String(err)}`)
       setIsLoading(false)
+      tryFallbackVideo()
     }
   }
 
@@ -89,6 +212,8 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const refreshProgram = async () => {
     setIsLoading(true)
     setError(null)
+    setAttemptedUrls([])
+    setDebugInfo("Refreshing program...")
 
     try {
       const { program } = await getCurrentProgram(channel.id)
@@ -100,11 +225,13 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       } else {
         setError("No program found for this channel")
         setIsLoading(false)
+        tryFallbackVideo()
       }
     } catch (err) {
       console.error("Error refreshing program:", err)
       setError(`Error refreshing program: ${err instanceof Error ? err.message : String(err)}`)
       setIsLoading(false)
+      tryFallbackVideo()
     }
   }
 
@@ -114,6 +241,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
     setIsLoading(true)
     setError(null)
+    setDebugInfo("Trying fallback video")
 
     try {
       videoRef.current.src = fallbackVideoUrl
@@ -125,6 +253,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         .then(() => {
           setIsPlaying(true)
           setIsLoading(false)
+          setError("Using fallback video. The requested program could not be loaded.")
         })
         .catch((err) => {
           console.error("Error playing fallback video:", err)
@@ -217,6 +346,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   // Handle video end
   const handleVideoEnd = async () => {
     console.log("Video ended")
+    setDebugInfo("Video ended, checking for next program")
 
     try {
       const { program } = await getCurrentProgram(channel.id)
@@ -225,8 +355,10 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       setUpcomingPrograms(programs)
 
       if (program && (!currentProgram || program.id !== currentProgram.id)) {
+        setAttemptedUrls([]) // Reset attempted URLs for new program
         await loadProgram(program)
       } else if (programs.length > 0) {
+        setAttemptedUrls([]) // Reset attempted URLs for new program
         await loadProgram(programs[0])
       } else {
         refreshProgram()
@@ -249,9 +381,55 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     router.back()
   }
 
+  // Handle video error
+  const handleVideoError = (e: React.SyntheticEvent<HTMLVideoElement, Event>) => {
+    const videoElement = e.currentTarget
+    let errorMessage = "Unknown error"
+
+    if (videoElement.error) {
+      switch (videoElement.error.code) {
+        case MediaError.MEDIA_ERR_ABORTED:
+          errorMessage = "The fetching process was aborted by the user"
+          break
+        case MediaError.MEDIA_ERR_NETWORK:
+          errorMessage = "Network error - video download failed"
+          break
+        case MediaError.MEDIA_ERR_DECODE:
+          errorMessage = "Video decoding failed - format may be unsupported"
+          break
+        case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
+          errorMessage = "Video not found (404) or access denied"
+          break
+        default:
+          errorMessage = `Error code: ${videoElement.error.code}`
+      }
+
+      if (videoElement.error.message) {
+        errorMessage += ` - ${videoElement.error.message}`
+      }
+    }
+
+    console.error("Video error:", errorMessage)
+    setDebugInfo(`Video error: ${errorMessage}`)
+
+    // Try next URL if available
+    if (currentProgram) {
+      tryAllUrls(currentProgram).then((success) => {
+        if (!success) {
+          setError(`Error loading video: ${errorMessage}`)
+          setIsLoading(false)
+        }
+      })
+    } else {
+      setError(`Error loading video: ${errorMessage}`)
+      setIsLoading(false)
+    }
+  }
+
   // Initial setup
   useEffect(() => {
     console.log("Initial setup for channel:", channel.id)
+    setDebugInfo(`Initial setup for channel: ${channel.id}`)
 
     if (initialProgram) {
       loadProgram(initialProgram)
@@ -263,6 +441,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     const interval = setInterval(() => {
       getCurrentProgram(channel.id).then(({ program }) => {
         if (program && (!currentProgram || program.id !== currentProgram.id)) {
+          setAttemptedUrls([]) // Reset attempted URLs for new program
           loadProgram(program)
           getUpcomingPrograms(channel.id).then(({ programs }) => {
             setUpcomingPrograms(programs)
@@ -292,6 +471,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
             <div className="flex flex-col items-center">
               <Loader2 className="h-12 w-12 text-red-600 animate-spin mb-2" />
               <p className="text-white">Loading video...</p>
+              <p className="text-gray-400 text-sm mt-2">{debugInfo}</p>
             </div>
           </div>
         )}
@@ -300,10 +480,14 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         {error && (
           <div className="absolute inset-0 flex items-center justify-center bg-black z-20">
             <div className="text-center p-4 max-w-md">
+              <AlertTriangle className="h-8 w-8 text-yellow-500 mx-auto mb-2" />
               <p className="text-red-500 mb-4">{error}</p>
               <div className="flex justify-center space-x-4">
                 <button
-                  onClick={refreshProgram}
+                  onClick={() => {
+                    setAttemptedUrls([])
+                    refreshProgram()
+                  }}
                   className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition-colors flex items-center"
                 >
                   <RefreshCw className="h-4 w-4 mr-2" /> Try Again
@@ -326,13 +510,14 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
           onClick={togglePlay}
           onTimeUpdate={handleTimeUpdate}
           onEnded={handleVideoEnd}
-          onCanPlay={() => setIsLoading(false)}
-          onError={() => {
-            setError("Error loading video. Please try again.")
+          onCanPlay={() => {
             setIsLoading(false)
+            setDebugInfo("Video can play")
           }}
+          onError={handleVideoError}
           playsInline
           crossOrigin="anonymous"
+          preload="auto"
         >
           {currentVideoUrl && <source src={currentVideoUrl} type="video/mp4" />}
           Your browser does not support the video tag.
@@ -399,10 +584,20 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         </div>
       )}
 
-      {/* Debug info - remove in production */}
+      {/* Debug info */}
       <div className="bg-black p-2 text-xs text-gray-500">
         <p>Channel ID: {channel.id}</p>
         <p>Current URL: {currentVideoUrl ? currentVideoUrl.substring(0, 50) + "..." : "None"}</p>
+        <p>Status: {debugInfo}</p>
+        <button
+          onClick={() => {
+            setAttemptedUrls([])
+            refreshProgram()
+          }}
+          className="bg-gray-800 text-gray-300 px-2 py-1 rounded text-xs mt-1 hover:bg-gray-700"
+        >
+          Refresh Video
+        </button>
       </div>
     </div>
   )
