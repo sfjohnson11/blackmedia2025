@@ -44,54 +44,56 @@ export async function createTables() {
   }
 }
 
+// Replace the getCurrentProgram function with this more efficient implementation
 export async function getCurrentProgram(channelId: string): Promise<{ program: any }> {
-  const now = new Date().toISOString()
-  console.log(`Fetching current program for channel ${channelId} at ${now} (UTC)`)
-  console.log(`Local time: ${new Date().toLocaleString()}`)
+  console.log(`=== GETTING CURRENT PROGRAM FOR CHANNEL ${channelId} ===`)
+  const now = new Date()
+  console.log(`Current time (UTC ISO): ${now.toISOString()}`)
+  console.log(`Current time (Local): ${now.toLocaleString()}`)
 
   try {
-    // First, get the most recent program that started before now
-    const { data: program, error } = await supabase
+    // Get programs that have already started
+    const { data, error } = await supabase
       .from("programs")
       .select("*")
       .eq("channel_id", channelId)
-      .lte("start_time", now) // Program started before or at current time
+      .lte("start_time", now.toISOString())
       .order("start_time", { ascending: false })
-      .limit(1)
-      .single()
 
     if (error) {
-      // Check if this is a "no rows returned" error, which is expected when no programs exist
-      if (error.code === "PGRST116") {
-        console.log(`No current program found for channel ${channelId}`)
-        return { program: null }
-      }
-
-      console.error(`Error fetching current program for channel ${channelId}:`, error)
+      console.error(`Error fetching programs for channel ${channelId}:`, error)
       return { program: null }
     }
 
-    // Now check if this program has ended based on its duration
-    if (program) {
-      const startTime = new Date(program.start_time).getTime()
-      const endTime = startTime + program.duration * 1000 // Convert duration from seconds to milliseconds
-      const currentTime = Date.now()
-
-      console.log(`Program: ${program.title}`)
-      console.log(`Start time: ${new Date(startTime).toLocaleString()}`)
-      console.log(`End time: ${new Date(endTime).toLocaleString()}`)
-      console.log(`Current time: ${new Date(currentTime).toLocaleString()}`)
-
-      // If the program has ended, it's not the current program
-      if (currentTime > endTime) {
-        console.log(`Program ${program.title} has ended, returning null`)
-        return { program: null }
-      }
-
-      console.log(`Found current program for channel ${channelId}: ${program.title}`)
+    if (!data || data.length === 0) {
+      console.log(`No programs found for channel ${channelId}`)
+      return { program: null }
     }
 
-    return { program }
+    console.log(`Found ${data.length} programs that have started for channel ${channelId}`)
+
+    // Find the active program (where current time is between start and end)
+    const activeProgram = data.find((program) => {
+      const start = new Date(program.start_time)
+      const end = new Date(start.getTime() + program.duration * 1000)
+      const isActive = now >= start && now < end
+
+      console.log(`Checking program: ${program.title}`)
+      console.log(`- Start time: ${start.toLocaleString()}`)
+      console.log(`- End time: ${end.toLocaleString()}`)
+      console.log(`- Is active: ${isActive}`)
+
+      return isActive
+    })
+
+    if (activeProgram) {
+      console.log(`✅ CURRENT ACTIVE PROGRAM FOUND: ${activeProgram.title}`)
+      return { program: activeProgram }
+    }
+
+    // If no active program, return the most recent program
+    console.log(`No active program found, returning most recent program: ${data[0]?.title}`)
+    return { program: data[0] || null }
   } catch (e) {
     console.error(`Error in getCurrentProgram for channel ${channelId}:`, e)
     return { program: null }
@@ -100,6 +102,7 @@ export async function getCurrentProgram(channelId: string): Promise<{ program: a
 
 export async function getUpcomingPrograms(channelId: string): Promise<{ programs: any[] }> {
   const now = new Date().toISOString()
+  console.log(`Getting upcoming programs for channel ${channelId} at ${now}`)
 
   try {
     const { data: programs, error } = await supabase
@@ -115,6 +118,7 @@ export async function getUpcomingPrograms(channelId: string): Promise<{ programs
       return { programs: [] }
     }
 
+    console.log(`Found ${programs?.length || 0} upcoming programs`)
     return { programs: programs || [] }
   } catch (e) {
     console.error(`Error in getUpcomingPrograms for channel ${channelId}:`, e)

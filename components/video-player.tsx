@@ -4,7 +4,7 @@ import type React from "react"
 
 import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
-import { Loader2, ChevronLeft } from "lucide-react"
+import { Loader2, ChevronLeft, RefreshCw } from "lucide-react"
 import { getCurrentProgram, getUpcomingPrograms } from "@/lib/supabase"
 
 // Add this at the top of your component (using your Supabase URL from environment variables)
@@ -27,6 +27,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const [error, setError] = useState<string | null>(null)
   const [errorDetails, setErrorDetails] = useState<string | null>(null)
   const [currentTime, setCurrentTime] = useState(new Date())
+  const [lastRefreshTime, setLastRefreshTime] = useState(new Date())
 
   // Go back
   const handleBack = () => {
@@ -100,7 +101,44 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   // Format current time for display
   const formattedTime = currentTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
 
-  // Check for program updates with timezone handling
+  // Force refresh the current program
+  const forceRefreshProgram = async () => {
+    setIsLoading(true)
+    setError(null)
+    setErrorDetails(null)
+    setLastRefreshTime(new Date())
+
+    console.log("Force refreshing program for channel:", channel.id)
+
+    try {
+      const { program } = await getCurrentProgram(channel.id)
+      const { programs } = await getUpcomingPrograms(channel.id)
+
+      console.log("Force refresh result - Current program:", program)
+
+      if (program) {
+        setCurrentProgram(program)
+
+        if (program.mp4_url) {
+          loadVideo(program.mp4_url)
+        } else {
+          setError("Program has no video URL")
+          setIsLoading(false)
+        }
+      } else {
+        setError("No current program found for this channel")
+        setIsLoading(false)
+      }
+
+      setUpcomingPrograms(programs)
+    } catch (err) {
+      console.error("Error force refreshing program:", err)
+      setError("Error refreshing program")
+      setIsLoading(false)
+    }
+  }
+
+  // Check for program updates with improved logging
   const checkForProgramUpdates = async () => {
     // Don't check too frequently
     const now = Date.now()
@@ -111,22 +149,12 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     setLastProgramCheck(now)
 
     try {
-      console.log("Checking for program updates at:", new Date().toISOString())
+      console.log("Checking for program updates at:", new Date().toLocaleString())
 
       const { program } = await getCurrentProgram(channel.id)
       const { programs } = await getUpcomingPrograms(channel.id)
 
-      console.log("Current program from API:", program)
-      console.log("Program URL from API:", program?.mp4_url)
-
-      if (program) {
-        console.log("Program start time:", program.start_time)
-        console.log("Current time (ISO):", new Date().toISOString())
-
-        // Convert program start time to Date object for comparison
-        const programStartTime = new Date(program.start_time)
-        console.log("Program start time (local):", programStartTime.toLocaleString())
-      }
+      console.log("Program check result - Current program:", program)
 
       // If we have a new program, switch to it
       if (program && (!currentProgram || program.id !== currentProgram.id)) {
@@ -219,15 +247,6 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     setIsLoading(false)
   }
 
-  // Force refresh the current program
-  const forceRefresh = () => {
-    console.log("Force refreshing program")
-    setIsLoading(true)
-    setError(null)
-    setErrorDetails(null)
-    checkForProgramUpdates()
-  }
-
   // Initial setup
   useEffect(() => {
     console.log("Initial setup for channel:", channel.id)
@@ -236,8 +255,8 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     console.log("Current time (ISO):", new Date().toISOString())
     console.log("Current time (local):", new Date().toLocaleString())
 
-    // Always check for current program first, regardless of initialProgram
-    checkForProgramUpdates()
+    // Force refresh to get the current program
+    forceRefreshProgram()
 
     // Set up regular program checks
     const programCheckInterval = setInterval(checkForProgramUpdates, 30000) // Check every 30 seconds
@@ -292,15 +311,17 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       {/* Error state */}
       {error && (
         <div className="absolute inset-0 flex items-center justify-center bg-black z-20">
-          <div className="text-center p-4">
+          <div className="text-center p-4 max-w-md">
             <p className="text-red-500 mb-4">{error}</p>
             {errorDetails && <p className="text-gray-400 text-sm mb-4">{errorDetails}</p>}
-            <button
-              onClick={forceRefresh}
-              className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition-colors"
-            >
-              Try Again
-            </button>
+            <div className="flex flex-wrap justify-center gap-3">
+              <button
+                onClick={forceRefreshProgram}
+                className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition-colors flex items-center"
+              >
+                <RefreshCw className="h-4 w-4 mr-2" /> Force Refresh
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -335,6 +356,11 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         <div className="bg-black p-4">
           <h2 className="text-xl font-bold text-white">{currentProgram.title}</h2>
           <p className="text-gray-400 text-sm">Current time: {formattedTime}</p>
+          {currentProgram.start_time && (
+            <p className="text-gray-400 text-sm">
+              Started at: {new Date(currentProgram.start_time).toLocaleTimeString()}
+            </p>
+          )}
           {upcomingPrograms.length > 0 && (
             <p className="text-gray-400 text-sm mt-1">
               Next: {upcomingPrograms[0].title} at {new Date(upcomingPrograms[0].start_time).toLocaleTimeString()}
@@ -345,8 +371,11 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
 
       {/* Manual refresh button */}
       <div className="bg-black p-4 flex justify-center">
-        <button onClick={forceRefresh} className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700">
-          Refresh Program
+        <button
+          onClick={forceRefreshProgram}
+          className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 flex items-center"
+        >
+          <RefreshCw className="h-4 w-4 mr-2" /> Force Refresh Program
         </button>
       </div>
 
@@ -359,6 +388,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         <p>Current Time (UTC): {new Date().toISOString()}</p>
         <p>Current Time (Local): {new Date().toLocaleString()}</p>
         {currentProgram && <p>Program Start Time: {new Date(currentProgram.start_time).toLocaleString()}</p>}
+        <p>Last Refresh: {lastRefreshTime.toLocaleString()}</p>
         <p>Loading: {isLoading ? "Yes" : "No"}</p>
         <p>Error: {error || "None"}</p>
       </div>
