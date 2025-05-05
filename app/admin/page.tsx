@@ -18,6 +18,7 @@ import {
   FileVideo,
   Trash2,
   Code,
+  Edit,
 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 
@@ -82,6 +83,7 @@ export default function AdminDashboard() {
         { name: "Video Processor", href: "/admin/video-processor", icon: <FileVideo className="h-4 w-4" /> },
         { name: "Refresh Programs", href: "/admin/refresh-programs", icon: <RefreshCw className="h-4 w-4" /> },
         { name: "Reset Programs", href: "/admin/reset-programs", icon: <Trash2 className="h-4 w-4" /> },
+        { name: "Channel Manager", href: "/admin/channel-manager", icon: <Edit className="h-4 w-4" /> },
       ],
     },
     {
