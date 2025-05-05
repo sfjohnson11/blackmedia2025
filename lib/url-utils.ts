@@ -7,9 +7,10 @@ export async function isUrlAccessible(url: string): Promise<boolean> {
   if (!url) return false
 
   try {
+    // Use a HEAD request to minimize data transfer
     const response = await fetch(url, {
       method: "HEAD",
-      mode: "no-cors",
+      mode: "no-cors", // This helps with CORS issues
       cache: "no-cache",
     })
 
@@ -49,6 +50,7 @@ export function getVideoTypeFromUrl(url: string): "mp4" | "hls" | "unknown" {
   if (lowerUrl.includes(".m3u8")) return "hls"
   if (lowerUrl.includes(".mp4")) return "mp4"
 
+  // Try to guess based on domain or path
   if (
     lowerUrl.includes("mux.dev") ||
     lowerUrl.includes("livestream") ||
@@ -58,23 +60,5 @@ export function getVideoTypeFromUrl(url: string): "mp4" | "hls" | "unknown" {
     return "hls"
   }
 
-  return "mp4"
-}
-
-/**
- * Constructs the full public Supabase storage URL for a file
- * @param fileName Name of the file (e.g., 'video.mp4')
- * @param channelId Numeric channel ID (e.g., 1)
- * @returns Fully qualified public URL to the file
- */
-export function getFullUrl(fileName: string, channelId?: number): string {
-  if (!fileName) return ""
-
-  const cleanFileName = fileName.replace(/^\/\/+/, "")
-  const paddedChannel = String(channelId).padStart(2, "0")
-  const bucketName = `channel${paddedChannel}`
-
-  const baseUrl = `https://${process.env.NEXT_PUBLIC_SUPABASE_PROJECT_ID}.supabase.co/storage/v1/object/public`
-
-  return `${baseUrl}/${bucketName}/${cleanFileName}`
+  return "mp4" // Default to mp4 if we can't determine
 }

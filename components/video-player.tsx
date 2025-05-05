@@ -1,47 +1,796 @@
-// lib/supabase.ts
-import { createClient } from "@supabase/supabase-js"
+"use client"
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+import type React from "react"
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+import { useState, useEffect, useRef } from "react"
+import { useRouter } from "next/navigation"
+import { Loader2, ChevronLeft, RefreshCw, AlertTriangle, Play } from "lucide-react"
+import { getCurrentProgram, getUpcomingPrograms, forceRefreshAllData, getFullUrl } from "@/lib/supabase"
+import { getVideoTypeFromUrl, isValidUrl } from "@/lib/url-utils"
 
-// Ensure we do NOT hardcode "videos/" or override pathing
-export function getFullUrl(path: string): string {
-  if (!path) return ""
-  const cleanedPath = path.startsWith("/") ? path.slice(1) : path
-  const fullUrl = `${supabaseUrl}/storage/v1/object/public/${cleanedPath}`
-  return fullUrl.replace(/([^:]\/)\/+/, "$1") // fix double slashes
+interface VideoPlayerProps {
+  channel: any
+  initialProgram: any
+  upcomingPrograms: any[]
 }
 
-export async function getCurrentProgram(channelId: number) {
-  const now = new Date().toISOString()
-  const { data, error } = await supabase
-    .from("programs")
-    .select("*")
-    .eq("channel_id", channelId)
-    .lte("start_time", now)
-    .order("start_time", { ascending: false })
-    .limit(1)
+export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initialUpcoming }: VideoPlayerProps) {
+  const router = useRouter()
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const videoContainerRef = useRef<HTMLDivElement>(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const [currentProgram, setCurrentProgram] = useState(initialProgram)
+  const [upcomingPrograms, setUpcomingPrograms] = useState(initialUpcoming)
+  const [lastProgramCheck, setLastProgramCheck] = useState(Date.now())
+  const [videoUrl, setVideoUrl] = useState("")
+  const [error, setError] = useState<string | null>(null)
+  const [errorDetails, setErrorDetails] = useState<string | null>(null)
+  const [currentTime, setCurrentTime] = useState(new Date())
+  const [lastRefreshTime, setLastRefreshTime] = useState(new Date())
+  const [loadingTimeout, setLoadingTimeout] = useState<NodeJS.Timeout | null>(null)
+  const [retryCount, setRetryCount] = useState(0)
+  const maxRetries = 3
+  const [debugInfo, setDebugInfo] = useState<Record<string, any>>({})
+  const [isRefreshing, setIsRefreshing] = useState(false)
+  const [videoType, setVideoType] = useState<"mp4" | "hls" | "unknown">("unknown")
+  const [useCorsProxy, setUseCorsProxy] = useState(false)
+  const [useIframe, setUseIframe] = useState(false)
+  const [iframeKey, setIframeKey] = useState(0)
+  const [fallbackMode, setFallbackMode] = useState<"direct" | "proxy" | "iframe" | "embed">("direct")
 
-  if (error) throw error
-  return { program: data?.[0] || null }
-}
+  // Go back
+  const handleBack = () => {
+    router.back()
+  }
 
-export async function getUpcomingPrograms(channelId: number) {
-  const now = new Date().toISOString()
-  const { data, error } = await supabase
-    .from("programs")
-    .select("*")
-    .eq("channel_id", channelId)
-    .gt("start_time", now)
-    .order("start_time", { ascending: true })
+  // Add debug info
+  const addDebugInfo = (key: string, value: any) => {
+    setDebugInfo((prev) => ({
+      ...prev,
+      [key]: value,
+    }))
+  }
 
-  if (error) throw error
-  return { programs: data || [] }
-}
+  // Clear loading timeout if it exists
+  const clearLoadingTimeout = () => {
+    if (loadingTimeout) {
+      clearTimeout(loadingTimeout)
+      setLoadingTimeout(null)
+    }
+  }
 
-export async function forceRefreshAllData() {
-  // No-op if not implemented; useful for future cache busting
-  return true
+  // Apply CORS proxy to URL if needed
+  const applyCorsProxy = (url: string): string => {
+    if (!url) return ""
+
+    // Use our own CORS proxy API route
+    return `/api/cors-proxy?url=${encodeURIComponent(url)}`
+  }
+
+  // Ensure URL is absolute
+  const ensureAbsoluteUrl = (url: string): string => {
+    if (!url) return ""
+
+    // If it's already a full URL, return it
+    if (url.startsWith("http")) {
+      return url
+    }
+
+    // Otherwise, use getFullUrl to construct the full path
+    try {
+      return getFullUrl(url)
+    } catch (err) {
+      console.error("Error constructing full URL:", err)
+      return url // Return the original URL as fallback
+    }
+  }
+
+  // Load video with improved validation and error handling
+  const loadVideo = (url: string, forceRetry = false) => {
+    console.log("loadVideo called with URL:", url)
+    addDebugInfo("loadVideoUrl", url)
+    addDebugInfo("channelId", channel.id)
+    addDebugInfo("programTitle", currentProgram?.title || "None")
+    addDebugInfo("fallbackMode", fallbackMode)
+
+    clearLoadingTimeout()
+
+    if (!url) {
+      console.error("ERROR: Empty URL passed to loadVideo")
+      setError("No video URL available")
+      setIsLoading(false)
+      return
+    }
+
+    // Reset retry count if this is a new URL or forced retry
+    if (forceRetry || url !== videoUrl) {
+      setRetryCount(0)
+    }
+
+    // Ensure we have an absolute URL
+    const fullUrl = ensureAbsoluteUrl(url)
+
+    // Validate the URL
+    if (!isValidUrl(fullUrl)) {
+      console.error("Invalid URL:", fullUrl)
+      setError(`Invalid URL format: ${fullUrl}`)
+      setIsLoading(false)
+      return
+    }
+
+    // Determine video type
+    const type = getVideoTypeFromUrl(fullUrl)
+    setVideoType(type)
+
+    // Apply appropriate fallback strategy
+    let finalUrl = fullUrl
+
+    if (fallbackMode === "proxy") {
+      finalUrl = applyCorsProxy(fullUrl)
+      console.log("Using CORS proxy, new URL:", finalUrl)
+    } else if (fallbackMode === "iframe") {
+      // For iframe mode, we'll just store the original URL
+      // and use it in the iframe src
+      setUseIframe(true)
+      setIframeKey((prev) => prev + 1) // Force iframe refresh
+    } else if (fallbackMode === "embed") {
+      // For embed mode, we'll use a special embed URL format
+      // This is useful for services that provide embed URLs
+      if (fullUrl.includes("youtube.com") || fullUrl.includes("youtu.be")) {
+        // Convert YouTube URLs to embed format
+        const videoId = fullUrl.includes("youtu.be")
+          ? fullUrl.split("/").pop()
+          : new URLSearchParams(new URL(fullUrl).search).get("v")
+        if (videoId) {
+          finalUrl = `https://www.youtube.com/embed/${videoId}`
+          setUseIframe(true)
+          setIframeKey((prev) => prev + 1)
+        }
+      }
+    } else {
+      // Direct mode - use the URL as is
+      setUseIframe(false)
+    }
+
+    console.log(`Setting video URL to: ${finalUrl} (type: ${type}, mode: ${fallbackMode})`)
+    addDebugInfo("finalVideoUrl", finalUrl)
+    addDebugInfo("originalVideoUrl", url)
+    addDebugInfo("retryCount", retryCount)
+    addDebugInfo("videoType", type)
+
+    setVideoUrl(finalUrl)
+    setIsLoading(true)
+    setError(null)
+    setErrorDetails(null)
+
+    // Set a timeout to catch silent failures
+    const timeout = setTimeout(() => {
+      console.log("Video loading timeout reached")
+      addDebugInfo("loadingTimeout", true)
+
+      if (isLoading) {
+        console.error("Video failed to load within timeout period")
+
+        // If we haven't reached max retries, try the next fallback mode
+        if (retryCount < maxRetries) {
+          console.log(`Retry ${retryCount + 1}/${maxRetries} after timeout`)
+          setRetryCount((prev) => prev + 1)
+
+          // Try a different approach based on retry count
+          if (fallbackMode === "direct") {
+            // First retry: Try with CORS proxy
+            setFallbackMode("proxy")
+            loadVideo(url, false)
+          } else if (fallbackMode === "proxy") {
+            // Second retry: Try with iframe
+            setFallbackMode("iframe")
+            loadVideo(url, false)
+          } else if (fallbackMode === "iframe") {
+            // Third retry: Try with embed format if applicable
+            setFallbackMode("embed")
+            loadVideo(url, false)
+          } else {
+            // If all fallbacks failed, go back to direct but with a different URL format
+            setFallbackMode("direct")
+
+            // Try adding a cache buster
+            const cacheBuster = `?cb=${Date.now()}`
+            const urlWithCache = url.includes("?") ? `${url}&cb=${Date.now()}` : `${url}${cacheBuster}`
+
+            loadVideo(urlWithCache, true)
+          }
+        } else {
+          setError("Video failed to load after multiple attempts")
+          setErrorDetails(`URL: ${fullUrl} | Type: ${type} | Mode: ${fallbackMode}`)
+          setIsLoading(false)
+        }
+      }
+    }, 15000) // 15 second timeout
+
+    setLoadingTimeout(timeout)
+  }
+
+  // Update current time every second
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date())
+    }, 1000)
+
+    return () => clearInterval(timer)
+  }, [])
+
+  // Cleanup loading timeout on unmount
+  useEffect(() => {
+    return () => {
+      clearLoadingTimeout()
+    }
+  }, [])
+
+  // Format current time for display
+  const formattedTime = currentTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+
+  // Force refresh the current program with cache busting
+  const forceRefreshProgram = async () => {
+    setIsLoading(true)
+    setError(null)
+    setErrorDetails(null)
+    setLastRefreshTime(new Date())
+    setRetryCount(0)
+    clearLoadingTimeout()
+    setIsRefreshing(true)
+    // Reset to direct mode for a fresh start
+    setFallbackMode("direct")
+
+    console.log("Force refreshing program for channel:", channel.id)
+    addDebugInfo("forceRefreshChannel", channel.id)
+    addDebugInfo("forceRefreshTime", new Date().toISOString())
+
+    try {
+      // First, force a complete refresh of all data
+      await forceRefreshAllData()
+
+      // Then get the current program with fresh data
+      const { program } = await getCurrentProgram(channel.id)
+      const { programs } = await getUpcomingPrograms(channel.id)
+
+      console.log("Force refresh result - Current program:", program)
+      addDebugInfo("refreshedProgram", program?.title || "None")
+
+      if (program) {
+        setCurrentProgram(program)
+        addDebugInfo("currentProgram", program.title)
+        addDebugInfo("programStartTime", program.start_time)
+        addDebugInfo("programDuration", program.duration)
+
+        if (program.mp4_url) {
+          loadVideo(program.mp4_url, true)
+        } else {
+          setError("Program has no video URL")
+          setIsLoading(false)
+        }
+      } else {
+        setError("No current program found for this channel")
+        setIsLoading(false)
+      }
+
+      setUpcomingPrograms(programs)
+    } catch (err) {
+      console.error("Error force refreshing program:", err)
+      setError("Error refreshing program")
+      addDebugInfo("refreshError", err instanceof Error ? err.message : String(err))
+      setIsLoading(false)
+    } finally {
+      setIsRefreshing(false)
+    }
+  }
+
+  // Check for program updates with improved logging
+  const checkForProgramUpdates = async () => {
+    // Don't check too frequently
+    const now = Date.now()
+    if (now - lastProgramCheck < 10000) {
+      // 10 seconds minimum between checks
+      return
+    }
+    setLastProgramCheck(now)
+
+    try {
+      console.log("Checking for program updates at:", new Date().toLocaleString())
+      addDebugInfo("programCheckTime", new Date().toISOString())
+
+      // Force a complete refresh of all data to ensure we get fresh programs
+      await forceRefreshAllData()
+
+      const { program } = await getCurrentProgram(channel.id)
+      const { programs } = await getUpcomingPrograms(channel.id)
+
+      console.log("Program check result - Current program:", program)
+      addDebugInfo("scheduledCheckProgram", program?.title || "None")
+
+      // If we have a new program, switch to it
+      if (program && (!currentProgram || program.id !== currentProgram.id)) {
+        console.log("New program detected:", program.title)
+        setCurrentProgram(program)
+        addDebugInfo("switchedToProgram", program.title)
+
+        if (program.mp4_url) {
+          // Reset to direct mode for a fresh start with the new program
+          setFallbackMode("direct")
+          loadVideo(program.mp4_url, true)
+        } else {
+          console.error("ERROR: New program has no mp4_url:", program)
+          setError("Program has no video URL")
+          setIsLoading(false)
+        }
+      } else if (!program) {
+        console.log("No current program found for channel", channel.id)
+        setError("No current program found for this channel")
+        setIsLoading(false)
+      }
+
+      setUpcomingPrograms(programs)
+    } catch (err) {
+      console.error("Error checking for program updates:", err)
+      addDebugInfo("checkError", err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  // Handle video end
+  const handleVideoEnd = () => {
+    console.log("Video ended, checking for next program")
+    addDebugInfo("videoEnded", new Date().toISOString())
+    checkForProgramUpdates()
+  }
+
+  // Improved error handling specifically for the case where no error object is available
+  const handleVideoError = (e: React.SyntheticEvent<HTMLVideoElement>) => {
+    console.log("Video error event triggered")
+    addDebugInfo("errorTriggered", new Date().toISOString())
+
+    // Clear the loading timeout since we've received an error event
+    clearLoadingTimeout()
+
+    const videoElement = e.currentTarget
+    const videoError = videoElement.error
+
+    // Add additional debug info for troubleshooting regardless of error object
+    addDebugInfo("videoElement", {
+      src: videoElement.src,
+      networkState: videoElement.networkState,
+      readyState: videoElement.readyState,
+      paused: videoElement.paused,
+      ended: videoElement.ended,
+      currentSrc: videoElement.currentSrc,
+    })
+
+    // Map network state to helpful text
+    let networkStateText = "Unknown"
+    switch (videoElement.networkState) {
+      case HTMLMediaElement.NETWORK_EMPTY:
+        networkStateText = "NETWORK_EMPTY"
+        break
+      case HTMLMediaElement.NETWORK_IDLE:
+        networkStateText = "NETWORK_IDLE"
+        break
+      case HTMLMediaElement.NETWORK_LOADING:
+        networkStateText = "NETWORK_LOADING"
+        break
+      case HTMLMediaElement.NETWORK_NO_SOURCE:
+        networkStateText = "NETWORK_NO_SOURCE"
+        break
+    }
+
+    addDebugInfo("networkState", networkStateText)
+
+    let errorMessage = "Unknown video error"
+    let errorDetailsText = ""
+
+    if (videoError) {
+      // Log the error code and message
+      console.error("Video error code:", videoError.code)
+      console.error("Video error message:", videoError.message)
+      addDebugInfo("errorCode", videoError.code)
+      addDebugInfo("errorMessage", videoError.message)
+
+      // Provide specific error messages based on the error code
+      switch (videoError.code) {
+        case MediaError.MEDIA_ERR_ABORTED:
+          errorMessage = "Video playback was aborted"
+          console.error("MEDIA_ERR_ABORTED: Video playback was aborted")
+          break
+        case MediaError.MEDIA_ERR_NETWORK:
+          errorMessage = "A network error occurred while loading the video"
+          console.error("MEDIA_ERR_NETWORK: A network error occurred")
+          break
+        case MediaError.MEDIA_ERR_DECODE:
+          errorMessage = "The video could not be decoded"
+          console.error("MEDIA_ERR_DECODE: Failed to decode the video")
+          break
+        case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
+          errorMessage = "The video format is not supported or the URL is invalid"
+          console.error("MEDIA_ERR_SRC_NOT_SUPPORTED: Unsupported video source")
+          break
+        default:
+          console.error("Unknown video error")
+      }
+
+      // Add the error message if available
+      if (videoError.message) {
+        errorMessage += `: ${videoError.message}`
+      }
+
+      errorDetailsText = `Error code: ${videoError.code}, URL: ${videoUrl}`
+    } else {
+      console.error("Video error event but no error object available")
+      addDebugInfo("emptyErrorObject", true)
+
+      // CORS or security errors often trigger without an error object
+      if (networkStateText === "NETWORK_NO_SOURCE") {
+        errorMessage = "Video source not found or inaccessible"
+        errorDetailsText = "The video URL may be invalid, inaccessible, or blocked by CORS policy."
+      } else {
+        errorMessage = "Video loading failed"
+        errorDetailsText = "This could be due to a CORS issue, invalid URL, or unsupported file format."
+      }
+
+      errorDetailsText += ` Network state: ${networkStateText}. URL: ${videoUrl}`
+    }
+
+    // Log the current URL
+    console.error("Current video URL when error occurred:", videoUrl)
+
+    // Try the next fallback mode if we haven't exhausted all options
+    if (retryCount < maxRetries) {
+      console.log(`Trying fallback mode after error (retry ${retryCount + 1}/${maxRetries})`)
+      setRetryCount((prev) => prev + 1)
+
+      // Try a different approach based on current fallback mode
+      if (fallbackMode === "direct") {
+        // First fallback: Try with CORS proxy
+        setFallbackMode("proxy")
+        setTimeout(() => loadVideo(currentProgram?.mp4_url || "", false), 1000)
+      } else if (fallbackMode === "proxy") {
+        // Second fallback: Try with iframe
+        setFallbackMode("iframe")
+        setTimeout(() => loadVideo(currentProgram?.mp4_url || "", false), 1000)
+      } else if (fallbackMode === "iframe") {
+        // Third fallback: Try with embed format if applicable
+        setFallbackMode("embed")
+        setTimeout(() => loadVideo(currentProgram?.mp4_url || "", false), 1000)
+      } else {
+        // If all fallbacks failed, show error
+        setError(`Video error: ${errorMessage}`)
+        setErrorDetails(errorDetailsText)
+        setIsLoading(false)
+      }
+      return
+    }
+
+    // Set the error state if we're out of retries or can't retry
+    setError(`Video error: ${errorMessage}`)
+    setErrorDetails(errorDetailsText)
+    setIsLoading(false)
+  }
+
+  // Handle video can play
+  const handleCanPlay = () => {
+    console.log("Video can play event triggered for URL:", videoUrl)
+    addDebugInfo("canPlay", true)
+    addDebugInfo("canPlayTime", new Date().toISOString())
+    clearLoadingTimeout()
+    setIsLoading(false)
+    setError(null)
+    setRetryCount(0) // Reset retry count on successful load
+  }
+
+  // Initial setup
+  useEffect(() => {
+    console.log("Initial setup for channel:", channel.id)
+    console.log("Initial program:", initialProgram)
+    console.log("Initial program URL:", initialProgram?.mp4_url)
+    console.log("Current time (ISO):", new Date().toISOString())
+    console.log("Current time (local):", new Date().toLocaleString())
+
+    addDebugInfo("initialSetupTime", new Date().toISOString())
+    addDebugInfo("channelId", channel.id)
+    addDebugInfo("initialProgramTitle", initialProgram?.title || "None")
+    addDebugInfo("initialProgramUrl", initialProgram?.mp4_url || "None")
+
+    // If we have an initial program with a URL, load it
+    if (initialProgram && initialProgram.mp4_url) {
+      loadVideo(initialProgram.mp4_url)
+    } else {
+      console.error("No initial program or URL available")
+      setError("No video available for this channel")
+      setIsLoading(false)
+    }
+
+    // Force refresh to get the current program
+    forceRefreshProgram()
+
+    // Set up regular program checks
+    const programCheckInterval = setInterval(checkForProgramUpdates, 30000) // Check every 30 seconds
+
+    // Set up a more frequent check for the exact program change time
+    const scheduleCheckInterval = setInterval(() => {
+      // Check if we have upcoming programs
+      if (upcomingPrograms.length > 0) {
+        const nextProgram = upcomingPrograms[0]
+        const nextProgramTime = new Date(nextProgram.start_time).getTime()
+        const now = Date.now()
+
+        // If it's time for the next program (within 5 seconds), check for updates
+        if (nextProgramTime <= now + 5000 && nextProgramTime >= now - 5000) {
+          console.log("It's time for the next program, checking for updates")
+          checkForProgramUpdates()
+        }
+      }
+    }, 5000) // Check every 5 seconds
+
+    return () => {
+      clearInterval(programCheckInterval)
+      clearInterval(scheduleCheckInterval)
+      clearLoadingTimeout()
+    }
+  }, [])
+
+  // Try next fallback mode
+  const tryNextFallbackMode = () => {
+    // Cycle through fallback modes
+    if (fallbackMode === "direct") {
+      setFallbackMode("proxy")
+    } else if (fallbackMode === "proxy") {
+      setFallbackMode("iframe")
+    } else if (fallbackMode === "iframe") {
+      setFallbackMode("embed")
+    } else {
+      setFallbackMode("direct")
+    }
+
+    // Reload the video with the new fallback mode
+    if (currentProgram?.mp4_url) {
+      loadVideo(currentProgram.mp4_url, true)
+    }
+  }
+
+  // Render the appropriate video player based on fallback mode
+  const renderVideoPlayer = () => {
+    if (!videoUrl) {
+      return (
+        <div className="w-full h-full flex items-center justify-center">
+          <p className="text-white">No video URL available</p>
+        </div>
+      )
+    }
+
+    if (useIframe) {
+      return (
+        <iframe
+          key={`iframe-${iframeKey}-${videoUrl}`}
+          src={videoUrl}
+          className="w-full h-full border-0"
+          allowFullScreen
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          onLoad={() => {
+            console.log("iframe loaded")
+            setIsLoading(false)
+            clearLoadingTimeout()
+          }}
+        />
+      )
+    }
+
+    return (
+      <video
+        ref={videoRef}
+        key={`${videoUrl}-${retryCount}-${fallbackMode}`} // This forces a complete remount when the URL, retry count, or fallback mode changes
+        className="w-full h-full"
+        controls
+        playsInline
+        autoPlay
+        onCanPlay={handleCanPlay}
+        onEnded={handleVideoEnd}
+        onError={handleVideoError}
+        onLoadStart={() => {
+          console.log("Video load started for URL:", videoUrl)
+          addDebugInfo("loadStarted", new Date().toISOString())
+          addDebugInfo("videoType", videoType)
+        }}
+        onLoadedData={() => {
+          console.log("Video data loaded for URL:", videoUrl)
+          addDebugInfo("loadedData", new Date().toISOString())
+        }}
+        onStalled={() => {
+          console.log("Video playback has stalled")
+          addDebugInfo("videoStalled", new Date().toISOString())
+        }}
+        onSuspend={() => {
+          console.log("Video loading has been suspended")
+          addDebugInfo("videoSuspended", new Date().toISOString())
+        }}
+        onAbort={() => {
+          console.log("Video loading has been aborted")
+          addDebugInfo("videoAborted", new Date().toISOString())
+        }}
+        crossOrigin="anonymous"
+      >
+        {videoType === "hls" ? (
+          // HLS stream
+          <source src={videoUrl} type="application/vnd.apple.mpegurl" />
+        ) : (
+          // Regular MP4
+          <source src={videoUrl} type="video/mp4" />
+        )}
+        Your browser does not support the video tag.
+      </video>
+    )
+  }
+
+  return (
+    <div className="relative bg-black">
+      {/* Back button */}
+      <button
+        onClick={handleBack}
+        className="absolute top-4 left-4 z-10 bg-black/50 p-2 rounded-full hover:bg-black/70 transition-colors"
+      >
+        <ChevronLeft className="h-6 w-6 text-white" />
+      </button>
+
+      {/* Loading state */}
+      {isLoading && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black z-20">
+          <div className="flex flex-col items-center">
+            <Loader2 className="h-12 w-12 text-red-600 animate-spin mb-2" />
+            <p className="text-white">
+              Loading video{retryCount > 0 ? ` (Attempt ${retryCount + 1}/${maxRetries + 1})` : ""}...
+            </p>
+            {retryCount > 0 && <p className="text-gray-400 text-sm mt-2">Using {fallbackMode} mode...</p>}
+          </div>
+        </div>
+      )}
+
+      {/* Error state */}
+      {error && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black z-20">
+          <div className="text-center p-4 max-w-md">
+            <AlertTriangle className="h-12 w-12 text-red-600 mx-auto mb-4" />
+            <p className="text-red-500 mb-4">{error}</p>
+            {errorDetails && <p className="text-gray-400 text-sm mb-4">{errorDetails}</p>}
+
+            {/* Troubleshooting tips */}
+            <div className="bg-gray-800 p-3 rounded-md mb-4 text-left">
+              <p className="text-gray-300 text-sm font-semibold mb-2">Troubleshooting tips:</p>
+              <ul className="text-gray-400 text-xs list-disc pl-4 space-y-1">
+                <li>Check if the video URL is accessible</li>
+                <li>Verify that the video format is supported by your browser</li>
+                <li>Try using a different browser</li>
+                <li>Check for CORS issues if the video is hosted on a different domain</li>
+                <li>Ensure the video URL is an absolute URL (starts with http:// or https://)</li>
+              </ul>
+            </div>
+
+            <div className="flex flex-wrap justify-center gap-3 mb-4">
+              <button
+                onClick={forceRefreshProgram}
+                disabled={isRefreshing}
+                className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition-colors flex items-center"
+              >
+                <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshing ? "animate-spin" : ""}`} />
+                {isRefreshing ? "Refreshing..." : "Force Refresh"}
+              </button>
+              <button
+                onClick={() => router.back()}
+                className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 transition-colors"
+              >
+                Go Back
+              </button>
+            </div>
+
+            {/* Try different playback modes */}
+            <div className="mt-4">
+              <button
+                onClick={tryNextFallbackMode}
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded transition-colors flex items-center justify-center mx-auto"
+              >
+                <Play className="h-4 w-4 mr-2" />
+                Try Different Playback Mode
+              </button>
+              <p className="text-gray-400 text-xs mt-2">
+                Current mode: {fallbackMode}. Click to try a different approach.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Video container */}
+      <div ref={videoContainerRef} className="w-full aspect-video bg-black">
+        {renderVideoPlayer()}
+      </div>
+
+      {/* Program info */}
+      {currentProgram && (
+        <div className="bg-black p-4">
+          <h2 className="text-xl font-bold text-white">{currentProgram.title}</h2>
+          <p className="text-gray-400 text-sm">Current time: {formattedTime}</p>
+          {currentProgram.start_time && (
+            <p className="text-gray-400 text-sm">
+              Started at: {new Date(currentProgram.start_time).toLocaleTimeString()}
+            </p>
+          )}
+          {upcomingPrograms.length > 0 && (
+            <p className="text-gray-400 text-sm mt-1">
+              Next: {upcomingPrograms[0].title} at {new Date(upcomingPrograms[0].start_time).toLocaleTimeString()}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Control buttons */}
+      <div className="bg-black p-4 flex justify-center gap-4 flex-wrap">
+        <button
+          onClick={forceRefreshProgram}
+          disabled={isRefreshing}
+          className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 flex items-center"
+        >
+          <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshing ? "animate-spin" : ""}`} />
+          {isRefreshing ? "Refreshing..." : "Force Refresh Program"}
+        </button>
+
+        <button
+          onClick={tryNextFallbackMode}
+          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded transition-colors flex items-center"
+        >
+          <Play className="h-4 w-4 mr-2" />
+          Try{" "}
+          {fallbackMode === "direct"
+            ? "CORS Proxy"
+            : fallbackMode === "proxy"
+              ? "Iframe Mode"
+              : fallbackMode === "iframe"
+                ? "Embed Mode"
+                : "Direct Mode"}
+        </button>
+      </div>
+
+      {/* Debug info */}
+      <div className="bg-black p-2 text-xs text-gray-500">
+        <p>Channel ID: {channel.id}</p>
+        <p>Current Program: {currentProgram?.title || "None"}</p>
+        <p>Program URL: {currentProgram?.mp4_url || "None"}</p>
+        <p>Video URL: {videoUrl || "None"}</p>
+        <p>Video Type: {videoType}</p>
+        <p>Playback Mode: {fallbackMode}</p>
+        <p>Using Iframe: {useIframe ? "Yes" : "No"}</p>
+        <p>Current Time (UTC): {new Date().toISOString()}</p>
+        <p>Current Time (Local): {new Date().toLocaleString()}</p>
+        {currentProgram && <p>Program Start Time: {new Date(currentProgram.start_time).toLocaleString()}</p>}
+        {currentProgram && <p>Program Duration: {currentProgram.duration || "Unknown"} seconds</p>}
+        {currentProgram && currentProgram.duration && (
+          <p>
+            Program End Time:{" "}
+            {new Date(new Date(currentProgram.start_time).getTime() + currentProgram.duration * 1000).toLocaleString()}
+          </p>
+        )}
+        <p>Last Refresh: {lastRefreshTime.toLocaleString()}</p>
+        <p>Loading: {isLoading ? "Yes" : "No"}</p>
+        <p>Error: {error || "None"}</p>
+        <p>
+          Retry Count: {retryCount}/{maxRetries}
+        </p>
+
+        {/* Advanced Debug Info */}
+        <details className="mt-2">
+          <summary className="cursor-pointer text-gray-400">Advanced Debug Info</summary>
+          <div className="mt-2 pl-2 border-l border-gray-700">
+            {Object.entries(debugInfo).map(([key, value]) => (
+              <p key={key}>
+                {key}: {typeof value === "object" ? JSON.stringify(value) : String(value)}
+              </p>
+            ))}
+          </div>
+        </details>
+      </div>
+    </div>
+  )
 }
