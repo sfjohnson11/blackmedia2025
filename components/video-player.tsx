@@ -3,7 +3,7 @@
 import { useState, useRef } from 'react'
 import { ChevronLeft } from 'lucide-react'
 import { useRouter } from 'next/navigation'
-import { getFullUrl } from '@/utils/url-utils'
+import { getFullUrl } from '@/lib/url-utils'
 
 interface VideoPlayerProps {
   channel: any
