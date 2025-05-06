@@ -2,11 +2,13 @@
 
 import React, { useRef, useEffect } from 'react'
 
-export function VideoPlayer() {
-  const videoRef = useRef<HTMLVideoElement>(null)
+interface VideoPlayerProps {
+  src: string
+  poster?: string
+}
 
-  // 🔒 Replace this with any known-good video path from your Supabase bucket
-  const src = 'https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/channel21/thetruthaboutpower.mp4'
+export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
+  const videoRef = useRef<HTMLVideoElement>(null)
 
   useEffect(() => {
     const video = videoRef.current
@@ -14,13 +16,22 @@ export function VideoPlayer() {
       video.volume = 1
       video.controls = true
     }
-  }, [src])
+  }, [])
+
+  if (!src) {
+    return (
+      <div className="text-red-600 bg-black p-4 text-center">
+        ⚠️ No video source found.
+      </div>
+    )
+  }
 
   return (
     <div style={{ backgroundColor: 'black', width: '100%', height: 'auto', padding: '10px' }}>
       <video
         ref={videoRef}
         src={src}
+        poster={poster}
         controls
         playsInline
         className="w-full max-h-[90vh] object-contain"
