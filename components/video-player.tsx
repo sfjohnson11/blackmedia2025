@@ -33,30 +33,19 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms }: Video
 
       {/* Video Player */}
       {videoUrl ? (
-  <div style={{ zIndex: 99, position: 'relative' }}>
-    <video
-      key={videoUrl}
-      id="main-video"
-      src={videoUrl}
-      controls
-      playsInline
-      muted={false}
-      autoPlay={false}
-      style={{
-        width: '100%',
-        height: 'auto',
-        backgroundColor: 'black',
-        zIndex: 99,
-        position: 'relative',
-      }}
-    />
-  </div>
-) : (
-  <div className="p-6 text-center text-red-400">
-    No video URL found.
-  </div>
-)}
-
+        <video
+          src={videoUrl}
+          controls
+          playsInline
+          muted={false}
+          autoPlay={false}
+          className="w-full aspect-video bg-black"
+        />
+      ) : (
+        <div className="p-6 text-center text-red-400">
+          No video URL found.
+        </div>
+      )}
 
       {/* Program Info */}
       {initialProgram && (
