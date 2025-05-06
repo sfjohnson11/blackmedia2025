@@ -1,8 +1,7 @@
 'use client'
 
-import { useState, useRef } from 'react'
-import { ChevronLeft } from 'lucide-react'
 import { useRouter } from 'next/navigation'
+import { ChevronLeft } from 'lucide-react'
 
 interface VideoPlayerProps {
   channel: any
@@ -10,13 +9,8 @@ interface VideoPlayerProps {
   upcomingPrograms: any[]
 }
 
-export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initialUpcoming }: VideoPlayerProps) {
+export function VideoPlayer({ channel, initialProgram, upcomingPrograms }: VideoPlayerProps) {
   const router = useRouter()
-  const videoRef = useRef<HTMLVideoElement>(null)
-  const [currentProgram, setCurrentProgram] = useState(initialProgram)
-  const [upcomingPrograms, setUpcomingPrograms] = useState(initialUpcoming)
-  const [retryCount, setRetryCount] = useState(0)
-  const [hasTriedFallback, setHasTriedFallback] = useState(false)
 
   const getVideoUrl = (mp4Path: string) => {
     if (!mp4Path) return ''
@@ -25,34 +19,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     return `${base}/${clean}`
   }
 
-  const getFallbackUrl = () => {
-    const bucket = currentProgram?.mp4_url?.match(/channel\d+/)?.[0] || `channel${channel.id}`
-    return `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/${bucket}/standby_blacktruthtv.mp4`
-  }
-
-  const videoUrl = hasTriedFallback
-    ? getFallbackUrl()
-    : getVideoUrl(currentProgram?.mp4_url)
-
-  const loadNextProgram = () => {
-    if (upcomingPrograms.length > 0) {
-      const next = upcomingPrograms[0]
-      setUpcomingPrograms(upcomingPrograms.slice(1))
-      setCurrentProgram(next)
-      setRetryCount(0)
-      setHasTriedFallback(false)
-    } else {
-      setHasTriedFallback(true)
-    }
-  }
-
-  const handleVideoError = () => {
-    if (retryCount < 2) {
-      setRetryCount((prev) => prev + 1)
-    } else {
-      setHasTriedFallback(true)
-    }
-  }
+  const videoUrl = getVideoUrl(initialProgram?.mp4_url)
 
   return (
     <div className="bg-black text-white relative">
@@ -63,27 +30,28 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         <ChevronLeft className="h-6 w-6 text-white" />
       </button>
 
-      <video
-        key={videoUrl + retryCount}
-        ref={videoRef}
-        src={videoUrl}
-        controls
-        autoPlay
-        muted
-        playsInline
-        onEnded={loadNextProgram}
-        onError={handleVideoError}
-        style={{ zIndex: 20, position: 'relative' }}
-        className="w-full aspect-video bg-black"
-      />
+      {videoUrl ? (
+        <video
+          src={videoUrl}
+          controls
+          playsInline
+          // 🔊 Don't autoPlay or mute: gives sound & controls consistently
+          style={{ zIndex: 10, position: 'relative' }}
+          className="w-full aspect-video bg-black"
+        />
+      ) : (
+        <div className="p-6 text-center text-red-400">
+          No video URL found.
+        </div>
+      )}
 
-      {currentProgram && (
+      {initialProgram && (
         <div className="p-4">
-          <h2 className="text-xl font-bold">{currentProgram.title}</h2>
+          <h2 className="text-xl font-bold">{initialProgram.title}</h2>
           <p className="text-sm text-gray-400">
-            Starts: {new Date(currentProgram.start_time).toLocaleTimeString()}
+            Starts: {new Date(initialProgram.start_time).toLocaleTimeString()}
           </p>
-          {upcomingPrograms.length > 0 && (
+          {upcomingPrograms?.[0] && (
             <p className="text-sm text-gray-400 mt-1">
               Next: {upcomingPrograms[0].title} at{' '}
               {new Date(upcomingPrograms[0].start_time).toLocaleTimeString()}
