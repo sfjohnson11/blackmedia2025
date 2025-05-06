@@ -154,6 +154,24 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
           )}
         </div>
       )}
+
+      {/* 🔧 Debug Panel - dev only */}
+      {process.env.NODE_ENV === 'development' && (
+        <div className="p-4 bg-gray-900 text-white text-sm border-t border-gray-700 mt-4">
+          <h3 className="text-lg font-bold mb-2">🔧 Debug Info</h3>
+          <ul className="space-y-1">
+            <li><strong>Channel ID:</strong> {channel?.id}</li>
+            <li><strong>Program Title:</strong> {currentProgram?.title || 'None'}</li>
+            <li><strong>Program URL:</strong> {currentProgram?.mp4_url}</li>
+            <li><strong>Video URL:</strong> {videoUrl}</li>
+            <li><strong>Retry Count:</strong> {retryCount}/{maxRetries}</li>
+            <li><strong>Loading:</strong> {isLoading ? 'Yes' : 'No'}</li>
+            <li><strong>Error:</strong> {error || 'None'}</li>
+            <li><strong>Now (Local):</strong> {new Date().toLocaleString()}</li>
+            <li><strong>Start Time:</strong> {currentProgram?.start_time ? new Date(currentProgram.start_time).toLocaleString() : 'N/A'}</li>
+          </ul>
+        </div>
+      )}
     </div>
   )
 }
