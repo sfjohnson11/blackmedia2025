@@ -372,32 +372,17 @@ const applyCorsProxy = (url: string): string => {
     // Log the current URL
     console.error("Current video URL when error occurred:", videoUrl)
 
-    // Try the next fallback mode if we haven't exhausted all options
-    if (retryCount < maxRetries) {
-      console.log(`Trying fallback mode after error (retry ${retryCount + 1}/${maxRetries})`)
-      setRetryCount((prev) => prev + 1)
-
-      // Try a different approach based on current fallback mode
-      if (fallbackMode === "direct") {
-        // First fallback: Try with CORS proxy
-        setFallbackMode("proxy")
-        setTimeout(() => loadVideo(currentProgram?.mp4_url || "", false), 1000)
-      } else if (fallbackMode === "proxy") {
-        // Second fallback: Try with iframe
-        setFallbackMode("iframe")
-        setTimeout(() => loadVideo(currentProgram?.mp4_url || "", false), 1000)
-      } else if (fallbackMode === "iframe") {
-        // Third fallback: Try with embed format if applicable
-        setFallbackMode("embed")
-        setTimeout(() => loadVideo(currentProgram?.mp4_url || "", false), 1000)
-      } else {
-        // If all fallbacks failed, show error
-        setError(`Video error: ${errorMessage}`)
-        setErrorDetails(errorDetailsText)
-        setIsLoading(false)
-      }
-      return
+   if (retryCount < maxRetries) {
+  console.log(`Retry ${retryCount + 1}/${maxRetries} after error`)
+  setRetryCount((prev) => prev + 1)
+  setTimeout(() => {
+    if (currentProgram?.mp4_url) {
+      loadVideo(currentProgram.mp4_url, true)
     }
+  }, 1500)
+  return
+}
+
 
     // Set the error state if we're out of retries or can't retry
     setError(`Video error: ${errorMessage}`)
