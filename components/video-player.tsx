@@ -1,67 +1,34 @@
 'use client'
 
-import { useRouter } from 'next/navigation'
-import { ChevronLeft } from 'lucide-react'
+import React, { useRef, useEffect } from 'react'
 
 interface VideoPlayerProps {
-  channel: any
-  initialProgram: any
-  upcomingPrograms: any[]
+  src: string
+  poster?: string
 }
 
-export function VideoPlayer({ channel, initialProgram, upcomingPrograms }: VideoPlayerProps) {
-  const router = useRouter()
+export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
+  const videoRef = useRef<HTMLVideoElement>(null)
 
-  const getVideoUrl = (mp4Path: string) => {
-    if (!mp4Path) return ''
-    const base = 'https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public'
-    const clean = mp4Path.replace(/^\/+/, '').replace(/\/{2,}/g, '/')
-    return `${base}/${clean}`
-  }
-
-  const videoUrl = getVideoUrl(initialProgram?.mp4_url)
+  useEffect(() => {
+    const video = videoRef.current
+    if (video) {
+      video.volume = 1 // make sure it's not muted
+    }
+  }, [])
 
   return (
-    <div className="bg-black text-white relative">
-      {/* Back Button */}
-      <button
-        onClick={() => router.back()}
-        className="absolute top-4 left-4 z-10 bg-black/50 p-2 rounded-full"
-      >
-        <ChevronLeft className="h-6 w-6 text-white" />
-      </button>
-
-      {/* Video Player */}
-      {videoUrl ? (
+    <div className="w-full bg-black p-4 flex justify-center items-center">
+      <div className="max-w-[1280px] w-full">
         <video
-          src={videoUrl}
+          ref={videoRef}
+          src={src}
+          poster={poster}
           controls
           playsInline
-          muted={false}
-          autoPlay={false}
-          className="w-full aspect-video bg-black"
+          className="w-full h-auto object-contain bg-black rounded-md"
         />
-      ) : (
-        <div className="p-6 text-center text-red-400">
-          No video URL found.
-        </div>
-      )}
-
-      {/* Program Info */}
-      {initialProgram && (
-        <div className="p-4">
-          <h2 className="text-xl font-bold">{initialProgram.title}</h2>
-          <p className="text-sm text-gray-400">
-            Starts: {new Date(initialProgram.start_time).toLocaleTimeString()}
-          </p>
-          {upcomingPrograms?.[0] && (
-            <p className="text-sm text-gray-400 mt-1">
-              Next: {upcomingPrograms[0].title} at{' '}
-              {new Date(upcomingPrograms[0].start_time).toLocaleTimeString()}
-            </p>
-          )}
-        </div>
-      )}
+      </div>
     </div>
   )
 }
