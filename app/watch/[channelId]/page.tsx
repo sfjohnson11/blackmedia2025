@@ -152,9 +152,6 @@ useEffect(() => {
     <div>
       {hasAccess ? (
         <>
-console.log("🔍 DEBUG CHECK")
-console.log("channel.bucket:", channel?.bucket)
-console.log("video_url:", currentProgram?.video_url)
 {currentProgram && channel?.bucket ? (
   {currentProgram?.video_url && channel?.id ? (
   <VideoPlayer
