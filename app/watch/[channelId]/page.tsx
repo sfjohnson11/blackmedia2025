@@ -145,6 +145,10 @@ export default function WatchPage({ params }: WatchPageProps) {
     <div>
       {hasAccess ? (
         <>
+console.log("🔍 DEBUG CHECK")
+console.log("channel.bucket:", channel?.bucket)
+console.log("video_url:", currentProgram?.video_url)
+
           <VideoPlayer
   src={
     currentProgram?.video_url && channel?.bucket
