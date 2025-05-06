@@ -3,8 +3,8 @@
 import { useState, useRef } from 'react'
 import { ChevronLeft, AlertTriangle, Loader2 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
-import { getCurrentProgram, getUpcomingPrograms, forceRefreshAllData } from '@/lib/supabase'
 import { getFullUrl } from '@/utils/url-utils'
+import { getCurrentProgram, getUpcomingPrograms, forceRefreshAllData } from '@/lib/supabase'
 
 interface VideoPlayerProps {
   channel: any
@@ -24,8 +24,6 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const [hasTriedFallback, setHasTriedFallback] = useState(false)
   const maxRetries = 2
 
-  const standbyVideo = getStandbyUrl(initialProgram?.mp4_url || '')
-
   function cleanAndBuildUrl(raw: string): string {
     if (!raw) return ''
     try {
@@ -34,9 +32,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         const match = url.match(/url=(https?.*)$/)
         if (match && match[1]) url = match[1]
       }
-      if (!url.startsWith('http')) {
-        url = getFullUrl(url)
-      }
+      if (!url.startsWith('http')) url = getFullUrl(url)
       return url
     } catch (e) {
       console.error('URL cleanup failed:', raw, e)
@@ -44,14 +40,9 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     }
   }
 
-  function getStandbyUrl(videoPath: string): string {
-    try {
-      const match = videoPath.match(/channel\d+/)
-      const channelName = match ? match[0] : 'channel1'
-      return `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/${channelName}/standby_blacktruthtv.mp4`
-    } catch {
-      return ''
-    }
+  function getStandbyUrl(): string {
+    const channelFolder = currentProgram?.mp4_url?.match(/channel\d+/)?.[0] || channel.id || 'channel1'
+    return `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/${channelFolder}/standby_blacktruthtv.mp4`
   }
 
   const loadVideo = (url: string) => {
@@ -68,7 +59,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
     } else if (!hasTriedFallback) {
       console.warn('⚠️ Loading standby fallback...')
       setHasTriedFallback(true)
-      loadVideo(standbyVideo)
+      loadVideo(getStandbyUrl())
     } else {
       setError('Video and fallback failed.')
       setIsLoading(false)
@@ -90,7 +81,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       loadVideo(next.mp4_url)
     } else {
       console.warn('No upcoming program, switching to standby.')
-      loadVideo(standbyVideo)
+      loadVideo(getStandbyUrl())
     }
   }
 
@@ -109,7 +100,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       } else {
         setError('No program available')
       }
-    } catch (err) {
+    } catch {
       setError('Refresh failed')
     }
   }
