@@ -32,13 +32,13 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms }: Video
 
       {videoUrl ? (
         <video
-          src={videoUrl}
-          controls
-          playsInline
-          // 🔊 Don't autoPlay or mute: gives sound & controls consistently
-          style={{ zIndex: 10, position: 'relative' }}
-          className="w-full aspect-video bg-black"
-        />
+  src={videoUrl}
+  controls
+  playsInline
+  // DO NOT use autoPlay or muted here
+  style={{ zIndex: 50, position: 'relative' }}
+  className="w-full aspect-video bg-black"
+/>
       ) : (
         <div className="p-6 text-center text-red-400">
           No video URL found.
