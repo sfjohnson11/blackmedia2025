@@ -1,64 +1,28 @@
 /**
- * Checks if a URL is accessible by making a HEAD request
- * @param url The URL to check
- * @returns Promise<boolean> True if the URL is accessible
+ * Builds a complete public Supabase URL for a given relative MP4 path.
  */
-export async function isUrlAccessible(url: string): Promise<boolean> {
-  if (!url) return false
+export function getFullUrl(mp4Path: string): string {
+  if (!mp4Path) return ""
 
-  try {
-    // Use a HEAD request to minimize data transfer
-    const response = await fetch(url, {
-      method: "HEAD",
-      mode: "no-cors", // This helps with CORS issues
-      cache: "no-cache",
-    })
+  const baseUrl = "https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public"
 
-    return true
-  } catch (error) {
-    console.error(`URL accessibility check failed for ${url}:`, error)
-    return false
-  }
+  // Remove leading slashes
+  const cleanPath = mp4Path.replace(/^\/+/, "")
+
+  // Replace multiple slashes
+  const sanitizedPath = cleanPath.replace(/\/{2,}/g, "/")
+
+  return `${baseUrl}/${sanitizedPath}`
 }
 
 /**
- * Checks if a URL is a valid format
- * @param url The URL to validate
- * @returns boolean True if the URL is valid
- */
-export function isValidUrl(url: string): boolean {
-  if (!url) return false
-
-  try {
-    new URL(url)
-    return true
-  } catch (e) {
-    return false
-  }
-}
-
-/**
- * Determines the video type from a URL
- * @param url The URL to check
- * @returns "mp4" | "hls" | "unknown"
+ * Detects the video type based on file extension
  */
 export function getVideoTypeFromUrl(url: string): "mp4" | "hls" | "unknown" {
   if (!url) return "unknown"
+  const lower = url.toLowerCase()
 
-  const lowerUrl = url.toLowerCase()
-
-  if (lowerUrl.includes(".m3u8")) return "hls"
-  if (lowerUrl.includes(".mp4")) return "mp4"
-
-  // Try to guess based on domain or path
-  if (
-    lowerUrl.includes("mux.dev") ||
-    lowerUrl.includes("livestream") ||
-    lowerUrl.includes("stream") ||
-    lowerUrl.includes("live")
-  ) {
-    return "hls"
-  }
-
-  return "mp4" // Default to mp4 if we can't determine
+  if (lower.endsWith(".m3u8")) return "hls"
+  if (lower.endsWith(".mp4")) return "mp4"
+  return "unknown"
 }
