@@ -11,12 +11,26 @@ interface VideoPlayerProps {
   upcomingPrograms: any[]
 }
 
+// ✅ Clean any proxied URL
+const cleanUrl = (url: string) => {
+  try {
+    const decoded = decodeURIComponent(url)
+    if (decoded.includes('/api/cors-proxy')) {
+      const match = decoded.match(/url=(https?.*)$/)
+      return match ? match[1] : url
+    }
+    return url
+  } catch {
+    return url
+  }
+}
+
 export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initialUpcoming }: VideoPlayerProps) {
   const router = useRouter()
   const videoRef = useRef<HTMLVideoElement>(null)
   const [currentProgram, setCurrentProgram] = useState(initialProgram)
   const [upcomingPrograms, setUpcomingPrograms] = useState(initialUpcoming)
-  const [videoUrl, setVideoUrl] = useState(initialProgram?.mp4_url || '')
+  const [videoUrl, setVideoUrl] = useState(cleanUrl(initialProgram?.mp4_url || ''))
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [retryCount, setRetryCount] = useState(0)
@@ -25,23 +39,26 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const handleBack = () => router.back()
 
   const loadVideo = (url: string) => {
+    const cleaned = cleanUrl(url)
+    console.log('📺 Loading video URL:', cleaned)
     setError(null)
     setIsLoading(true)
-    setVideoUrl(url)
+    setVideoUrl(cleaned)
   }
 
   const handleVideoError = () => {
-    console.error('Video error triggered')
+    console.error('❌ Video error triggered:', videoUrl)
     if (retryCount < maxRetries && currentProgram?.mp4_url) {
       setRetryCount(retryCount + 1)
       loadVideo(currentProgram.mp4_url)
     } else {
-      setError('Video failed to load after retries')
+      setError('Video failed to load after retries.')
       setIsLoading(false)
     }
   }
 
   const handleCanPlay = () => {
+    console.log('✅ Video ready to play:', videoUrl)
     setIsLoading(false)
     setError(null)
   }
@@ -66,7 +83,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   }
 
   return (
-    <div className="bg-black text-white">
+    <div className="bg-black text-white relative">
       <button onClick={handleBack} className="absolute top-4 left-4 z-10 bg-black/50 p-2 rounded-full">
         <ChevronLeft className="h-6 w-6 text-white" />
       </button>
