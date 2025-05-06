@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { VideoPlayer } from "@/components/video-player"
+import  VideoPlayer  from "@/components/video-player"
 import { ChannelInfo } from "@/components/channel-info"
 import { ChannelPassword } from "@/components/channel-password"
 import { supabase, getCurrentProgram, getUpcomingPrograms, forceRefreshAllData } from "@/lib/supabase"
