@@ -63,3 +63,23 @@ export function getVideoTypeFromUrl(url: string): "mp4" | "hls" | "unknown" {
 
   return "mp4" // Default fallback
 }
+
+/**
+ * Constructs a full Supabase public URL for a given relative MP4 path
+ * Cleans up double slashes and ensures proper formatting
+ * @param mp4Path The path stored in the database (e.g. "/channel1//video.mp4")
+ * @returns Full public video URL
+ */
+export function getFullUrl(mp4Path: string): string {
+  if (!mp4Path) return ""
+
+  const baseUrl = "https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public"
+
+  // Remove any leading slashes
+  const cleanPath = mp4Path.replace(/^\/+/g, "")
+
+  // Replace multiple slashes in the middle with a single slash
+  const sanitizedPath = cleanPath.replace(/\/{2,}/g, "/")
+
+  return `${baseUrl}/${sanitizedPath}`
+}
