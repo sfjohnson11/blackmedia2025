@@ -148,21 +148,20 @@ export default function WatchPage({ params }: WatchPageProps) {
 console.log("🔍 DEBUG CHECK")
 console.log("channel.bucket:", channel?.bucket)
 console.log("video_url:", currentProgram?.video_url)
-
-          <VideoPlayer
-  src={
-    currentProgram?.video_url && channel?.bucket
-      ? `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/${channel.bucket}/${
-          currentProgram.video_url.endsWith('.mp4')
-            ? currentProgram.video_url
-            : currentProgram.video_url + '.mp4'
-        }`
-      : ''
-  }
-  poster={currentProgram?.poster_url}
-/>
-
-
+{currentProgram && channel?.bucket ? (
+  <VideoPlayer
+    src={`https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/${channel.bucket}/${
+      currentProgram.video_url.endsWith('.mp4')
+        ? currentProgram.video_url
+        : currentProgram.video_url + '.mp4'
+    }`}
+    poster={currentProgram?.poster_url}
+  />
+) : (
+  <div className="text-yellow-500 p-4 text-center">
+    ⚠️ Video source is missing or still loading.
+  </div>
+)}
           <div className="px-4 md:px-10 py-6">
             <div className="flex justify-between items-center mb-6">
               <h1 className="text-2xl font-bold">
