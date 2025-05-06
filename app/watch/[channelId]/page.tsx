@@ -145,7 +145,11 @@ export default function WatchPage({ params }: WatchPageProps) {
     <div>
       {hasAccess ? (
         <>
-          <VideoPlayer channel={channel} initialProgram={currentProgram} upcomingPrograms={upcomingPrograms} />
+          <VideoPlayer
+  src={`https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/${channel.bucket}/${currentProgram?.video_url}`}
+  poster={currentProgram?.poster_url}
+/>
+
           <div className="px-4 md:px-10 py-6">
             <div className="flex justify-between items-center mb-6">
               <h1 className="text-2xl font-bold">
