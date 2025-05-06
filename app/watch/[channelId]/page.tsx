@@ -146,9 +146,18 @@ export default function WatchPage({ params }: WatchPageProps) {
       {hasAccess ? (
         <>
           <VideoPlayer
-  src={`https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/${channel.bucket}/${currentProgram?.video_url}`}
+  src={
+    currentProgram?.video_url && channel?.bucket
+      ? `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/${channel.bucket}/${
+          currentProgram.video_url.endsWith('.mp4')
+            ? currentProgram.video_url
+            : currentProgram.video_url + '.mp4'
+        }`
+      : ''
+  }
   poster={currentProgram?.poster_url}
 />
+
 
           <div className="px-4 md:px-10 py-6">
             <div className="flex justify-between items-center mb-6">
