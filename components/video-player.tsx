@@ -4,7 +4,6 @@ import { useState, useRef } from 'react'
 import { ChevronLeft } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { getFullUrl } from '@/utils/url-utils'
-import { getCurrentProgram, getUpcomingPrograms } from '@/lib/supabase'
 
 interface VideoPlayerProps {
   channel: any
@@ -38,7 +37,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   }
 
   function getStandbyUrl(): string {
-    const folder = currentProgram?.mp4_url?.match(/channel\d+/)?.[0] || channel.id || 'channel1'
+    const folder = currentProgram?.mp4_url?.match(/channel\\d+/)?.[0] || channel.id || 'channel1'
     return `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/${folder}/standby_blacktruthtv.mp4`
   }
 
