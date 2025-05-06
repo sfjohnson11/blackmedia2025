@@ -66,16 +66,19 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
       </button>
 
       <video
-        key={videoUrl + retryCount}
-        ref={videoRef}
-        src={videoUrl}
-        controls
-        autoPlay
-        onError={handleVideoError}
-        onEnded={handleEnded}
-        className="w-full aspect-video bg-black"
-        playsInline
-      />
+  key={videoUrl + retryCount}
+  ref={videoRef}
+  src={videoUrl}
+  controls
+  autoPlay
+  muted
+  playsInline
+  onError={handleVideoError}
+  onEnded={handleEnded}
+  style={{ zIndex: 20, position: 'relative' }}
+  className="w-full aspect-video bg-black"
+/>
+
 
       {currentProgram && (
         <div className="p-4">
