@@ -3,7 +3,6 @@
 import { useState, useRef } from 'react'
 import { ChevronLeft } from 'lucide-react'
 import { useRouter } from 'next/navigation'
-import { getFullUrl } from '@/lib/url-utils'
 
 interface VideoPlayerProps {
   channel: any
@@ -20,41 +19,40 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
   const [hasTriedFallback, setHasTriedFallback] = useState(false)
 
   const getVideoUrl = (mp4Path: string) => {
-    return getFullUrl(mp4Path)
+    if (!mp4Path) return ''
+    const base = 'https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public'
+    const clean = mp4Path.replace(/^\/+/, '').replace(/\/{2,}/g, '/')
+    return `${base}/${clean}`
   }
 
-  const getStandbyUrl = () => {
+  const getFallbackUrl = () => {
     const bucket = currentProgram?.mp4_url?.match(/channel\d+/)?.[0] || `channel${channel.id}`
     return `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/${bucket}/standby_blacktruthtv.mp4`
   }
 
-  const loadProgram = (program: any) => {
-    setCurrentProgram(program)
-    setRetryCount(0)
-    setHasTriedFallback(false)
-  }
+  const videoUrl = hasTriedFallback
+    ? getFallbackUrl()
+    : getVideoUrl(currentProgram?.mp4_url)
 
-  const handleVideoError = () => {
-    if (retryCount < 2 && currentProgram?.mp4_url) {
-      setRetryCount((prev) => prev + 1)
-    } else if (!hasTriedFallback) {
-      setHasTriedFallback(true)
-    }
-  }
-
-  const handleEnded = () => {
+  const loadNextProgram = () => {
     if (upcomingPrograms.length > 0) {
       const next = upcomingPrograms[0]
-      setUpcomingPrograms((prev) => prev.slice(1))
-      loadProgram(next)
+      setUpcomingPrograms(upcomingPrograms.slice(1))
+      setCurrentProgram(next)
+      setRetryCount(0)
+      setHasTriedFallback(false)
     } else {
       setHasTriedFallback(true)
     }
   }
 
-  const videoUrl = hasTriedFallback
-    ? getStandbyUrl()
-    : getVideoUrl(currentProgram?.mp4_url)
+  const handleVideoError = () => {
+    if (retryCount < 2) {
+      setRetryCount((prev) => prev + 1)
+    } else {
+      setHasTriedFallback(true)
+    }
+  }
 
   return (
     <div className="bg-black text-white relative">
@@ -73,8 +71,8 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms: initial
         autoPlay
         muted
         playsInline
+        onEnded={loadNextProgram}
         onError={handleVideoError}
-        onEnded={handleEnded}
         style={{ zIndex: 20, position: 'relative' }}
         className="w-full aspect-video bg-black"
       />
