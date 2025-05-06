@@ -13,22 +13,23 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
   useEffect(() => {
     const video = videoRef.current
     if (video) {
-      video.volume = 1 // make sure it's not muted
+      video.controls = true
+      video.volume = 1
     }
   }, [])
 
   return (
-    <div className="w-full bg-black p-4 flex justify-center items-center">
-      <div className="max-w-[1280px] w-full">
-        <video
-          ref={videoRef}
-          src={src}
-          poster={poster}
-          controls
-          playsInline
-          className="w-full h-auto object-contain bg-black rounded-md"
-        />
-      </div>
+    <div style={{ backgroundColor: 'black', width: '100%', height: 'auto', padding: '10px' }}>
+      <video
+        ref={videoRef}
+        src={src}
+        poster={poster}
+        controls
+        playsInline
+        className="w-full max-h-[90vh] object-contain"
+      >
+        Your browser does not support the video tag.
+      </video>
     </div>
   )
 }
