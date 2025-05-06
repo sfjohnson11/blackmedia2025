@@ -25,6 +25,13 @@ export default function WatchPage({ params }: WatchPageProps) {
   const [error, setError] = useState<string | null>(null)
   const [hasAccess, setHasAccess] = useState(false)
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date())
+useEffect(() => {
+  if (channel && currentProgram) {
+    console.log("🔍 DEBUG CHECK")
+    console.log("channel.bucket:", channel.bucket)
+    console.log("video_url:", currentProgram.video_url)
+  }
+}, [channel, currentProgram])
 
   // Function to fetch fresh data
   async function fetchData(forceClear = false) {
