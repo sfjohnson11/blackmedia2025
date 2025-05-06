@@ -23,6 +23,7 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms }: Video
 
   return (
     <div className="bg-black text-white relative">
+      {/* Back Button */}
       <button
         onClick={() => router.back()}
         className="absolute top-4 left-4 z-10 bg-black/50 p-2 rounded-full"
@@ -30,21 +31,29 @@ export function VideoPlayer({ channel, initialProgram, upcomingPrograms }: Video
         <ChevronLeft className="h-6 w-6 text-white" />
       </button>
 
+      {/* Video Player */}
       {videoUrl ? (
-        <video
-  src={videoUrl}
-  controls
-  playsInline
-  // DO NOT use autoPlay or muted here
-  style={{ zIndex: 50, position: 'relative' }}
-  className="w-full aspect-video bg-black"
-/>
+        <div style={{ zIndex: 50, position: 'relative' }}>
+          <video
+            src={videoUrl}
+            controls
+            playsInline
+            style={{
+              width: '100%',
+              height: 'auto',
+              backgroundColor: 'black',
+              zIndex: 50,
+              position: 'relative',
+            }}
+          />
+        </div>
       ) : (
         <div className="p-6 text-center text-red-400">
           No video URL found.
         </div>
       )}
 
+      {/* Program Info */}
       {initialProgram && (
         <div className="p-4">
           <h2 className="text-xl font-bold">{initialProgram.title}</h2>
