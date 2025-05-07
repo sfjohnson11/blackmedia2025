@@ -101,16 +101,17 @@ export default function WatchPage({ params }: WatchPageProps) {
     )
   }
 
-  let videoFile = currentProgram?.video_url
+  // ✅ FINAL VIDEO URL LOGIC
+  let videoFile: string
+  if (currentProgram?.video_url) {
+    videoFile = currentProgram.video_url.endsWith('.mp4')
+      ? currentProgram.video_url
+      : currentProgram.video_url + '.mp4'
+  } else {
+    videoFile = 'standby_blacktruthtv.mp4'
+  }
 
-if (!videoFile) {
-  videoFile = 'standby_blacktruthtv.mp4'
-} else if (!videoFile.endsWith('.mp4')) {
-  videoFile = videoFile + '.mp4'
-}
-
-const videoPath = `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/channel${channel.id}/${videoFile}`
-
+  const videoPath = `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/channel${channel.id}/${videoFile}`
 
   return (
     <div>
@@ -146,7 +147,10 @@ const videoPath = `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/pu
                       <h3 className="font-bold mb-2">{program.title}</h3>
                       <p className="text-sm text-gray-400">
                         {new Date(program.start_time).toLocaleDateString()} @{" "}
-                        {new Date(program.start_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        {new Date(program.start_time).toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
                       </p>
                     </div>
                   ))}
