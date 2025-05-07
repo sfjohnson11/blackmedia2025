@@ -101,21 +101,22 @@ export default function WatchPage({ params }: WatchPageProps) {
     )
   }
 
-  // ✅ Always use this video path logic
-  const videoPath = `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/channel${channel.id}/${
-    currentProgram?.video_url?.endsWith('.mp4')
-      ? currentProgram.video_url
-      : currentProgram?.video_url + '.mp4' || 'standby_blacktruthtv.mp4'
-  }`
+  let videoFile = currentProgram?.video_url
+
+if (!videoFile) {
+  videoFile = 'standby_blacktruthtv.mp4'
+} else if (!videoFile.endsWith('.mp4')) {
+  videoFile = videoFile + '.mp4'
+}
+
+const videoPath = `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/channel${channel.id}/${videoFile}`
+
 
   return (
     <div>
       {hasAccess ? (
         <>
-          <VideoPlayer
-            src={videoPath}
-            poster={currentProgram?.poster_url}
-          />
+          <VideoPlayer src={videoPath} poster={currentProgram?.poster_url} />
 
           <div className="px-4 py-6">
             <h1 className="text-2xl font-bold mb-2">
