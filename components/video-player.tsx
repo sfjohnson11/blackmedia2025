@@ -13,10 +13,20 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
   useEffect(() => {
     const video = videoRef.current
     if (video) {
-      video.volume = 1
+      video.volume = 1.0
       video.controls = true
+      video.autoplay = true
+      video.playsInline = true
+      video.muted = false
+
+      const playPromise = video.play()
+      if (playPromise !== undefined) {
+        playPromise.catch((error) => {
+          console.warn("Autoplay blocked until user interaction:", error)
+        })
+      }
     }
-  }, [])
+  }, [src])
 
   if (!src) {
     return (
@@ -28,13 +38,11 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
 
   return (
     <div
+      className="w-full bg-black flex justify-center items-center"
       style={{
-        backgroundColor: 'black',
-        width: '100%',
-        height: 'auto',
         padding: '10px',
-        position: 'relative',
-        zIndex: 0,
+        overflow: 'hidden',
+        maxHeight: '90vh',
       }}
     >
       <video
@@ -42,12 +50,10 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
         src={src}
         poster={poster}
         controls
-        playsInline
+        className="w-full max-w-[100%] h-auto"
         style={{
-          zIndex: 10,
-          position: 'relative',
+          backgroundColor: 'black',
         }}
-        className="w-full max-h-[90vh] object-contain"
       >
         Your browser does not support the video tag.
       </video>
