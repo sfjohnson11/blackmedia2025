@@ -16,21 +16,6 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
       video.volume = 1
       video.controls = true
     }
-
-    // Optional: apply a CSS fix directly
-    const style = document.createElement('style')
-    style.innerHTML = `
-      video::-webkit-media-controls {
-        display: block !important;
-        opacity: 1 !important;
-        z-index: 1000 !important;
-      }
-    `
-    document.head.appendChild(style)
-
-    return () => {
-      document.head.removeChild(style)
-    }
   }, [])
 
   if (!src) {
@@ -40,8 +25,6 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
       </div>
     )
   }
-
-  const isHLS = src.endsWith('.m3u8')
 
   return (
     <div
@@ -61,17 +44,12 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
         controls
         playsInline
         autoPlay
-        crossOrigin="anonymous"
         style={{
           zIndex: 10,
           position: 'relative',
-          backgroundColor: 'black',
-          color: 'white',
-          outline: 'none',
         }}
         className="w-full max-h-[90vh] object-contain"
       >
-        <source src={src} type={isHLS ? 'application/vnd.apple.mpegurl' : 'video/mp4'} />
         Your browser does not support the video tag.
       </video>
     </div>
