@@ -43,7 +43,6 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
         poster={poster}
         controls
         playsInline
-        autoPlay
         style={{
           zIndex: 10,
           position: 'relative',
