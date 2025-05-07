@@ -34,22 +34,17 @@ export function getFullUrl(path: string): string {
 // Get the current program for a channel
 export const getCurrentProgram = async (channelId: string) => {
   try {
-    const now = new Date().toISOString()
-
-    const { data, error } = await supabase
-      .from("programs")
-      .select("*")
-      .eq("channel_id", channelId)
-      .lte("start_time", now)
-      .order("start_time", { ascending: false })
-      .limit(1)
+    const { data, error } = await supabase.rpc("get_current_program_for_channel", {
+      input_channel_id: channelId,
+    })
 
     if (error) {
-      console.error("Error fetching current program:", error)
+      console.error("RPC Error fetching current program:", error)
       return { program: null, error }
     }
 
-    return { program: data[0] || null, error: null }
+    const program = Array.isArray(data) ? data[0] : data
+    return { program: program || null, error: null }
   } catch (err) {
     console.error("Error in getCurrentProgram:", err)
     return { program: null, error: err }
