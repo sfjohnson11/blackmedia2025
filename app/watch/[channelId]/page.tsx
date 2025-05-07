@@ -1,22 +1,22 @@
-"use client"
+'use client'
 
-import { useState, useEffect } from "react"
-import VideoPlayer from "@/components/video-player"
-import { ChannelInfo } from "@/components/channel-info"
-import { ChannelPassword } from "@/components/channel-password"
+import { useState, useEffect } from 'react'
+import VideoPlayer from '@/components/video-player'
+import { ChannelInfo } from '@/components/channel-info'
+import { ChannelPassword } from '@/components/channel-password'
 import {
   supabase,
   getCurrentProgram,
   getUpcomingPrograms,
   forceRefreshAllData,
-} from "@/lib/supabase"
+} from '@/lib/supabase'
 import {
   isPasswordProtected,
   hasChannelAccess,
-} from "@/lib/channel-access"
-import type { Channel, Program } from "@/types"
-import Link from "next/link"
-import { Loader2 } from "lucide-react"
+} from '@/lib/channel-access'
+import type { Channel, Program } from '@/types'
+import Link from 'next/link'
+import { Loader2 } from 'lucide-react'
 
 interface WatchPageProps {
   params: {
@@ -43,9 +43,9 @@ export default function WatchPage({ params }: WatchPageProps) {
         setError(null)
 
         const { data, error } = await supabase
-          .from("channels")
-          .select("*")
-          .eq("id", params.channelId)
+          .from('channels')
+          .select('*')
+          .eq('id', params.channelId)
           .single()
 
         if (error) throw error
@@ -63,15 +63,27 @@ export default function WatchPage({ params }: WatchPageProps) {
           setUpcomingPrograms(programs)
         }
       } catch (err) {
-        console.error("Failed to load channel:", err)
-        setError("Failed to load channel data")
+        console.error('Failed to load channel:', err)
+        setError('Failed to load channel data')
       } finally {
         setLoading(false)
       }
     }
 
     fetchData()
-  }, [params.channelId])
+
+    // Poll for next program every 30 seconds
+    const interval = setInterval(async () => {
+      const { program } = await getCurrentProgram(params.channelId)
+      if (program && program.id !== currentProgram?.id) {
+        setCurrentProgram(program)
+        const { programs } = await getUpcomingPrograms(params.channelId)
+        setUpcomingPrograms(programs)
+      }
+    }, 30000)
+
+    return () => clearInterval(interval)
+  }, [params.channelId, currentProgram?.id])
 
   if (loading) {
     return (
@@ -86,7 +98,7 @@ export default function WatchPage({ params }: WatchPageProps) {
     return (
       <div className="text-center p-10 text-white">
         <h2 className="text-2xl font-bold mb-2">Channel Not Found</h2>
-        <p>{error || "The requested channel does not exist."}</p>
+        <p>{error || 'The requested channel does not exist.'}</p>
         <Link href="/" className="text-red-500 underline mt-4 block">
           Go back home
         </Link>
@@ -105,10 +117,7 @@ export default function WatchPage({ params }: WatchPageProps) {
               Channel {channel.id}: {channel.name}
             </h1>
 
-            <ChannelInfo
-              channel={channel}
-              currentProgram={currentProgram}
-            />
+            <ChannelInfo channel={channel} currentProgram={currentProgram} />
 
             {upcomingPrograms.length > 0 && (
               <div className="mt-8">
