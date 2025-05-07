@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useRef, useEffect, useState } from 'react'
+import React, { useRef, useEffect } from 'react'
 
 interface VideoPlayerProps {
   src: string
@@ -9,7 +9,6 @@ interface VideoPlayerProps {
 
 export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
-  const [showStandby, setShowStandby] = useState(false)
 
   useEffect(() => {
     const video = videoRef.current
@@ -18,10 +17,6 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
       video.controls = true
     }
   }, [])
-
-  const handleEnded = () => {
-    setShowStandby(true)
-  }
 
   if (!src) {
     return (
@@ -48,25 +43,14 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
         poster={poster}
         controls
         playsInline
-        onEnded={handleEnded}
-        className="w-full max-h-[90vh] object-contain"
         style={{
           zIndex: 10,
           position: 'relative',
-          backgroundColor: 'black',
         }}
+        className="w-full max-h-[90vh] object-contain"
       >
         Your browser does not support the video tag.
       </video>
-
-      {showStandby && (
-        <div className="absolute inset-0 bg-black bg-opacity-90 flex items-center justify-center z-20">
-          <div className="text-center text-yellow-400">
-            <h2 className="text-2xl font-bold">Please Standby</h2>
-            <p className="mt-2 text-white">The next program will begin shortly.</p>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
