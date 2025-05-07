@@ -27,13 +27,26 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
   }
 
   return (
-    <div style={{ backgroundColor: 'black', width: '100%', height: 'auto', padding: '10px' }}>
+    <div
+      style={{
+        backgroundColor: 'black',
+        width: '100%',
+        height: 'auto',
+        padding: '10px',
+        position: 'relative',
+        zIndex: 0,
+      }}
+    >
       <video
         ref={videoRef}
         src={src}
         poster={poster}
         controls
         playsInline
+        style={{
+          zIndex: 10,
+          position: 'relative',
+        }}
         className="w-full max-h-[90vh] object-contain"
       >
         Your browser does not support the video tag.
