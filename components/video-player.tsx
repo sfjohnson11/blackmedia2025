@@ -26,6 +26,8 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
     )
   }
 
+  const isHLS = src.endsWith('.m3u8') || src.includes('.m3u8')
+
   return (
     <div
       style={{
@@ -43,14 +45,15 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
         poster={poster}
         controls
         playsInline
-        style={{
-          zIndex: 10,
-          position: 'relative',
-        }}
+        autoPlay
+        style={{ zIndex: 10, position: 'relative' }}
         className="w-full max-h-[90vh] object-contain"
+        crossOrigin="anonymous"
       >
+        <source src={src} type={isHLS ? 'application/vnd.apple.mpegurl' : 'video/mp4'} />
         Your browser does not support the video tag.
       </video>
     </div>
   )
 }
+
