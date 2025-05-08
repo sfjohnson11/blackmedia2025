@@ -30,13 +30,14 @@ export function getFullUrl(path: string): string {
 
 // Updated getCurrentProgram function
 export const getCurrentProgram = async (channelId: string) => {
-  const now = new Date().toISOString()
+  const now = new Date()
+  const nowIso = now.toISOString()
 
   const { data, error } = await supabase
     .from("programs")
     .select("*")
     .eq("channel_id", channelId)
-    .lte("start_time", now)
+    .lte("start_time", nowIso)
     .order("start_time", { ascending: false })
 
   if (error) {
@@ -47,7 +48,7 @@ export const getCurrentProgram = async (channelId: string) => {
   const activeProgram = data.find((program) => {
     const start = new Date(program.start_time).getTime()
     const end = start + (program.duration || 0) * 1000
-    return Date.now() < end
+    return now.getTime() >= start && now.getTime() < end
   })
 
   return { program: activeProgram || null, error: null }
