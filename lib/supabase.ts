@@ -29,21 +29,31 @@ export function getFullUrl(path: string): string {
 }
 
 // Updated getCurrentProgram function
+// Previous working getCurrentProgram version
 export const getCurrentProgram = async (channelId: string) => {
-  const now = new Date()
-  const nowIso = now.toISOString()
+  try {
+    const now = new Date().toISOString()
 
-  const { data, error } = await supabase
-    .from("programs")
-    .select("*")
-    .eq("channel_id", channelId)
-    .lte("start_time", nowIso)
-    .order("start_time", { ascending: false })
+    const { data, error } = await supabase
+      .from("programs")
+      .select("*")
+      .eq("channel_id", channelId)
+      .lte("start_time", now)
+      .order("start_time", { ascending: false })
+      .limit(1)
 
-  if (error) {
-    console.error("Error fetching current program:", error)
-    return { program: null, error }
+    if (error) {
+      console.error("Error fetching current program:", error)
+      return { program: null, error }
+    }
+
+    return { program: data[0] || null, error: null }
+  } catch (err) {
+    console.error("Error in getCurrentProgram:", err)
+    return { program: null, error: err }
   }
+}
+
 
   const activeProgram = data.find((program) => {
     const start = new Date(program.start_time).getTime()
