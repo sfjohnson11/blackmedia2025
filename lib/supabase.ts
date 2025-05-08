@@ -24,12 +24,11 @@ export function getFullUrl(path: string): string {
     return path
   }
 
-  const cleanPath = path.replace(/^\/+/, "")
+  const cleanPath = path.replace(/^\/+/g, "")
   return `${baseUrl}/storage/v1/object/public/${cleanPath}`
 }
 
-// Updated getCurrentProgram function
-// Previous working getCurrentProgram version
+// Get the current program for a channel
 export const getCurrentProgram = async (channelId: string) => {
   try {
     const now = new Date().toISOString()
@@ -40,28 +39,23 @@ export const getCurrentProgram = async (channelId: string) => {
       .eq("channel_id", channelId)
       .lte("start_time", now)
       .order("start_time", { ascending: false })
-      .limit(1)
 
     if (error) {
       console.error("Error fetching current program:", error)
       return { program: null, error }
     }
 
-    return { program: data[0] || null, error: null }
+    const activeProgram = (data || []).find((program) => {
+      const start = new Date(program.start_time).getTime()
+      const end = start + (program.duration || 0) * 1000
+      return Date.now() >= start && Date.now() < end
+    })
+
+    return { program: activeProgram || null, error: null }
   } catch (err) {
     console.error("Error in getCurrentProgram:", err)
     return { program: null, error: err }
   }
-}
-
-
-  const activeProgram = data.find((program) => {
-    const start = new Date(program.start_time).getTime()
-    const end = start + (program.duration || 0) * 1000
-    return now.getTime() >= start && now.getTime() < end
-  })
-
-  return { program: activeProgram || null, error: null }
 }
 
 export async function getUpcomingPrograms(channelId: string, limit = 5) {
