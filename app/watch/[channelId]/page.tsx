@@ -1,6 +1,7 @@
-'use client'
+// /app/watch/[channelId]/page.tsx
+"use client"
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect } from 'react'
 import VideoPlayer from '@/components/video-player'
 import { ChannelInfo } from '@/components/channel-info'
 import { ChannelPassword } from '@/components/channel-password'
@@ -8,6 +9,7 @@ import {
   supabase,
   getCurrentProgram,
   getUpcomingPrograms,
+  forceRefreshAllData,
 } from '@/lib/supabase'
 import {
   isPasswordProtected,
@@ -31,11 +33,9 @@ export default function WatchPage({ params }: WatchPageProps) {
   const [error, setError] = useState<string | null>(null)
   const [hasAccess, setHasAccess] = useState(false)
 
-  const videoPath = useMemo(() => {
-    return currentProgram?.mp4_url
-      ? `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/channel${params.channelId}/${currentProgram.mp4_url}`
-      : `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/channel${params.channelId}/standby_blacktruthtv.mp4`
-  }, [currentProgram, params.channelId])
+  const videoPath = currentProgram?.mp4_url
+    ? `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/channel${params.channelId}/${currentProgram.mp4_url}`
+    : `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/channel${params.channelId}/standby_blacktruthtv.mp4`
 
   useEffect(() => {
     const fetchData = async () => {
@@ -72,13 +72,12 @@ export default function WatchPage({ params }: WatchPageProps) {
     }
 
     fetchData()
+  }, [params.channelId])
 
+  useEffect(() => {
     const interval = setInterval(async () => {
       const { program } = await getCurrentProgram(params.channelId)
-      if (
-        (program && program.id !== currentProgram?.id) ||
-        (!program && currentProgram !== null)
-      ) {
+      if (program?.id !== currentProgram?.id || program?.mp4_url !== currentProgram?.mp4_url) {
         setCurrentProgram(program)
         const { programs } = await getUpcomingPrograms(params.channelId)
         setUpcomingPrograms(programs)
@@ -86,7 +85,7 @@ export default function WatchPage({ params }: WatchPageProps) {
     }, 30000)
 
     return () => clearInterval(interval)
-  }, [params.channelId, currentProgram?.id])
+  }, [params.channelId, currentProgram?.id, currentProgram?.mp4_url])
 
   if (loading) {
     return (
@@ -113,11 +112,7 @@ export default function WatchPage({ params }: WatchPageProps) {
     <div>
       {hasAccess ? (
         <>
-          <VideoPlayer
-            src={videoPath}
-            poster={currentProgram?.poster_url}
-            loop={!currentProgram}
-          />
+          <VideoPlayer src={videoPath} poster={currentProgram?.poster_url} />
 
           <div className="px-4 md:px-10 py-6">
             <h1 className="text-2xl font-bold mb-4">
