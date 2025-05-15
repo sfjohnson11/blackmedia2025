@@ -75,7 +75,6 @@ export default function WatchPage({ params }: WatchPageProps) {
 
     const interval = setInterval(async () => {
       const { program } = await getCurrentProgram(params.channelId)
-
       if (
         (program && program.id !== currentProgram?.id) ||
         (!program && currentProgram !== null)
@@ -88,11 +87,6 @@ export default function WatchPage({ params }: WatchPageProps) {
 
     return () => clearInterval(interval)
   }, [params.channelId, currentProgram?.id])
-
-  useEffect(() => {
-    console.log('🎯 currentProgram:', currentProgram?.title || 'STANDBY')
-    console.log('🎬 videoPath:', videoPath)
-  }, [currentProgram, videoPath])
 
   if (loading) {
     return (
