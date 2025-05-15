@@ -5,9 +5,10 @@ import React, { useRef, useEffect, useState } from 'react'
 interface VideoPlayerProps {
   src: string
   poster?: string
+  loop?: boolean // ✅ Accept loop prop
 }
 
-export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
+export default function VideoPlayer({ src, poster, loop = false }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [videoSource, setVideoSource] = useState(src)
   const [currentTime, setCurrentTime] = useState(new Date())
@@ -21,7 +22,6 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
   }, [])
 
   useEffect(() => {
-    // Replace video source when `src` prop changes
     if (src !== videoSource) {
       setVideoSource(src)
     }
@@ -61,6 +61,7 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
         controls
         playsInline
         autoPlay
+        loop={loop} // ✅ Apply loop dynamically
         className="w-full max-h-[90vh] object-contain"
       >
         Your browser does not support the video tag.
