@@ -73,14 +73,20 @@ export default function WatchPage({ params }: WatchPageProps) {
     fetchData()
 
     // Poll for next program every 30 seconds
-    const interval = setInterval(async () => {
-      const { program } = await getCurrentProgram(params.channelId)
-      if (program && program.id !== currentProgram?.id) {
-        setCurrentProgram(program)
-        const { programs } = await getUpcomingPrograms(params.channelId)
-        setUpcomingPrograms(programs)
-      }
-    }, 30000)
+    // Poll for changes every 30 seconds
+const interval = setInterval(async () => {
+  const { program } = await getCurrentProgram(params.channelId)
+
+  if (
+    (program && program.id !== currentProgram?.id) || // New program started
+    (!program && currentProgram !== null)             // Program ended, return to standby
+  ) {
+    setCurrentProgram(program)
+    const { programs } = await getUpcomingPrograms(params.channelId)
+    setUpcomingPrograms(programs)
+  }
+}, 30000)
+
 
     return () => clearInterval(interval)
   }, [params.channelId, currentProgram?.id])
