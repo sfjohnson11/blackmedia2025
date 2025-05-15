@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { supabase } from "@/lib/supabase"
-import { getContinueWatching } from "@/lib/continue"
+import { getContinueWatching, getProgressFor } from "@/lib/continue"
 import type { Program } from "@/types"
 import Link from "next/link"
 
