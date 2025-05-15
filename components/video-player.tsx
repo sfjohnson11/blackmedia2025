@@ -1,25 +1,15 @@
-'use client'
+"use client"
 
-import React, { useRef, useEffect, useState } from 'react'
+import React, { useRef, useEffect, useState } from "react"
 
 interface VideoPlayerProps {
   src: string
   poster?: string
-  loop?: boolean // ✅ Accept loop prop
 }
 
-export default function VideoPlayer({ src, poster, loop = false }: VideoPlayerProps) {
+export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [videoSource, setVideoSource] = useState(src)
-  const [currentTime, setCurrentTime] = useState(new Date())
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setCurrentTime(new Date())
-    }, 30000) // Check every 30 seconds
-
-    return () => clearInterval(interval)
-  }, [])
 
   useEffect(() => {
     if (src !== videoSource) {
@@ -30,8 +20,10 @@ export default function VideoPlayer({ src, poster, loop = false }: VideoPlayerPr
   useEffect(() => {
     const video = videoRef.current
     if (video) {
+      video.load() // Force reload of new source
       video.volume = 1
       video.controls = true
+      video.play().catch(() => {})
     }
   }, [videoSource])
 
@@ -46,11 +38,11 @@ export default function VideoPlayer({ src, poster, loop = false }: VideoPlayerPr
   return (
     <div
       style={{
-        backgroundColor: 'black',
-        width: '100%',
-        height: 'auto',
-        padding: '10px',
-        position: 'relative',
+        backgroundColor: "black",
+        width: "100%",
+        height: "auto",
+        padding: "10px",
+        position: "relative",
         zIndex: 0,
       }}
     >
@@ -61,7 +53,6 @@ export default function VideoPlayer({ src, poster, loop = false }: VideoPlayerPr
         controls
         playsInline
         autoPlay
-        loop={loop} // ✅ Apply loop dynamically
         className="w-full max-h-[90vh] object-contain"
       >
         Your browser does not support the video tag.
