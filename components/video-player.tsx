@@ -24,22 +24,32 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
     const key = getStorageKey(videoSource)
 
     if (video) {
-      // Restore position if saved
       const saved = localStorage.getItem(key)
       if (saved) {
         const { progress, timestamp } = JSON.parse(saved)
-        const recent = Date.now() - timestamp < 24 * 60 * 60 * 1000 // less than 24 hours
+        const recent = Date.now() - timestamp < 24 * 60 * 60 * 1000
         if (recent) {
           video.currentTime = progress
         }
       }
 
+      // Set up playback
       video.load()
-      video.volume = 1
       video.controls = true
-      video.play().catch(() => {})
+      video.volume = 1
+      video.loop = true // Loop standby OR regular video
+      
+      const tryPlay = () => {
+        video.play().catch(() => {
+          video.muted = true
+          video.play().catch(() => {
+            console.warn("Autoplay still blocked")
+          })
+        })
+      }
 
-      // Save progress every 10 seconds
+      tryPlay()
+
       const handleTimeUpdate = () => {
         localStorage.setItem(
           key,
