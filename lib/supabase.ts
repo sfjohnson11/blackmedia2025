@@ -1,13 +1,11 @@
 import { createClient } from "@supabase/supabase-js"
 import type { Database } from "@/types/supabase"
 
-// Create a single supabase client for interacting with your database
 export const supabase = createClient<Database>(
   process.env.NEXT_PUBLIC_SUPABASE_URL || "",
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "",
 )
 
-// Centralized full URL builder with improved error handling
 export function getFullUrl(path: string): string {
   if (!path) {
     console.error("Empty path passed to getFullUrl")
@@ -28,30 +26,30 @@ export function getFullUrl(path: string): string {
   return `${baseUrl}/storage/v1/object/public/${cleanPath}`
 }
 
-// Get the current program for a channel
 export const getCurrentProgram = async (channelId: string) => {
   try {
-    const now = new Date().toISOString()
+    const now = new Date()
 
     const { data, error } = await supabase
       .from("programs")
       .select("*")
       .eq("channel_id", channelId)
-      .lte("start_time", now)
+      .lte("start_time", now.toISOString())
       .order("start_time", { ascending: false })
 
-    if (error) {
-      console.error("Error fetching current program:", error)
-      return { program: null, error }
+    if (error || !data || data.length === 0) return { program: null, error }
+
+    for (const program of data) {
+      const start = new Date(program.start_time)
+      const duration = program.duration || 1800 // 30 min default
+      const end = new Date(start.getTime() + duration * 1000)
+
+      if (now >= start && now <= end) {
+        return { program, error: null }
+      }
     }
 
-    const activeProgram = (data || []).find((program) => {
-      const start = new Date(program.start_time).getTime()
-      const end = start + (program.duration || 0) * 1000
-      return Date.now() >= start && Date.now() < end
-    })
-
-    return { program: activeProgram || null, error: null }
+    return { program: null, error: null }
   } catch (err) {
     console.error("Error in getCurrentProgram:", err)
     return { program: null, error: err }
