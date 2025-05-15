@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import VideoPlayer from '@/components/video-player'
 import { ChannelInfo } from '@/components/channel-info'
 import { ChannelPassword } from '@/components/channel-password'
@@ -8,7 +8,6 @@ import {
   supabase,
   getCurrentProgram,
   getUpcomingPrograms,
-  forceRefreshAllData,
 } from '@/lib/supabase'
 import {
   isPasswordProtected,
@@ -32,9 +31,11 @@ export default function WatchPage({ params }: WatchPageProps) {
   const [error, setError] = useState<string | null>(null)
   const [hasAccess, setHasAccess] = useState(false)
 
-  const videoPath = currentProgram?.mp4_url
-    ? `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/channel${params.channelId}/${currentProgram.mp4_url}`
-    : `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/channel${params.channelId}/standby_blacktruthtv.mp4`
+  const videoPath = useMemo(() => {
+    return currentProgram?.mp4_url
+      ? `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/channel${params.channelId}/${currentProgram.mp4_url}`
+      : `https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/channel${params.channelId}/standby_blacktruthtv.mp4`
+  }, [currentProgram, params.channelId])
 
   useEffect(() => {
     const fetchData = async () => {
@@ -72,24 +73,26 @@ export default function WatchPage({ params }: WatchPageProps) {
 
     fetchData()
 
-    // Poll for next program every 30 seconds
-    // Poll for changes every 30 seconds
-const interval = setInterval(async () => {
-  const { program } = await getCurrentProgram(params.channelId)
+    const interval = setInterval(async () => {
+      const { program } = await getCurrentProgram(params.channelId)
 
-  if (
-    (program && program.id !== currentProgram?.id) || // New program started
-    (!program && currentProgram !== null)             // Program ended, return to standby
-  ) {
-    setCurrentProgram(program)
-    const { programs } = await getUpcomingPrograms(params.channelId)
-    setUpcomingPrograms(programs)
-  }
-}, 30000)
-
+      if (
+        (program && program.id !== currentProgram?.id) ||
+        (!program && currentProgram !== null)
+      ) {
+        setCurrentProgram(program)
+        const { programs } = await getUpcomingPrograms(params.channelId)
+        setUpcomingPrograms(programs)
+      }
+    }, 30000)
 
     return () => clearInterval(interval)
   }, [params.channelId, currentProgram?.id])
+
+  useEffect(() => {
+    console.log('🎯 currentProgram:', currentProgram?.title || 'STANDBY')
+    console.log('🎬 videoPath:', videoPath)
+  }, [currentProgram, videoPath])
 
   if (loading) {
     return (
@@ -104,58 +107,4 @@ const interval = setInterval(async () => {
     return (
       <div className="text-center p-10 text-white">
         <h2 className="text-2xl font-bold mb-2">Channel Not Found</h2>
-        <p>{error || 'The requested channel does not exist.'}</p>
-        <Link href="/" className="text-red-500 underline mt-4 block">
-          Go back home
-        </Link>
-      </div>
-    )
-  }
-
-  return (
-    <div>
-      {hasAccess ? (
-        <>
-          <VideoPlayer
-  src={videoPath}
-  poster={currentProgram?.poster_url}
-  loop={!currentProgram} // ✅ Loop only when there's no scheduled video
-/>
-
-
-          <div className="px-4 md:px-10 py-6">
-            <h1 className="text-2xl font-bold mb-4">
-              Channel {channel.id}: {channel.name}
-            </h1>
-
-            <ChannelInfo channel={channel} currentProgram={currentProgram} />
-
-            {upcomingPrograms.length > 0 && (
-              <div className="mt-8">
-                <h2 className="text-xl font-bold mb-4">Upcoming Programs</h2>
-                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                  {upcomingPrograms.map((program, index) => (
-                    <div
-                      key={index}
-                      className="bg-gray-800 p-4 rounded-lg text-white"
-                    >
-                      <h3 className="font-bold mb-1">{program.title}</h3>
-                      <p className="text-sm text-gray-400">
-                        {new Date(program.start_time).toLocaleString()}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        </>
-      ) : (
-        <ChannelPassword
-          channel={channel}
-          onAccessGranted={() => setHasAccess(true)}
-        />
-      )}
-    </div>
-  )
-}
+        <p>{error ||
