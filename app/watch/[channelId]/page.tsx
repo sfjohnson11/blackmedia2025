@@ -107,4 +107,57 @@ export default function WatchPage({ params }: WatchPageProps) {
     return (
       <div className="text-center p-10 text-white">
         <h2 className="text-2xl font-bold mb-2">Channel Not Found</h2>
-        <p>{error ||
+        <p>{error || 'The requested channel does not exist.'}</p>
+        <Link href="/" className="text-red-500 underline mt-4 block">
+          Go back home
+        </Link>
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      {hasAccess ? (
+        <>
+          <VideoPlayer
+            src={videoPath}
+            poster={currentProgram?.poster_url}
+            loop={!currentProgram}
+          />
+
+          <div className="px-4 md:px-10 py-6">
+            <h1 className="text-2xl font-bold mb-4">
+              Channel {channel.id}: {channel.name}
+            </h1>
+
+            <ChannelInfo channel={channel} currentProgram={currentProgram} />
+
+            {upcomingPrograms.length > 0 && (
+              <div className="mt-8">
+                <h2 className="text-xl font-bold mb-4">Upcoming Programs</h2>
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                  {upcomingPrograms.map((program, index) => (
+                    <div
+                      key={index}
+                      className="bg-gray-800 p-4 rounded-lg text-white"
+                    >
+                      <h3 className="font-bold mb-1">{program.title}</h3>
+                      <p className="text-sm text-gray-400">
+                        {new Date(program.start_time).toLocaleString()}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </>
+      ) : (
+        <ChannelPassword
+          channel={channel}
+          onAccessGranted={() => setHasAccess(true)}
+        />
+      )}
+    </div>
+  )
+}
