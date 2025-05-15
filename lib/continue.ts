@@ -1,3 +1,5 @@
+// This file is confirmed to exist - updated
+
 export function getContinueWatching(): string[] {
   if (typeof window === "undefined") return []
   const keys = Object.keys(localStorage).filter((k) => k.startsWith("video_progress_"))
