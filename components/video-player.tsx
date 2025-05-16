@@ -1,4 +1,4 @@
-// components/video-player.tsx
+// 🧾 BACKUP - Original working player
 "use client"
 
 import React, { useRef, useEffect, useState } from "react"
@@ -21,23 +21,10 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
   useEffect(() => {
     const video = videoRef.current
     if (video) {
-      const key = `video_progress_${videoSource}`
-      const savedTime = localStorage.getItem(key)
-
       video.load()
       video.volume = 1
       video.controls = true
-
-      video.onloadedmetadata = () => {
-        if (savedTime) {
-          video.currentTime = parseFloat(savedTime)
-        }
-        video.play().catch(() => {})
-      }
-
-      video.ontimeupdate = () => {
-        localStorage.setItem(key, video.currentTime.toString())
-      }
+      video.play().catch(() => {})
     }
   }, [videoSource])
 
@@ -50,7 +37,16 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
   }
 
   return (
-    <div style={{ backgroundColor: "black", width: "100%", height: "auto", padding: "10px", position: "relative", zIndex: 0 }}>
+    <div
+      style={{
+        backgroundColor: "black",
+        width: "100%",
+        height: "auto",
+        padding: "10px",
+        position: "relative",
+        zIndex: 0,
+      }}
+    >
       <video
         ref={videoRef}
         src={videoSource}
@@ -65,4 +61,3 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
     </div>
   )
 }
-
