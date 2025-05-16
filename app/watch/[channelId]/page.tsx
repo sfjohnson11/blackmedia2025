@@ -5,14 +5,14 @@ import { notFound } from "next/navigation"
 
 export default async function WatchPage({ params }: { params: { channelId: string } }) {
   const channelId = params.channelId
-  const now = new Date().toISOString()
 
+  // Get the most recent or upcoming program
   const { data: program, error } = await supabase
     .from("programs")
     .select("*")
     .eq("channel_id", channelId)
-    .lte("start_time", now)
-    .gte("end_time", now)
+    .order("start_time", { ascending: true })
+    .limit(1)
     .single()
 
   if (error || !program) {
