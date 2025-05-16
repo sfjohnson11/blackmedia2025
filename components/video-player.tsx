@@ -20,23 +20,31 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
 
   useEffect(() => {
     const video = videoRef.current
-    if (video) {
-      const key = `video_progress_${videoSource}`
-      const savedTime = localStorage.getItem(key)
+    const key = `video_progress_${videoSource}`
 
+    if (video) {
+      const savedTime = localStorage.getItem(key)
       video.load()
       video.volume = 1
       video.controls = true
 
-      video.onloadedmetadata = () => {
+      const handleLoaded = () => {
         if (savedTime) {
           video.currentTime = parseFloat(savedTime)
         }
         video.play().catch(() => {})
       }
 
-      video.ontimeupdate = () => {
+      const handleTimeUpdate = () => {
         localStorage.setItem(key, video.currentTime.toString())
+      }
+
+      video.addEventListener("loadedmetadata", handleLoaded)
+      video.addEventListener("timeupdate", handleTimeUpdate)
+
+      return () => {
+        video.removeEventListener("loadedmetadata", handleLoaded)
+        video.removeEventListener("timeupdate", handleTimeUpdate)
       }
     }
   }, [videoSource])
