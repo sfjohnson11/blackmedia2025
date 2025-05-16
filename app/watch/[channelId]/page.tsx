@@ -1,23 +1,23 @@
 // /app/watch/[channelId]/page.tsx
 "use client"
 
-import { useState, useEffect } from 'react'
-import VideoPlayer from '@/components/video-player'
-import { ChannelInfo } from '@/components/channel-info'
-import { ChannelPassword } from '@/components/channel-password'
+import { useState, useEffect } from "react"
+import VideoPlayer from "@/components/video-player"
+import { ChannelInfo } from "@/components/channel-info"
+import { ChannelPassword } from "@/components/channel-password"
+import { FavoriteToggle } from "@/components/favorite-toggle"
 import {
   supabase,
   getCurrentProgram,
   getUpcomingPrograms,
-  forceRefreshAllData,
-} from '@/lib/supabase'
+} from "@/lib/supabase"
 import {
   isPasswordProtected,
   hasChannelAccess,
-} from '@/lib/channel-access'
-import type { Channel, Program } from '@/types'
-import Link from 'next/link'
-import { Loader2 } from 'lucide-react'
+} from "@/lib/channel-access"
+import type { Channel, Program } from "@/types"
+import Link from "next/link"
+import { Loader2 } from "lucide-react"
 
 interface WatchPageProps {
   params: {
@@ -44,9 +44,9 @@ export default function WatchPage({ params }: WatchPageProps) {
         setError(null)
 
         const { data, error } = await supabase
-          .from('channels')
-          .select('*')
-          .eq('id', params.channelId)
+          .from("channels")
+          .select("*")
+          .eq("id", params.channelId)
           .single()
 
         if (error) throw error
@@ -64,8 +64,8 @@ export default function WatchPage({ params }: WatchPageProps) {
           setUpcomingPrograms(programs)
         }
       } catch (err) {
-        console.error('Failed to load channel:', err)
-        setError('Failed to load channel data')
+        console.error("Failed to load channel:", err)
+        setError("Failed to load channel data")
       } finally {
         setLoading(false)
       }
@@ -73,19 +73,6 @@ export default function WatchPage({ params }: WatchPageProps) {
 
     fetchData()
   }, [params.channelId])
-
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      const { program } = await getCurrentProgram(params.channelId)
-      if (program?.id !== currentProgram?.id || program?.mp4_url !== currentProgram?.mp4_url) {
-        setCurrentProgram(program)
-        const { programs } = await getUpcomingPrograms(params.channelId)
-        setUpcomingPrograms(programs)
-      }
-    }, 30000)
-
-    return () => clearInterval(interval)
-  }, [params.channelId, currentProgram?.id, currentProgram?.mp4_url])
 
   if (loading) {
     return (
@@ -100,7 +87,7 @@ export default function WatchPage({ params }: WatchPageProps) {
     return (
       <div className="text-center p-10 text-white">
         <h2 className="text-2xl font-bold mb-2">Channel Not Found</h2>
-        <p>{error || 'The requested channel does not exist.'}</p>
+        <p>{error || "The requested channel does not exist."}</p>
         <Link href="/" className="text-red-500 underline mt-4 block">
           Go back home
         </Link>
@@ -113,6 +100,13 @@ export default function WatchPage({ params }: WatchPageProps) {
       {hasAccess ? (
         <>
           <VideoPlayer src={videoPath} poster={currentProgram?.poster_url} />
+
+          {/* Favorite Toggle Button */}
+          <div className="flex justify-end pr-4 pt-2">
+            {currentProgram?.id && (
+              <FavoriteToggle programId={currentProgram.id.toString()} />
+            )}
+          </div>
 
           <div className="px-4 md:px-10 py-6">
             <h1 className="text-2xl font-bold mb-4">
@@ -150,3 +144,4 @@ export default function WatchPage({ params }: WatchPageProps) {
     </div>
   )
 }
+"
