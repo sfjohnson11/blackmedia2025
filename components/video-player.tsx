@@ -1,4 +1,3 @@
-// components/VideoPlayer.tsx
 // components/video-player.tsx
 "use client"
 
@@ -51,16 +50,7 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
   }
 
   return (
-    <div
-      style={{
-        backgroundColor: "black",
-        width: "100%",
-        height: "auto",
-        padding: "10px",
-        position: "relative",
-        zIndex: 0,
-      }}
-    >
+    <div style={{ backgroundColor: "black", width: "100%", height: "auto", padding: "10px", position: "relative", zIndex: 0 }}>
       <video
         ref={videoRef}
         src={videoSource}
@@ -75,3 +65,4 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
     </div>
   )
 }
+
