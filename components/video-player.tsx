@@ -1,3 +1,4 @@
+// components/VideoPlayer.tsx
 "use client"
 
 import React, { useRef, useEffect, useState } from "react"
@@ -20,10 +21,23 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
   useEffect(() => {
     const video = videoRef.current
     if (video) {
+      const key = `video_progress_${videoSource}`
+      const savedTime = localStorage.getItem(key)
+
       video.load()
       video.volume = 1
       video.controls = true
-      video.play().catch(() => {})
+
+      video.onloadedmetadata = () => {
+        if (savedTime) {
+          video.currentTime = parseFloat(savedTime)
+        }
+        video.play().catch(() => {})
+      }
+
+      video.ontimeupdate = () => {
+        localStorage.setItem(key, video.currentTime.toString())
+      }
     }
   }, [videoSource])
 
