@@ -54,7 +54,7 @@ export function Navbar() {
                 Favorites
               </span>
             </Link>
-            <Link href="/history" className="text-white hover:text-gray-300">
+            <Link href="/admin/continue" className="text-white hover:text-gray-300">
               <span className="flex items-center">
                 <Clock className="h-4 w-4 mr-1 text-green-400" />
                 Continue
@@ -129,13 +129,13 @@ export function Navbar() {
                 Library
               </span>
             </Link>
-            <Link href="/favorites" className="text-white hover:text-gray-300 py-2">
+            <Link href="/favorites" className="text-white hover:text-gray-300">
               <span className="flex items-center">
                 <Heart className="h-4 w-4 mr-2 text-red-500" />
                 Favorites
               </span>
             </Link>
-            <Link href="/history" className="text-white hover:text-gray-300 py-2">
+            <Link href="/admin/continue" className="text-white hover:text-gray-300">
               <span className="flex items-center">
                 <Clock className="h-4 w-4 mr-2 text-green-400" />
                 Continue Watching
