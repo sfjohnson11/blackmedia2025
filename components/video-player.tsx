@@ -1,74 +1,49 @@
 "use client"
 
-import React, { useRef, useEffect, useState } from "react"
+import React, { useEffect, useRef } from "react"
+import { getProgressFor } from "@/lib/continue"
 
 interface VideoPlayerProps {
   src: string
   poster?: string
 }
 
-const getStorageKey = (src: string) => `video_progress_${src}`
-
 export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
-  const [videoSource, setVideoSource] = useState(src)
-
-  useEffect(() => {
-    if (src !== videoSource) {
-      setVideoSource(src)
-    }
-  }, [src])
 
   useEffect(() => {
     const video = videoRef.current
-    const key = getStorageKey(videoSource)
+    if (!video) return
 
-    if (video) {
-      const saved = localStorage.getItem(key)
-      if (saved) {
-        const { progress, timestamp } = JSON.parse(saved)
-        const recent = Date.now() - timestamp < 24 * 60 * 60 * 1000
-        if (recent) {
-          video.currentTime = progress
-        }
-      }
+    video.volume = 1
+    video.controls = true
 
-      // Set up playback
-      video.load()
-      video.controls = true
-      video.volume = 1
-      video.loop = true // Loop standby OR regular video
-      
-      const tryPlay = () => {
-        video.play().catch(() => {
-          video.muted = true
-          video.play().catch(() => {
-            console.warn("Autoplay still blocked")
-          })
-        })
-      }
+    const progress = getProgressFor(src)
+    const resumeTime = progress?.time
 
-      tryPlay()
+    if (resumeTime && typeof resumeTime === "number" && !isNaN(resumeTime)) {
+      video.currentTime = resumeTime
+    }
 
-      const handleTimeUpdate = () => {
+    video.play().catch(() => {})
+
+    const saveProgress = () => {
+      if (video && !video.paused) {
         localStorage.setItem(
-          key,
-          JSON.stringify({
-            progress: video.currentTime,
-            timestamp: Date.now(),
-          })
+          `video_progress_${src}`,
+          JSON.stringify({ time: video.currentTime })
         )
       }
-
-      video.addEventListener("timeupdate", handleTimeUpdate)
-
-      return () => {
-        video.removeEventListener("timeupdate", handleTimeUpdate)
-      }
     }
-  }, [videoSource])
 
-  if (!videoSource) {
+    video.addEventListener("timeupdate", saveProgress)
+
+    return () => {
+      video.removeEventListener("timeupdate", saveProgress)
+    }
+  }, [src])
+
+  if (!src) {
     return (
       <div className="text-red-600 bg-black p-4 text-center">
         ⚠️ No video source found.
@@ -89,7 +64,7 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
     >
       <video
         ref={videoRef}
-        src={videoSource}
+        src={src}
         poster={poster}
         controls
         playsInline
