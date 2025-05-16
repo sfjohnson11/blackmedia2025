@@ -1,7 +1,6 @@
 // app/watch/[channelId]/page.tsx
-// app/watch/[channelId]/page.tsx
 import { supabase } from "@/lib/supabase"
-import VideoPlayer from "@/components/video-player" // ✅ fixed casing
+import VideoPlayer from "@/components/video-player"
 import { notFound } from "next/navigation"
 
 export default async function WatchPage({ params }: { params: { channelId: string } }) {
