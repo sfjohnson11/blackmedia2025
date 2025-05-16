@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { supabase } from "@/lib/supabase"
-import { getContinueWatching, getProgressFor } from "@/lib/continue"
+import { getContinueWatching } from "@/lib/continue"
 import type { Program } from "@/types"
 import Link from "next/link"
 
@@ -32,7 +32,11 @@ export default function ContinueWatchingPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {programs.map((p) => (
-            <Link key={p.id} href={`/watch/${p.channel_id}`} className="block bg-gray-800 p-4 rounded">
+            <Link
+              key={p.id}
+              href={`/watch/${p.channel_id}?video=${encodeURIComponent(p.mp4_url)}`}
+              className="block bg-gray-800 p-4 rounded"
+            >
               <h2 className="text-white font-semibold mb-1">{p.title}</h2>
               <p className="text-sm text-gray-400">Channel {p.channel_id}</p>
             </Link>
