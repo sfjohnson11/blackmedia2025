@@ -2,17 +2,18 @@
 
 import type React from "react"
 
-import { useState, useRef } from "react"
+import { useState, useRef, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { AlertCircle, CheckCircle, ChevronLeft } from "lucide-react"
 import { useRouter } from "next/navigation"
+import { supabase } from "@/lib/supabase"
 
 // Centralized full URL builder
 function getFullUrl(path: string): string {
   const base = process.env.NEXT_PUBLIC_SUPABASE_URL + "/storage/v1/object/public/"
-  const cleanPath = path.replace(/^\/+/, "")
+  const cleanPath = path.replace(/^\/+/g, "")
   return base + cleanPath
 }
 
@@ -23,6 +24,33 @@ export default function FreedomSchoolPage() {
   const [isLoading, setIsLoading] = useState<boolean>(false)
   const [error, setError] = useState<string | null>(null)
   const headerImageUrl = getFullUrl("freedom-school/freedom-schoolimage.jpeg")
+
+  useEffect(() => {
+    const loadVideo = async () => {
+      setIsLoading(true)
+      setError(null)
+
+      const { data, error } = await supabase
+        .from("freedom_school_videos")
+        .select("*")
+        .eq("published", true)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .single()
+
+      if (error || !data) {
+        setError("No Freedom School video available.")
+        setIsLoading(false)
+        return
+      }
+
+      const fullUrl = getFullUrl(`freedom-school/${data.mp4_url}`)
+      setVideoUrl(fullUrl)
+      setIsLoading(false)
+    }
+
+    loadVideo()
+  }, [])
 
   const handleVideoError = () => {
     setError("Video failed to load. Please check your connection and try again.")
