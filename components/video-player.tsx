@@ -1,4 +1,3 @@
-// 🧾 BACKUP - Original working player
 "use client"
 
 import React, { useRef, useEffect, useState } from "react"
@@ -12,6 +11,9 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [videoSource, setVideoSource] = useState(src)
 
+  // Automatically detect if it's a standby video based on filename
+  const isStandby = videoSource.toLowerCase().includes("standby")
+
   useEffect(() => {
     if (src !== videoSource) {
       setVideoSource(src)
@@ -24,9 +26,10 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
       video.load()
       video.volume = 1
       video.controls = true
+      video.loop = isStandby // ✅ Enable loop for standby videos
       video.play().catch(() => {})
     }
-  }, [videoSource])
+  }, [videoSource, isStandby])
 
   if (!videoSource) {
     return (
