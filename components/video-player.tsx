@@ -1,3 +1,4 @@
+// 🧾 BACKUP - Original working player
 "use client"
 
 import React, { useRef, useEffect, useState } from "react"
@@ -53,7 +54,6 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
         controls
         playsInline
         autoPlay
-        loop={videoSource.includes("standby")}
         className="w-full max-h-[90vh] object-contain"
       >
         Your browser does not support the video tag.
