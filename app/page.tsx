@@ -1,3 +1,9 @@
+// No changes to app/page.tsx from the previous version I provided,
+// assuming you're still using the workaround version of getFeaturedPrograms
+// until the schema issue is resolved.
+// If the SQL script (002) runs successfully, you can revert getFeaturedPrograms
+// to use the direct `channels(*)` join.
+
 import { supabase } from "@/lib/supabase"
 import type { Channel, Program } from "@/types"
 import { ChannelCarousel } from "@/components/channel-carousel"
@@ -14,7 +20,6 @@ async function getChannels() {
       return []
     }
 
-    // Sort channels numerically by ID
     return (data as Channel[]).sort((a, b) => {
       const aNum = Number.parseInt(a.id, 10)
       const bNum = Number.parseInt(b.id, 10)
@@ -26,23 +31,57 @@ async function getChannels() {
   }
 }
 
+// Using the workaround version of getFeaturedPrograms
 async function getFeaturedPrograms() {
   try {
-    // Get a few recent programs to feature
-    const { data, error } = await supabase
+    const { data: programsData, error: programsError } = await supabase
       .from("programs")
-      .select("*, channels(*)")
+      .select("*")
       .order("start_time", { ascending: false })
       .limit(5)
 
-    if (error) {
-      console.error("Error fetching featured programs:", error)
+    if (programsError) {
+      console.error("Error fetching featured programs (step 1):", programsError.message)
+      return []
+    }
+    if (!programsData || programsData.length === 0) {
       return []
     }
 
-    return data as (Program & { channels: Channel })[]
+    const channelIds = [
+      ...new Set(programsData.map((p) => p.channel_id).filter((id) => id !== null && id !== undefined) as string[]),
+    ]
+
+    if (channelIds.length === 0) {
+      return programsData.map((p) => ({ ...p, channels: null })) as (Program & { channels: Channel | null })[]
+    }
+
+    const { data: channelsData, error: channelsError } = await supabase
+      .from("channels")
+      .select("*")
+      .in("id", channelIds)
+
+    if (channelsError) {
+      console.error("Error fetching channel details for featured programs (step 2):", channelsError.message)
+      return programsData.map((p) => ({ ...p, channels: null })) as (Program & { channels: Channel | null })[]
+    }
+
+    if (!channelsData) {
+      console.warn("No channel data returned for featured programs channel IDs.")
+      return programsData.map((p) => ({ ...p, channels: null })) as (Program & { channels: Channel | null })[]
+    }
+
+    const channelsMap = new Map(channelsData.map((c) => [c.id, c]))
+
+    const featuredProgramsWithChannels = programsData.map((program) => ({
+      ...program,
+      channels: program.channel_id ? channelsMap.get(String(program.channel_id)) || null : null,
+    }))
+
+    return featuredProgramsWithChannels as (Program & { channels: Channel | null })[]
   } catch (error) {
-    console.error("Error fetching featured programs:", error)
+    const message = error instanceof Error ? error.message : "An unknown error occurred"
+    console.error("Error in getFeaturedPrograms (outer catch):", message)
     return []
   }
 }
@@ -51,7 +90,6 @@ export default async function Home() {
   const channels = await getChannels()
   const featuredPrograms = await getFeaturedPrograms()
 
-  // If no channels, show a simple message with link to setup
   if (channels.length === 0) {
     return (
       <div className="pt-4 px-4 md:px-10 flex items-center justify-center min-h-[80vh]">
@@ -66,11 +104,9 @@ export default async function Home() {
     )
   }
 
-  // Select a random channel to feature at the top
   const randomIndex = Math.floor(Math.random() * channels.length)
   const featuredChannel = channels[randomIndex]
 
-  // Group channels by category (for this example, we'll just create arbitrary groups)
   const popularChannels = channels.slice(0, 10)
   const newsChannels = channels.filter(
     (c) => c.name.toLowerCase().includes("news") || c.description?.toLowerCase().includes("news"),
@@ -78,38 +114,25 @@ export default async function Home() {
   const entertainmentChannels = channels.filter(
     (c) => c.name.toLowerCase().includes("entertainment") || c.description?.toLowerCase().includes("entertainment"),
   )
-
-  // If we don't have enough categorized channels, create more rows
   const remainingChannels = channels.filter(
     (c) => !newsChannels.includes(c) && !entertainmentChannels.includes(c) && c.id !== featuredChannel.id,
   )
 
   return (
     <div className="flex flex-col">
-      {/* Breaking News component - no need for margin-top here as it's handled in the component */}
       <BreakingNews />
-
-      {/* Main content with proper spacing */}
       <div>
-        {/* Featured Channel Hero */}
         <FeaturedChannel channel={featuredChannel} />
-
-        {/* Channel Rows */}
         <section className="px-4 md:px-10 pb-10 -mt-16 relative z-10">
-          {/* Popular Channels - with auto-scroll enabled */}
           <ChannelCarousel
             title="Popular Channels"
             channels={popularChannels}
             autoScroll={true}
             autoScrollInterval={6000}
           />
-
-          {/* News Channels - only show if we have some */}
           {newsChannels.length > 0 && (
             <ChannelCarousel title="News" channels={newsChannels} autoScroll={true} autoScrollInterval={8000} />
           )}
-
-          {/* Entertainment Channels - only show if we have some */}
           {entertainmentChannels.length > 0 && (
             <ChannelCarousel
               title="Entertainment"
@@ -118,13 +141,9 @@ export default async function Home() {
               autoScrollInterval={7000}
             />
           )}
-
-          {/* More Channels */}
           {remainingChannels.length > 0 && (
             <ChannelCarousel title="More Channels" channels={remainingChannels} autoScroll={false} />
           )}
-
-          {/* All Channels Link */}
           <div className="flex justify-center mt-8">
             <Link href="/channels" className="text-gray-400 hover:text-white transition-colors">
               View All Channels

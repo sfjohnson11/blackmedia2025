@@ -1,10 +1,11 @@
 export interface Channel {
   id: string
   name: string
-  slug: string
-  description: string
-  logo_url?: string
-  password_protected?: boolean
+  slug?: string | null
+  description?: string | null
+  logo_url?: string | null
+  password_protected?: boolean | null
+  // Add any other fields from your 'channels' table
 }
 
 export interface Program {
@@ -12,8 +13,10 @@ export interface Program {
   channel_id: string
   title: string
   mp4_url: string
-  start_time: string
-  duration?: number
+  start_time: string // ISO 8601 date string
+  duration: number | null // Duration in seconds
+  poster_url?: string | null
+  // Add any other fields from your 'programs' table
 }
 
 export interface CurrentlyPlaying {
