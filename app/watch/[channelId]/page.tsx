@@ -1,11 +1,11 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, useRef } from "react"
 import { useParams, useRouter } from "next/navigation"
-import VideoPlayer from "@/components/video-player"
-import { getCurrentProgram, getUpcomingPrograms, getChannelById, STANDBY_PLACEHOLDER_ID } from "@/lib/supabase"
+import VideoPlayer from "@/components/video-player" // This will now import the simple diagnostic player
+import { getCurrentProgram, getChannelById, STANDBY_PLACEHOLDER_ID } from "@/lib/supabase"
 import type { Program, Channel } from "@/types"
-import { ChevronLeft, RefreshCw, AlertTriangle } from "lucide-react"
+import { ChevronLeft, RefreshCw, AlertTriangle, Loader2 } from "lucide-react"
 import Link from "next/link"
 
 export default function WatchPage() {
@@ -16,16 +16,19 @@ export default function WatchPage() {
   const [currentProgram, setCurrentProgram] = useState<Program | null>(null)
   const [upcomingPrograms, setUpcomingPrograms] = useState<Program[]>([])
   const [channel, setChannel] = useState<Channel | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
+  const [isLoadingPage, setIsLoadingPage] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [lastProgramCheck, setLastProgramCheck] = useState(Date.now())
+
+  const isInitialFetchRef = useRef(true)
+  const lastProgramStringRef = useRef<string | null>(null)
 
   const fetchProgramData = useCallback(
     async (isManualRefresh = false) => {
       if (!channelId) return
 
-      if (isManualRefresh || !currentProgram) {
-        setIsLoading(true)
+      if (isManualRefresh || isInitialFetchRef.current) {
+        setIsLoadingPage(true)
       }
       setError(null)
 
@@ -33,60 +36,67 @@ export default function WatchPage() {
         const channelData = await getChannelById(channelId)
         if (!channelData) {
           setError(`Channel with ID ${channelId} not found.`)
-          setIsLoading(false)
+          setIsLoadingPage(false)
+          isInitialFetchRef.current = false
           return
         }
         setChannel(channelData)
 
-        const { program: prog, error: progError } = await getCurrentProgram(channelId)
+        const { program: newProgramData, error: progError } = await getCurrentProgram(channelId)
         if (progError) {
           console.error("Error fetching current program:", progError)
         }
-        setCurrentProgram(prog)
 
-        const { programs: upcoming, error: upcomingError } = await getUpcomingPrograms(channelId)
-        if (upcomingError) {
-          console.error("Error fetching upcoming programs:", upcomingError)
+        const newProgramString = JSON.stringify(newProgramData)
+        if (newProgramString !== lastProgramStringRef.current) {
+          setCurrentProgram(newProgramData)
+          lastProgramStringRef.current = newProgramString
         }
-        setUpcomingPrograms(upcoming)
       } catch (e: any) {
         console.error("Failed to fetch program data:", e)
         setError(e.message || "Failed to load channel data.")
       } finally {
-        setIsLoading(false)
+        setIsLoadingPage(false)
+        if (isInitialFetchRef.current) {
+          isInitialFetchRef.current = false
+        }
         setLastProgramCheck(Date.now())
       }
     },
-    [channelId, currentProgram],
+    [channelId],
   )
 
   useEffect(() => {
-    fetchProgramData()
+    if (channelId) {
+      isInitialFetchRef.current = true
+      lastProgramStringRef.current = null
+      fetchProgramData()
+    }
   }, [channelId, fetchProgramData])
 
   useEffect(() => {
     const interval = setInterval(() => {
-      if (Date.now() - lastProgramCheck > 25000) {
+      if (!isLoadingPage && Date.now() - lastProgramCheck > 25000) {
         console.log("Scheduled check for program updates...")
         fetchProgramData()
       }
     }, 30000)
     return () => clearInterval(interval)
-  }, [fetchProgramData, lastProgramCheck])
+  }, [fetchProgramData, lastProgramCheck, isLoadingPage])
 
   const handleProgramEnd = () => {
-    console.log("Program ended, fetching next program...")
+    console.log("WatchPage: Program ended, fetching next program...")
     fetchProgramData(true)
   }
 
   const handlePlayerError = (playerError: string) => {
-    console.warn("Player reported an error:", playerError)
+    console.warn("WatchPage: Player reported an error:", playerError)
   }
 
-  if (isLoading && !currentProgram) {
+  if (isLoadingPage && isInitialFetchRef.current) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-black text-white">
-        <RefreshCw className="h-12 w-12 animate-spin text-red-600 mb-4" />
+        <Loader2 className="h-12 w-12 animate-spin text-red-600 mb-4" />
         <p>Loading Channel...</p>
       </div>
     )
@@ -107,7 +117,7 @@ export default function WatchPage() {
 
   return (
     <div className="bg-black min-h-screen flex flex-col text-white">
-      <div className="p-4 flex items-center justify-between bg-gray-900/50">
+      <div className="p-4 flex items-center justify-between bg-gray-900/50 sticky top-0 z-10">
         <button
           onClick={() => router.back()}
           className="p-2 rounded-full hover:bg-gray-700 transition-colors"
@@ -115,19 +125,28 @@ export default function WatchPage() {
         >
           <ChevronLeft className="h-6 w-6" />
         </button>
-        <h1 className="text-xl font-semibold">{channel?.name || "Channel"}</h1>
+        <h1 className="text-xl font-semibold truncate px-2">{channel?.name || "Channel"}</h1>
         <button
           onClick={() => fetchProgramData(true)}
           className="p-2 rounded-full hover:bg-gray-700 transition-colors"
           aria-label="Refresh"
+          disabled={isLoadingPage}
         >
-          <RefreshCw className="h-5 w-5" />
+          {isLoadingPage ? <Loader2 className="h-5 w-5 animate-spin" /> : <RefreshCw className="h-5 w-5" />}
         </button>
       </div>
 
-      <VideoPlayer initialProgram={currentProgram} onProgramEnd={handleProgramEnd} onError={handlePlayerError} />
+      <div className="w-full aspect-video bg-black">
+        {currentProgram ? (
+          <VideoPlayer initialProgram={currentProgram} />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center">
+            {!isLoadingPage && <p className="text-gray-400">Checking for scheduled programs...</p>}
+          </div>
+        )}
+      </div>
 
-      <div className="p-4">
+      <div className="p-4 flex-grow">
         {currentProgram ? (
           <>
             <h2 className="text-2xl font-bold">{currentProgram.title}</h2>
@@ -141,18 +160,19 @@ export default function WatchPage() {
               </p>
             )}
           </>
-        ) : (
-          !isLoading && <p>No program currently playing.</p>
-        )}
+        ) : null}
 
         {upcomingPrograms.length > 0 && (
           <div className="mt-6">
             <h3 className="text-xl font-semibold mb-2">Up Next</h3>
             <ul className="space-y-2">
               {upcomingPrograms.map((prog) => (
-                <li key={prog.id} className="p-2 bg-gray-800 rounded">
-                  <p className="font-medium">{prog.title}</p>
-                  <p className="text-xs text-gray-400">Starts at: {new Date(prog.start_time).toLocaleTimeString()}</p>
+                <li key={prog.id} className="p-3 bg-gray-800 rounded-lg shadow">
+                  <p className="font-medium text-white">{prog.title}</p>
+                  <p className="text-xs text-gray-400">
+                    Starts at:{" "}
+                    {new Date(prog.start_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                  </p>
                 </li>
               ))}
             </ul>

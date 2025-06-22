@@ -65,6 +65,11 @@ export default function VideoPlayer({ initialProgram, onProgramEnd, onError }: V
   const handleCanPlay = () => {
     setIsLoading(false)
     setError(null)
+    // ADDED: Set loop attribute when video can play
+    if (videoRef.current && isStandbyVideo) {
+      videoRef.current.loop = true
+      console.log("Loop enabled for standby video")
+    }
   }
 
   const handleVideoError = (e: React.SyntheticEvent<HTMLVideoElement, Event>) => {
@@ -78,7 +83,7 @@ export default function VideoPlayer({ initialProgram, onProgramEnd, onError }: V
         case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
           errorMsg = "The video format is not supported or the file could not be found."
           if (isStandbyVideo) {
-            errorMsg += " (Is standby.mp4 in the correct channel bucket?)"
+            errorMsg += " (Is standby_blacktruthtv.mp4 in the correct channel bucket?)"
           }
           break
         default:
@@ -92,11 +97,12 @@ export default function VideoPlayer({ initialProgram, onProgramEnd, onError }: V
   }
 
   const handleEnded = () => {
+    console.log(`Video ended. IsStandbyVideo: ${isStandbyVideo}, Loop: ${videoRef.current?.loop}`)
     if (!isStandbyVideo && onProgramEnd) {
       console.log("Program ended:", currentProgram?.title)
       onProgramEnd()
     }
-    // If it's a standby video, the `loop` attribute handles replaying automatically.
+    // For standby videos, the loop attribute should handle automatic replay
   }
 
   const retryLoad = () => {
@@ -154,7 +160,7 @@ export default function VideoPlayer({ initialProgram, onProgramEnd, onError }: V
         controls
         autoPlay
         playsInline
-        loop={isStandbyVideo} // This is the key change!
+        loop={isStandbyVideo} // ADDED: Declarative loop attribute
         onCanPlay={handleCanPlay}
         onError={handleVideoError}
         onEnded={handleEnded}

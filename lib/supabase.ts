@@ -21,16 +21,26 @@ export function getFullUrl(path: string): string {
     console.error("NEXT_PUBLIC_SUPABASE_URL is not defined")
     return path // Fallback
   }
-  // The path for a channel's video is typically `bucket-name/file-name`
-  // e.g., `channel1/my-video.mp4`. The bucket name is part of the path here.
   const cleanPath = path.replace(/^\/+/, "")
   return `${baseUrl}/storage/v1/object/public/${cleanPath}`
 }
 
-// This is the conventional name for the standby video in each bucket.
-const STANDBY_VIDEO_FILENAME = "standby.mp4"
+// This constant is now updated to match your actual filenames.
+const STANDBY_VIDEO_FILENAME = "standby_blacktruthtv.mp4"
+
 // A special identifier for our virtual standby program.
 export const STANDBY_PLACEHOLDER_ID = "standby_placeholder"
+
+// Create a stable standby program object template
+const createStandbyProgramPlaceholder = (channelIdForBucket: string): Program => ({
+  id: -1,
+  channel_id: STANDBY_PLACEHOLDER_ID,
+  title: "Programming will resume shortly",
+  mp4_url: `${channelIdForBucket}/${STANDBY_VIDEO_FILENAME}`, // This will now use the correct filename
+  start_time: "1970-01-01T00:00:00.000Z",
+  duration: 8640000,
+  poster_url: null,
+})
 
 async function fetchProgramByChannelId(channelId: string, now: Date): Promise<Program | null> {
   const { data, error } = await supabase
@@ -49,7 +59,7 @@ async function fetchProgramByChannelId(channelId: string, now: Date): Promise<Pr
   if (data && data.length > 0) {
     const program = data[0]
     const startTime = new Date(program.start_time)
-    const duration = program.duration || 1800 // Default 30 mins
+    const duration = program.duration || 1800
     const endTime = new Date(startTime.getTime() + duration * 1000)
 
     if (now >= startTime && now < endTime) {
@@ -64,22 +74,13 @@ export const getCurrentProgram = async (channelId: string): Promise<{ program: P
     const now = new Date()
     let currentProgram = await fetchProgramByChannelId(channelId, now)
 
-    // If no real program is found, create a virtual placeholder for the standby video.
     if (!currentProgram) {
-      console.log(`No current program for channel ${channelId}, creating placeholder for standby video.`)
-
-      currentProgram = {
-        id: -1, // Use a non-real ID
-        channel_id: STANDBY_PLACEHOLDER_ID, // Special ID to signal this is a standby video
-        title: "Programming will resume shortly",
-        // The mp4_url path must include the bucket (channelId) and the filename.
-        mp4_url: `${channelId}/${STANDBY_VIDEO_FILENAME}`,
-        start_time: new Date().toISOString(),
-        duration: 86400, // Long duration, doesn't really matter since it loops
-        poster_url: null,
-      } as Program
+      console.log(
+        `No current program for channel ${channelId}, using standby placeholder with filename: ${STANDBY_VIDEO_FILENAME}.`,
+      )
+      currentProgram = createStandbyProgramPlaceholder(channelId)
     } else {
-      console.log(`Fetched current program for channel ${channelId}:`, currentProgram.title)
+      console.log(`Fetched current program for channel ${channelId}: ${currentProgram.title}`)
     }
 
     return { program: currentProgram, error: null }
