@@ -3,13 +3,7 @@
 import { type ReactNode, useEffect, useState, useCallback } from "react"
 import { useParams, useRouter } from "next/navigation"
 import VideoPlayer from "@/components/video-player"
-import {
-  getVideoUrlForProgram,
-  getFullUrl,
-  fetchChannelDetails,
-  supabase,
-  STANDBY_PLACEHOLDER_ID,
-} from "@/lib/supabase"
+import { getVideoUrlForProgram, fetchChannelDetails, supabase, STANDBY_PLACEHOLDER_ID } from "@/lib/supabase"
 import type { Program, Channel } from "@/types"
 import { ChevronLeft, Loader2 } from "lucide-react"
 
@@ -43,27 +37,33 @@ export default function WatchPage() {
     }
     setValidatedNumericChannelId(numericId)
     setError(null)
+    // Reset HLS fail state if navigating away from Ch21 or to a different channel
     if (numericId !== CH21_ID_NUMERIC) {
-      // Reset HLS fail state if not on Channel 21
       setHlsStreamFailedForCh21(false)
+    } else {
+      // If navigating TO Ch21, we don't want to reset hlsStreamFailedForCh21 here
+      // as it might have been set due to a previous failure on this channel.
+      // The fetchCurrentProgram logic will handle resetting it if a DB program plays.
     }
+
     const loadChannelDetails = async () => {
       setIsLoading(true)
       const details = await fetchChannelDetails(channelIdString)
       setChannelDetails(details)
       if (!details) setError((prev) => prev || "Could not load channel details.")
+      // setIsLoading(false) // Moved to fetchCurrentProgram's finally block
     }
     loadChannelDetails()
   }, [channelIdString])
 
   const getCh21StandbyMp4Program = useCallback(
     (now: Date): Program => ({
-      id: STANDBY_PLACEHOLDER_ID, // Use common ID for standby so loop logic works
+      id: STANDBY_PLACEHOLDER_ID,
       title: "Channel 21 - Standby",
       description: "Live stream currently unavailable. Standby programming will play.",
       channel_id: CH21_ID_NUMERIC,
       mp4_url: `channel${CH21_ID_NUMERIC}/standby_blacktruthtv.mp4`,
-      duration: 300,
+      duration: 300, // Example duration, actual loop is handled by player
       start_time: now.toISOString(),
       poster_url: null,
     }),
@@ -96,7 +96,8 @@ export default function WatchPage() {
         if (activeProgram) {
           programToSet = { ...activeProgram, channel_id: numericChannelId }
           if (numericChannelId === CH21_ID_NUMERIC) {
-            setHlsStreamFailedForCh21(false) // DB program is active, reset HLS fail state
+            // If a DB program is active on Ch21, the HLS stream is not relevant, so reset its failure state.
+            setHlsStreamFailedForCh21(false)
           }
         } else if (numericChannelId === CH21_ID_NUMERIC) {
           if (hlsStreamFailedForCh21) {
@@ -108,21 +109,22 @@ export default function WatchPage() {
               description: "Currently broadcasting live.",
               channel_id: CH21_ID_NUMERIC,
               mp4_url: `/api/cors-proxy?url=${encodeURIComponent(HLS_LIVE_STREAM_URL_CH21)}`,
-              duration: 86400 * 7,
-              start_time: new Date(Date.now() - 3600000).toISOString(),
-              poster_url: null,
+              duration: 86400 * 7, // Effectively infinite for a live stream
+              start_time: new Date(Date.now() - 3600000).toISOString(), // Mark as started recently
+              poster_url: channelDetails?.image_url || null, // Use channel image as poster
             }
           }
         } else {
+          // Standby for other channels
           programToSet = {
             id: STANDBY_PLACEHOLDER_ID,
-            title: "Standby",
+            title: "Standby Programming",
             description: "Programming will resume shortly.",
             channel_id: numericChannelId,
             mp4_url: `channel${numericChannelId}/standby_blacktruthtv.mp4`,
-            duration: 300,
+            duration: 300, // Example duration
             start_time: now.toISOString(),
-            poster_url: null,
+            poster_url: channelDetails?.image_url || null,
           }
         }
 
@@ -132,55 +134,80 @@ export default function WatchPage() {
             prev?.start_time !== programToSet!.start_time ||
             prev?.mp4_url !== programToSet!.mp4_url
           ) {
-            setVideoPlayerKey(Date.now())
+            setVideoPlayerKey(Date.now()) // Force player re-init for new source/program
           }
           return programToSet
         })
       } catch (e: any) {
         console.error("Error in fetchCurrentProgram:", e.message)
         setError(e.message)
-        setCurrentProgram(getCh21StandbyMp4Program(now)) // Fallback to standby on generic error
+        // Fallback to standby, ensuring it's specific for Ch21 if on Ch21
+        if (numericChannelId === CH21_ID_NUMERIC) {
+          setCurrentProgram(getCh21StandbyMp4Program(now))
+        } else {
+          // Generic standby for other channels on error
+          setCurrentProgram({
+            id: STANDBY_PLACEHOLDER_ID,
+            title: "Standby Programming - Error",
+            description: "Error loading schedule. Standby content will play.",
+            channel_id: numericChannelId,
+            mp4_url: `channel${numericChannelId}/standby_blacktruthtv.mp4`,
+            duration: 300,
+            start_time: now.toISOString(),
+            poster_url: channelDetails?.image_url || null,
+          })
+        }
       } finally {
         setIsLoading(false)
       }
     },
-    [hlsStreamFailedForCh21, getCh21StandbyMp4Program],
+    [hlsStreamFailedForCh21, getCh21StandbyMp4Program, channelDetails], // Added channelDetails
   )
 
   useEffect(() => {
     let pollingInterval: NodeJS.Timeout | undefined
     if (validatedNumericChannelId !== null) {
-      fetchCurrentProgram(validatedNumericChannelId)
+      fetchCurrentProgram(validatedNumericChannelId) // Initial fetch
       pollingInterval = setInterval(() => {
         if (document.visibilityState === "visible") {
-          // Only poll if tab is visible
           fetchCurrentProgram(validatedNumericChannelId)
         }
-      }, 60000)
+      }, 60000) // Poll every 60 seconds
     }
     return () => {
       if (pollingInterval) clearInterval(pollingInterval)
     }
-  }, [validatedNumericChannelId, fetchCurrentProgram])
+  }, [validatedNumericChannelId, fetchCurrentProgram]) // Rerun if channelId or fetchCurrentProgram changes
 
   const handlePrimaryLiveStreamError = useCallback(() => {
     if (validatedNumericChannelId === CH21_ID_NUMERIC && !hlsStreamFailedForCh21) {
       console.warn("WatchPage: Primary HLS live stream for Channel 21 failed. Falling back to standby MP4.")
-      setHlsStreamFailedForCh21(true) // Mark HLS as failed to prevent immediate retry
-      // The next poll or a direct call to fetchCurrentProgram will now pick the MP4 standby.
-      // For immediate switch:
+      setHlsStreamFailedForCh21(true)
+      // No need to call fetchCurrentProgram immediately,
+      // the state update of hlsStreamFailedForCh21 will trigger a re-render,
+      // and if fetchCurrentProgram is in its deps, it will re-run.
+      // For a more immediate switch without waiting for polling or re-fetch:
       setCurrentProgram(getCh21StandbyMp4Program(new Date()))
-      setVideoPlayerKey(Date.now())
+      setVideoPlayerKey(Date.now()) // Ensure player reinitializes
     }
   }, [validatedNumericChannelId, hlsStreamFailedForCh21, getCh21StandbyMp4Program])
 
   const videoSrc = currentProgram ? getVideoUrlForProgram(currentProgram) : undefined
-  const posterSrc = currentProgram?.poster_url ? getFullUrl(currentProgram.poster_url) : undefined
-  const shouldLoopInPlayer = currentProgram?.id === STANDBY_PLACEHOLDER_ID // True for any standby MP4
+  const posterSrc = currentProgram?.poster_url || channelDetails?.image_url || undefined
+  const shouldLoopInPlayer = currentProgram?.id === STANDBY_PLACEHOLDER_ID
   const isPrimaryHLS = currentProgram?.id === "live-ch21-hls"
 
+  // Determine if the "No Live Programming" notice should be shown
+  const showNoLiveNoticeForCh21 =
+    validatedNumericChannelId === CH21_ID_NUMERIC &&
+    hlsStreamFailedForCh21 &&
+    currentProgram?.id === STANDBY_PLACEHOLDER_ID
+
   const handleProgramEnded = useCallback(() => {
-    if (validatedNumericChannelId !== null && currentProgram?.id !== "live-ch21-hls") {
+    // This should only be called for non-looping, non-HLS scheduled programs.
+    // The VideoPlayer's onEnded will not call this if isStandby is true.
+    if (validatedNumericChannelId !== null) {
+      console.log("WatchPage: Program ended, fetching next program.", currentProgram?.title)
       fetchCurrentProgram(validatedNumericChannelId)
     }
   }, [validatedNumericChannelId, fetchCurrentProgram, currentProgram])
@@ -206,6 +233,7 @@ export default function WatchPage() {
         onVideoEnded={handleProgramEnded}
         isPrimaryLiveStream={isPrimaryHLS && validatedNumericChannelId === CH21_ID_NUMERIC}
         onPrimaryLiveStreamError={handlePrimaryLiveStreamError}
+        showNoLiveNotice={showNoLiveNoticeForCh21} // Pass the new prop
       />
     )
   } else {
@@ -219,7 +247,7 @@ export default function WatchPage() {
           <ChevronLeft className="h-6 w-6" />
         </button>
         <h1 className="text-xl font-semibold truncate px-2">{channelDetails?.name || `Channel ${channelIdString}`}</h1>
-        <div className="w-10 h-10" />
+        <div className="w-10 h-10" /> {/* Spacer */}
       </div>
       <div className="w-full aspect-video bg-black flex items-center justify-center">{content}</div>
       <div className="p-4 flex-grow">
