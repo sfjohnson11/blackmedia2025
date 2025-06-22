@@ -2,7 +2,7 @@
 
 import type React from "react"
 import { useEffect, useRef, useState, useCallback } from "react"
-import { Loader2, AlertTriangle, RefreshCw, VolumeX } from "lucide-react" // Added VolumeX, Volume2
+import { Loader2, AlertTriangle, RefreshCw, VolumeX } from "lucide-react"
 import { getFullUrl, STANDBY_PLACEHOLDER_ID } from "@/lib/supabase"
 import type { Program } from "@/types"
 
@@ -16,165 +16,124 @@ export default function VideoPlayer({ initialProgram, onProgramEnd, onError }: V
   const videoRef = useRef<HTMLVideoElement>(null)
   const [currentProgram, setCurrentProgram] = useState<Program | null>(initialProgram)
   const [videoSrc, setVideoSrc] = useState<string>("")
-  const [isLoading, setIsLoading] = useState(true)
+  const [isLoading, setIsLoading] = useState(true) // Start true if we expect a program
   const [error, setError] = useState<string | null>(null)
   const [showUnmuteOverlay, setShowUnmuteOverlay] = useState(false)
 
   const isStandbyVideo = currentProgram?.channel_id === STANDBY_PLACEHOLDER_ID
 
+  // Effect 1: Update currentProgram and videoSrc when initialProgram changes
   useEffect(() => {
+    console.log("VideoPlayer Effect 1: initialProgram changed", initialProgram)
     setCurrentProgram(initialProgram)
-    // When program changes, reset unmute overlay visibility until we know status
-    setShowUnmuteOverlay(false)
+    setShowUnmuteOverlay(false) // Reset overlay
+    setError(null) // Reset error
+
+    if (initialProgram && initialProgram.mp4_url) {
+      const newSrc = getFullUrl(initialProgram.mp4_url)
+      console.log(
+        `VideoPlayer Effect 1: New video source will be: ${newSrc} (Standby: ${initialProgram?.channel_id === STANDBY_PLACEHOLDER_ID})`,
+      )
+      setVideoSrc(newSrc)
+      setIsLoading(true) // Set loading true when src changes
+    } else {
+      console.log("VideoPlayer Effect 1: No initialProgram or mp4_url, clearing videoSrc.")
+      setVideoSrc("")
+      setIsLoading(false) // No src, not loading
+    }
   }, [initialProgram])
+
+  // Effect 2: Manage video element when videoSrc changes (key for re-mount)
+  // We are relying more on the `key` prop on the video element to handle re-initialization
+  // when videoSrc changes. Programmatic `load()` and `play()` are mainly in event handlers now.
 
   const updateMutedOverlayStatus = useCallback(() => {
     if (videoRef.current) {
-      // Show overlay if video is trying to play (not paused) but is muted
-      if (!videoRef.current.paused && videoRef.current.muted) {
+      const isActuallyPlaying = videoRef.current.currentTime > 0 && !videoRef.current.paused && !videoRef.current.ended
+      if (isActuallyPlaying && videoRef.current.muted) {
         setShowUnmuteOverlay(true)
+        console.log("VideoPlayer: updateMutedOverlayStatus - Showing unmute overlay.")
       } else {
         setShowUnmuteOverlay(false)
+        console.log("VideoPlayer: updateMutedOverlayStatus - Hiding unmute overlay.")
       }
     }
   }, [])
-
-  useEffect(() => {
-    setError(null)
-    if (currentProgram && currentProgram.mp4_url) {
-      const fullUrl = getFullUrl(currentProgram.mp4_url)
-      if (fullUrl !== videoSrc) {
-        setVideoSrc(fullUrl)
-        setIsLoading(true)
-        console.log(`VideoPlayer: Loading video: ${currentProgram.title} (${fullUrl}) - Standby: ${isStandbyVideo}`)
-      } else {
-        setIsLoading(false)
-      }
-    } else {
-      setVideoSrc("")
-      setIsLoading(false)
-      console.log("VideoPlayer: No current program or mp4_url.")
-    }
-  }, [currentProgram, videoSrc])
-
-  useEffect(() => {
-    const videoElement = videoRef.current
-    if (!videoElement) return
-
-    const handlePlayAttempt = () => {
-      videoElement
-        .play()
-        .then(() => {
-          console.log(`VideoPlayer: Play initiated. Muted: ${videoElement.muted}, Volume: ${videoElement.volume}`)
-          updateMutedOverlayStatus()
-        })
-        .catch((playError) => {
-          console.error("VideoPlayer: Error attempting to play video:", playError)
-          if (playError.name === "NotAllowedError") {
-            setError("Autoplay may be blocked. Use controls or click to play/unmute.")
-            // Even if play is blocked, it might be because it's trying to play with sound.
-            // If it's muted, still show the unmute overlay.
-            if (videoElement.muted) setShowUnmuteOverlay(true)
-          } else {
-            setError("Could not play video. Click to retry.")
-          }
-          setIsLoading(false)
-          if (onError) onError(`Playback error: ${playError.name} - ${playError.message}`)
-        })
-    }
-
-    if (videoSrc) {
-      console.log(
-        `VideoPlayer: Effect for videoSrc change. Current src: ${videoElement.currentSrc}, new videoSrc: ${videoSrc}`,
-      )
-      if (videoElement.currentSrc !== videoSrc) {
-        console.log("VideoPlayer: Setting new src and loading.")
-        videoElement.src = videoSrc
-        videoElement.load() // Important to load new src
-      }
-      // Autoplay is on the video tag, but we can also call play here.
-      // Browsers often require a user gesture for unmuted autoplay.
-      // We'll attempt to play, and then check muted status.
-      handlePlayAttempt()
-    } else {
-      console.log("VideoPlayer: videoSrc is empty, pausing and removing src.")
-      videoElement.pause()
-      videoElement.removeAttribute("src")
-      videoElement.load()
-      setShowUnmuteOverlay(false) // No video, no unmute overlay
-    }
-  }, [videoSrc, onError, updateMutedOverlayStatus]) // videoRef.current is not a reactive dependency
 
   const handleCanPlay = useCallback(() => {
     setIsLoading(false)
     setError(null)
     if (videoRef.current) {
       console.log(
-        `VideoPlayer: Event CanPlay. Muted: ${videoRef.current.muted}, Loop: ${videoRef.current.loop}, Volume: ${videoRef.current.volume}`,
+        `VideoPlayer: Event CanPlay. Muted: ${videoRef.current.muted}, Loop: ${videoRef.current.loop}, Volume: ${videoRef.current.volume}, Autoplay: ${videoRef.current.autoplay}, ReadyState: ${videoRef.current.readyState}`,
       )
-      if (isStandbyVideo) {
-        videoRef.current.loop = true
-        console.log("VideoPlayer: Loop enabled for standby video.")
-      }
-      // Video might start playing automatically due to `autoPlay` attribute
-      // or we might have called play(). Check muted status.
-      updateMutedOverlayStatus()
-      // Attempt to play again if it's paused and should be playing
-      if (videoRef.current.paused) {
-        videoRef.current
-          .play()
-          .then(updateMutedOverlayStatus)
-          .catch((e) => console.warn("CanPlay play attempt failed", e))
-      }
+      // Attempt to play if autoplay didn't kick in or was blocked
+      // Browsers are more likely to allow play() in an event handler like onCanPlay
+      videoRef.current
+        .play()
+        .then(() => {
+          console.log("VideoPlayer: Play initiated successfully from onCanPlay.")
+          updateMutedOverlayStatus()
+        })
+        .catch((err) => {
+          console.warn(
+            "VideoPlayer: Play attempt from onCanPlay failed. This might be due to autoplay restrictions.",
+            err,
+          )
+          // If play fails and it's muted, it's a strong candidate for the unmute overlay
+          if (videoRef.current?.muted) {
+            setShowUnmuteOverlay(true)
+          }
+          // If error is NotAllowedError, it's likely an autoplay policy issue
+          if (err.name === "NotAllowedError") {
+            setError("Autoplay was blocked. Click the video or unmute button to play.")
+          }
+        })
     }
-  }, [isStandbyVideo, updateMutedOverlayStatus])
+  }, [updateMutedOverlayStatus])
+
+  const handlePlayEvent = useCallback(() => {
+    console.log("VideoPlayer: Event Play. Video is playing.")
+    setIsLoading(false) // Video is playing, so not loading
+    updateMutedOverlayStatus()
+  }, [updateMutedOverlayStatus])
+
+  const handlePauseEvent = useCallback(() => {
+    console.log("VideoPlayer: Event Pause. Video is paused.")
+    // Don't show unmute overlay if user manually paused it, unless it's also muted
+    if (videoRef.current && !videoRef.current.muted) {
+      setShowUnmuteOverlay(false)
+    }
+  }, [])
 
   const handleVolumeChange = useCallback(() => {
     if (videoRef.current) {
       console.log(
         `VideoPlayer: Event VolumeChange. Muted: ${videoRef.current.muted}, Volume: ${videoRef.current.volume}`,
       )
-      updateMutedOverlayStatus() // Hide overlay if user unmutes via native controls
+      updateMutedOverlayStatus()
     }
   }, [updateMutedOverlayStatus])
-
-  const handlePlayEvent = useCallback(() => {
-    // Fired when playback actually begins or resumes
-    console.log("VideoPlayer: Event Play. Video is playing.")
-    setIsLoading(false) // Ensure loading is false when play starts
-    updateMutedOverlayStatus()
-  }, [updateMutedOverlayStatus])
-
-  const handlePauseEvent = useCallback(() => {
-    console.log("VideoPlayer: Event Pause. Video is paused.")
-    // Don't show unmute overlay if intentionally paused
-    // setShowUnmuteOverlay(false); // Or only if videoRef.current.muted is false
-    if (videoRef.current && !videoRef.current.muted) {
-      setShowUnmuteOverlay(false)
-    }
-  }, [])
 
   const handleVideoError = (e: React.SyntheticEvent<HTMLVideoElement, Event>) => {
-    // ... (error handling code remains the same as previous version)
     const videoElement = e.currentTarget
     let errorMsg = "An unknown video error occurred."
     if (videoElement.error) {
       switch (videoElement.error.code) {
         case MediaError.MEDIA_ERR_ABORTED:
-          errorMsg = "Video playback aborted."
+          errorMsg = "Video playback aborted by user or script."
           break
         case MediaError.MEDIA_ERR_NETWORK:
-          errorMsg = "A network error caused the video to fail."
+          errorMsg = "A network error caused video download to fail."
           break
         case MediaError.MEDIA_ERR_DECODE:
           errorMsg = "Video playback aborted due to a decoding error."
           break
         case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
-          errorMsg = "The video format is not supported or the file could not be found."
-          if (isStandbyVideo) errorMsg += " (Check standby_blacktruthtv.mp4)"
+          errorMsg = "Video format not supported or source unavailable."
           break
         default:
-          errorMsg = `Video error code: ${videoElement.error.code}`
+          errorMsg = `Video error code: ${videoElement.error.code}.`
       }
     }
     console.error("VideoPlayer: Event VideoError:", errorMsg, "Src:", videoSrc, "Raw Error:", videoElement.error)
@@ -185,67 +144,105 @@ export default function VideoPlayer({ initialProgram, onProgramEnd, onError }: V
   }
 
   const handleEnded = () => {
-    // ... (ended handling code remains the same)
     if (videoRef.current) {
-      console.log(`VideoPlayer: Event Ended. IsStandbyVideo: ${isStandbyVideo}, Loop: ${videoRef.current.loop}`)
-    }
-    if (!isStandbyVideo && onProgramEnd) {
-      console.log("VideoPlayer: Program ended:", currentProgram?.title)
-      onProgramEnd()
+      console.log(
+        `VideoPlayer: Event Ended. IsStandbyVideo: ${isStandbyVideo}, Current Loop on element: ${videoRef.current.loop}`,
+      )
+      if (!isStandbyVideo && onProgramEnd) {
+        console.log("VideoPlayer: Program ended (non-standby):", currentProgram?.title)
+        onProgramEnd()
+      } else if (isStandbyVideo) {
+        console.log("VideoPlayer: Standby video ended. Native loop should handle restart.")
+        // If native loop fails, a manual play() here can be a fallback,
+        // but it's better if the `loop` attribute works.
+        // videoRef.current.play().catch(e => console.warn("Standby ended, manual play attempt:", e));
+      }
     }
   }
 
   const retryLoad = () => {
-    // ... (retry load code remains the same)
-    if (currentProgram && currentProgram.mp4_url) {
+    if (initialProgram) {
+      // Check initialProgram instead of currentProgram for retry
+      console.log("VideoPlayer: RetryLoad called.")
+      // Trigger re-evaluation of Effect 1 by "changing" initialProgram (or its key if it were an object from parent)
+      // Forcing a re-render or re-evaluation of initialProgram related logic.
+      // The simplest way is to re-set the videoSrc which will trigger video re-mount due to key change.
       setError(null)
       setIsLoading(true)
       setShowUnmuteOverlay(false)
-      const originalSrc = getFullUrl(currentProgram.mp4_url)
-      setVideoSrc("")
-      setTimeout(() => setVideoSrc(originalSrc), 50)
+      // Effectively re-triggers the first useEffect
+      const newSrc = getFullUrl(initialProgram.mp4_url!) // Assume mp4_url exists if retrying
+      setVideoSrc("") // Clear src briefly to ensure key change is effective
+      setTimeout(() => setVideoSrc(newSrc), 50)
     }
   }
 
   const handleUnmuteClick = () => {
     if (videoRef.current) {
       videoRef.current.muted = false
-      // Attempt to play again in case it was paused due to mute restrictions
-      videoRef.current.play().catch((e) => console.warn("Error playing after manual unmute", e))
-      setShowUnmuteOverlay(false)
+      videoRef.current
+        .play()
+        .then(() => {
+          console.log("VideoPlayer: Play initiated successfully after manual unmute.")
+          setShowUnmuteOverlay(false)
+        })
+        .catch((err) => {
+          console.warn("VideoPlayer: Play attempt after manual unmute failed.", err)
+          setError("Could not play video even after unmute. Please try refreshing.")
+        })
     }
+  }
+
+  // Render logic
+  const videoKey = videoSrc || "no-src" // Changing the key will force React to re-mount the video element
+  console.log(
+    `VideoPlayer: Rendering. videoKey: ${videoKey}, isLoading: ${isLoading}, error: ${error}, showUnmuteOverlay: ${showUnmuteOverlay}, videoSrc: ${videoSrc}`,
+  )
+
+  if (!videoSrc && !isLoading && !error) {
+    // This state is when there's genuinely no program to play
+    return (
+      <div className="w-full aspect-video bg-black flex items-center justify-center text-white">
+        <p>{initialProgram === null ? "No program is currently scheduled." : "Preparing video..."}</p>
+      </div>
+    )
   }
 
   return (
     <div className="w-full aspect-video bg-black relative">
-      <video
-        ref={videoRef}
-        key={videoSrc || "no-video-yet"}
-        className="w-full h-full"
-        controls
-        autoPlay
-        playsInline
-        loop={isStandbyVideo}
-        muted // Start muted, try to unmute programmatically or let user do it.
-        // Or set to false and let browser handle it, then show overlay. Let's try starting muted.
-        onCanPlay={handleCanPlay}
-        onError={handleVideoError}
-        onEnded={handleEnded}
-        onVolumeChange={handleVolumeChange}
-        onPlay={handlePlayEvent}
-        onPause={handlePauseEvent}
-        onLoadStart={() => {
-          console.log("VideoPlayer: Event LoadStart.")
-          setIsLoading(true)
-          setError(null)
-          setShowUnmuteOverlay(false)
-        }}
-        poster={currentProgram?.poster_url ? getFullUrl(currentProgram.poster_url) : undefined}
-      >
-        Your browser does not support the video tag.
-      </video>
+      {videoSrc && (
+        <video
+          ref={videoRef}
+          key={videoKey} // CRITICAL: Re-mounts the video element when src changes
+          className="w-full h-full"
+          controls
+          autoPlay
+          playsInline
+          loop={isStandbyVideo} // Rely on the HTML5 loop attribute
+          muted // Start muted; user interaction or successful autoplay un-mutes
+          onCanPlay={handleCanPlay}
+          onError={handleVideoError}
+          onEnded={handleEnded}
+          onVolumeChange={handleVolumeChange}
+          onPlay={handlePlayEvent}
+          onPause={handlePauseEvent}
+          onLoadStart={() => {
+            console.log(`VideoPlayer: Event LoadStart for src: ${videoSrc}`)
+            setIsLoading(true)
+            setError(null) // Clear previous errors on new load
+            setShowUnmuteOverlay(false)
+          }}
+          onLoadedData={() => {
+            // This event is a good indicator that some data has loaded
+            console.log(`VideoPlayer: Event LoadedData. ReadyState: ${videoRef.current?.readyState}`)
+            // setIsLoading(false); // Can set loading false here or in onCanPlay
+          }}
+          poster={currentProgram?.poster_url ? getFullUrl(currentProgram.poster_url) : undefined}
+        >
+          Your browser does not support the video tag.
+        </video>
+      )}
 
-      {/* Unmute Overlay */}
       {showUnmuteOverlay && (
         <button
           onClick={handleUnmuteClick}
@@ -257,7 +254,6 @@ export default function VideoPlayer({ initialProgram, onProgramEnd, onError }: V
         </button>
       )}
 
-      {/* Loading State Overlay (only if not showing unmute overlay) */}
       {isLoading && videoSrc && !showUnmuteOverlay && (
         <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center text-white z-10">
           <Loader2 className="h-12 w-12 animate-spin text-red-600" />
@@ -265,12 +261,11 @@ export default function VideoPlayer({ initialProgram, onProgramEnd, onError }: V
         </div>
       )}
 
-      {/* Error State Overlay (only if not showing unmute overlay) */}
       {error && !showUnmuteOverlay && (
         <div className="absolute inset-0 bg-black bg-opacity-80 flex flex-col items-center justify-center text-white p-4 z-10">
           <AlertTriangle className="h-12 w-12 text-yellow-400 mb-4" />
           <p className="text-center mb-2">Error: {error}</p>
-          {currentProgram && currentProgram.mp4_url && (
+          {initialProgram && initialProgram.mp4_url && (
             <button
               onClick={retryLoad}
               className="mt-2 px-4 py-2 bg-red-600 hover:bg-red-700 rounded text-white flex items-center"
@@ -281,11 +276,11 @@ export default function VideoPlayer({ initialProgram, onProgramEnd, onError }: V
         </div>
       )}
 
-      {/* No Video Source State (but not an error, e.g. waiting for program) (only if not showing unmute overlay) */}
-      {!videoSrc && !isLoading && !error && !showUnmuteOverlay && (
+      {/* Fallback for when videoSrc is empty but we are not explicitly in an error or loading state for it */}
+      {!videoSrc && isLoading && !error && !showUnmuteOverlay && (
         <div className="absolute inset-0 bg-black flex items-center justify-center text-white z-10">
           <Loader2 className="h-12 w-12 animate-spin text-gray-500" />
-          <p className="ml-4">{initialProgram === null ? "No program scheduled." : "Checking schedule..."}</p>
+          <p className="ml-4">Checking schedule...</p>
         </div>
       )}
     </div>
