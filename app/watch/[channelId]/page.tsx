@@ -13,6 +13,9 @@ import {
 import type { Program, Channel } from "@/types"
 import { ChevronLeft, Loader2 } from "lucide-react"
 
+const HLS_LIVE_STREAM_URL_CH21 = "https://cdn.livepush.io/hls/fe96095a2d2b4314aa1789fb309e48f8/index.m3u8"
+const CH21_ID_NUMERIC = 21
+
 export default function WatchPage() {
   const params = useParams()
   const router = useRouter()
@@ -24,92 +27,94 @@ export default function WatchPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [videoPlayerKey, setVideoPlayerKey] = useState(Date.now())
+  const [hlsStreamFailedForCh21, setHlsStreamFailedForCh21] = useState(false)
 
-  // Effect 1: Validate channelIdString and fetch channel details
   useEffect(() => {
-    // console.log("WatchPage Effect 1: Validating channelIdString and fetching channel details. channelIdString:", channelIdString)
     if (!channelIdString) {
       setError("Channel ID is missing in URL.")
       setIsLoading(false)
-      setValidatedNumericChannelId(null)
-      setChannelDetails(null)
-      setCurrentProgram(null)
       return
     }
-
     const numericId = Number.parseInt(channelIdString, 10)
     if (isNaN(numericId)) {
       setError("Invalid channel ID format in URL.")
       setIsLoading(false)
-      setValidatedNumericChannelId(null)
-      setChannelDetails(null)
-      setCurrentProgram(null)
       return
     }
-
     setValidatedNumericChannelId(numericId)
-    setError(null) // Clear previous errors
-
+    setError(null)
+    if (numericId !== CH21_ID_NUMERIC) {
+      // Reset HLS fail state if not on Channel 21
+      setHlsStreamFailedForCh21(false)
+    }
     const loadChannelDetails = async () => {
-      // console.log("WatchPage Effect 1: Fetching channel details for numericId:", numericId)
-      setIsLoading(true) // Set loading true before fetching channel details
+      setIsLoading(true)
       const details = await fetchChannelDetails(channelIdString)
       setChannelDetails(details)
-      if (!details) {
-        setError((prevError) => prevError || "Could not load channel details.")
-      }
-      // setIsLoading(false) will be handled by fetchCurrentProgram's finally block
+      if (!details) setError((prev) => prev || "Could not load channel details.")
     }
     loadChannelDetails()
   }, [channelIdString])
 
-  // Effect 2: Program fetching logic (memoized)
-  const fetchCurrentProgram = useCallback(async (numericChannelId: number) => {
-    if (typeof numericChannelId !== "number") {
-      console.warn("fetchCurrentProgram: called with invalid numericChannelId", numericChannelId)
-      return
-    }
-    // console.log("WatchPage fetchCurrentProgram: Fetching for channel:", numericChannelId)
-    setIsLoading(true)
-    try {
-      const { data: programsData, error: dbError } = await supabase
-        .from("programs")
-        .select("*, duration")
-        .eq("channel_id", numericChannelId)
-        .order("start_time", { ascending: true })
+  const getCh21StandbyMp4Program = useCallback(
+    (now: Date): Program => ({
+      id: STANDBY_PLACEHOLDER_ID, // Use common ID for standby so loop logic works
+      title: "Channel 21 - Standby",
+      description: "Live stream currently unavailable. Standby programming will play.",
+      channel_id: CH21_ID_NUMERIC,
+      mp4_url: `channel${CH21_ID_NUMERIC}/standby_blacktruthtv.mp4`,
+      duration: 300,
+      start_time: now.toISOString(),
+      poster_url: null,
+    }),
+    [],
+  )
 
-      if (dbError) {
-        console.error("Supabase error fetching programs:", dbError.message)
-        throw new Error(`Database error: ${dbError.message}`)
-      }
-
-      const programs = programsData as Program[]
+  const fetchCurrentProgram = useCallback(
+    async (numericChannelId: number) => {
+      setIsLoading(true)
       const now = new Date()
-      // console.log("Current client time (UTC):", now.toISOString())
+      try {
+        const { data: programsData, error: dbError } = await supabase
+          .from("programs")
+          .select("*, duration")
+          .eq("channel_id", numericChannelId)
+          .order("start_time", { ascending: true })
 
-      const activeProgram = programs?.find((p) => {
-        if (!p.start_time || typeof p.duration !== "number" || p.duration <= 0) {
-          // console.warn("Skipping program due to invalid start_time or duration:", p.title, p.start_time, p.duration)
-          return false
-        }
-        const start = new Date(p.start_time) // Assumes start_time is UTC or correctly parsable
-        const end = new Date(start.getTime() + p.duration * 1000)
-        // console.log(`Checking ${p.title}: Start ${start.toISOString()}, End ${end.toISOString()}, Active: ${now >= start && now < end}`)
-        return now >= start && now < end
-      })
+        if (dbError) throw new Error(`Database error: ${dbError.message}`)
 
-      if (activeProgram) {
-        // console.log("Active program found:", activeProgram.title)
-        setCurrentProgram((prev) => {
-          if (prev?.id !== activeProgram.id || prev?.start_time !== activeProgram.start_time) {
-            setVideoPlayerKey(Date.now()) // New key for new program
-          }
-          return { ...activeProgram, channel_id: numericChannelId }
+        const programs = programsData as Program[]
+        const activeProgram = programs?.find((p) => {
+          if (!p.start_time || typeof p.duration !== "number" || p.duration <= 0) return false
+          const start = new Date(p.start_time)
+          const end = new Date(start.getTime() + p.duration * 1000)
+          return now >= start && now < end
         })
-      } else {
-        // console.warn("No active program found. Setting standby.")
-        setCurrentProgram((prev) => {
-          const newStandby = {
+
+        let programToSet: Program | null = null
+
+        if (activeProgram) {
+          programToSet = { ...activeProgram, channel_id: numericChannelId }
+          if (numericChannelId === CH21_ID_NUMERIC) {
+            setHlsStreamFailedForCh21(false) // DB program is active, reset HLS fail state
+          }
+        } else if (numericChannelId === CH21_ID_NUMERIC) {
+          if (hlsStreamFailedForCh21) {
+            programToSet = getCh21StandbyMp4Program(now)
+          } else {
+            programToSet = {
+              id: "live-ch21-hls",
+              title: "Live Broadcast (Channel 21)",
+              description: "Currently broadcasting live.",
+              channel_id: CH21_ID_NUMERIC,
+              mp4_url: `/api/cors-proxy?url=${encodeURIComponent(HLS_LIVE_STREAM_URL_CH21)}`,
+              duration: 86400 * 7,
+              start_time: new Date(Date.now() - 3600000).toISOString(),
+              poster_url: null,
+            }
+          }
+        } else {
+          programToSet = {
             id: STANDBY_PLACEHOLDER_ID,
             title: "Standby",
             description: "Programming will resume shortly.",
@@ -119,63 +124,71 @@ export default function WatchPage() {
             start_time: now.toISOString(),
             poster_url: null,
           }
-          if (prev?.id !== STANDBY_PLACEHOLDER_ID || prev?.channel_id !== numericChannelId) {
-            setVideoPlayerKey(Date.now()) // New key for standby
-          }
-          return newStandby
-        })
-      }
-    } catch (e: any) {
-      console.error("Error in fetchCurrentProgram:", e.message)
-      setError(e.message)
-    } finally {
-      setIsLoading(false)
-    }
-  }, []) // Empty dependency array as it doesn't depend on props/state from this component's scope directly
+        }
 
-  // Effect 3: Polling for current program (replaces the previous polling logic)
+        setCurrentProgram((prev) => {
+          if (
+            prev?.id !== programToSet!.id ||
+            prev?.start_time !== programToSet!.start_time ||
+            prev?.mp4_url !== programToSet!.mp4_url
+          ) {
+            setVideoPlayerKey(Date.now())
+          }
+          return programToSet
+        })
+      } catch (e: any) {
+        console.error("Error in fetchCurrentProgram:", e.message)
+        setError(e.message)
+        setCurrentProgram(getCh21StandbyMp4Program(now)) // Fallback to standby on generic error
+      } finally {
+        setIsLoading(false)
+      }
+    },
+    [hlsStreamFailedForCh21, getCh21StandbyMp4Program],
+  )
+
   useEffect(() => {
     let pollingInterval: NodeJS.Timeout | undefined
-
-    const startPolling = (idToPoll: number) => {
-      // Run immediately
-      fetchCurrentProgram(idToPoll)
-
-      // Poll every 60 seconds
+    if (validatedNumericChannelId !== null) {
+      fetchCurrentProgram(validatedNumericChannelId)
       pollingInterval = setInterval(() => {
-        console.log("🔁 Polling for active program for channel:", idToPoll)
-        fetchCurrentProgram(idToPoll)
+        if (document.visibilityState === "visible") {
+          // Only poll if tab is visible
+          fetchCurrentProgram(validatedNumericChannelId)
+        }
       }, 60000)
     }
-
-    if (validatedNumericChannelId !== null) {
-      startPolling(validatedNumericChannelId)
-    }
-
     return () => {
-      if (pollingInterval) {
-        clearInterval(pollingInterval)
-        // console.log("Cleared polling interval for channel:", validatedNumericChannelId)
-      }
+      if (pollingInterval) clearInterval(pollingInterval)
     }
-  }, [validatedNumericChannelId, fetchCurrentProgram]) // Depends on validatedNumericChannelId and the stable fetchCurrentProgram
+  }, [validatedNumericChannelId, fetchCurrentProgram])
+
+  const handlePrimaryLiveStreamError = useCallback(() => {
+    if (validatedNumericChannelId === CH21_ID_NUMERIC && !hlsStreamFailedForCh21) {
+      console.warn("WatchPage: Primary HLS live stream for Channel 21 failed. Falling back to standby MP4.")
+      setHlsStreamFailedForCh21(true) // Mark HLS as failed to prevent immediate retry
+      // The next poll or a direct call to fetchCurrentProgram will now pick the MP4 standby.
+      // For immediate switch:
+      setCurrentProgram(getCh21StandbyMp4Program(new Date()))
+      setVideoPlayerKey(Date.now())
+    }
+  }, [validatedNumericChannelId, hlsStreamFailedForCh21, getCh21StandbyMp4Program])
 
   const videoSrc = currentProgram ? getVideoUrlForProgram(currentProgram) : undefined
   const posterSrc = currentProgram?.poster_url ? getFullUrl(currentProgram.poster_url) : undefined
-  const isStandbyProgram = currentProgram?.id === STANDBY_PLACEHOLDER_ID
+  const shouldLoopInPlayer = currentProgram?.id === STANDBY_PLACEHOLDER_ID // True for any standby MP4
+  const isPrimaryHLS = currentProgram?.id === "live-ch21-hls"
 
   const handleProgramEnded = useCallback(() => {
-    // console.log("WatchPage: Program ended, re-fetching current program.")
-    if (validatedNumericChannelId !== null) {
+    if (validatedNumericChannelId !== null && currentProgram?.id !== "live-ch21-hls") {
       fetchCurrentProgram(validatedNumericChannelId)
     }
-  }, [validatedNumericChannelId, fetchCurrentProgram])
+  }, [validatedNumericChannelId, fetchCurrentProgram, currentProgram])
 
   let content: ReactNode
   if (error) {
     content = <p className="text-red-400 p-4 text-center">Error: {error}</p>
   } else if (isLoading && !currentProgram) {
-    // Show loader if loading and no program yet
     content = (
       <div className="flex flex-col items-center justify-center h-full">
         <Loader2 className="h-10 w-10 animate-spin text-red-500 mb-2" />
@@ -188,21 +201,15 @@ export default function WatchPage() {
         key={videoPlayerKey}
         src={videoSrc}
         poster={posterSrc}
-        isStandby={isStandbyProgram}
+        isStandby={shouldLoopInPlayer}
         programTitle={currentProgram?.title}
-        onVideoEnded={isStandbyProgram ? undefined : handleProgramEnded}
+        onVideoEnded={handleProgramEnded}
+        isPrimaryLiveStream={isPrimaryHLS && validatedNumericChannelId === CH21_ID_NUMERIC}
+        onPrimaryLiveStreamError={handlePrimaryLiveStreamError}
       />
     )
-  } else if (currentProgram && !videoSrc) {
-    // Program selected, but URL failed (should be rare)
-    content = (
-      <p className="text-orange-400 p-4 text-center">
-        Program selected ({currentProgram.title}), but video URL generation failed.
-      </p>
-    )
   } else {
-    // Fallback if no other condition met (e.g., initial state before any loading)
-    content = <p className="text-gray-400 p-4 text-center">Initializing channel or no program data...</p>
+    content = <p className="text-gray-400 p-4 text-center">Initializing channel...</p>
   }
 
   return (
@@ -211,44 +218,25 @@ export default function WatchPage() {
         <button onClick={() => router.back()} className="p-2 rounded-full hover:bg-gray-700" aria-label="Go back">
           <ChevronLeft className="h-6 w-6" />
         </button>
-        <h1 className="text-xl font-semibold truncate px-2">
-          {channelDetails?.name || (channelIdString ? `Channel ${channelIdString}` : "Channel")}
-        </h1>
-        <div className="w-10 h-10" /> {/* Spacer */}
+        <h1 className="text-xl font-semibold truncate px-2">{channelDetails?.name || `Channel ${channelIdString}`}</h1>
+        <div className="w-10 h-10" />
       </div>
-
       <div className="w-full aspect-video bg-black flex items-center justify-center">{content}</div>
-
       <div className="p-4 flex-grow">
-        {currentProgram &&
-          !isLoading && ( // Display program info if not loading and program exists
-            <>
-              <h2 className="text-2xl font-bold">{currentProgram.title}</h2>
-              <p className="text-sm text-gray-400">
-                Channel: {channelDetails?.name || (channelIdString ? `Channel ${channelIdString}` : "...")}
-              </p>
-              {currentProgram.id !== STANDBY_PLACEHOLDER_ID && currentProgram.start_time && (
+        {currentProgram && !isLoading && (
+          <>
+            <h2 className="text-2xl font-bold">{currentProgram.title}</h2>
+            <p className="text-sm text-gray-400">Channel: {channelDetails?.name || `Channel ${channelIdString}`}</p>
+            {currentProgram.id !== STANDBY_PLACEHOLDER_ID &&
+              currentProgram.id !== "live-ch21-hls" &&
+              currentProgram.start_time && (
                 <p className="text-sm text-gray-400">
-                  Scheduled Start:{" "}
-                  {new Date(
-                    currentProgram.start_time.endsWith("Z") || /[-+]\d{2}:\d{2}$/.test(currentProgram.start_time)
-                      ? currentProgram.start_time
-                      : currentProgram.start_time + "Z",
-                  ).toLocaleString()}
+                  Scheduled Start: {new Date(currentProgram.start_time).toLocaleString()}
                 </p>
               )}
-              <p className="text-xs text-gray-300 mt-1">{currentProgram.description}</p>
-            </>
-          )}
-        {isLoading &&
-          !currentProgram && ( // Show "Checking schedule..." if loading initial program
-            <p className="text-gray-500">Checking schedule...</p>
-          )}
-        {!isLoading &&
-          !currentProgram &&
-          !error && ( // If not loading, no program, and no error
-            <p className="text-gray-500">No program scheduled at this time or channel data unavailable.</p>
-          )}
+            <p className="text-xs text-gray-300 mt-1">{currentProgram.description}</p>
+          </>
+        )}
       </div>
     </div>
   )
