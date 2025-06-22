@@ -1,22 +1,21 @@
 export interface Channel {
   id: string
   name: string
-  slug?: string | null
-  description?: string | null
-  logo_url?: string | null
+  slug: string
+  description?: string
+  logo_url?: string
   password_protected?: boolean | null
-  // Add any other fields from your 'channels' table
 }
 
 export interface Program {
-  id: number
-  channel_id: string
+  id: string | number
+  channel_id: number // Should consistently be a number
   title: string
   mp4_url: string
-  start_time: string // ISO 8601 date string
-  duration: number | null // Duration in seconds
+  start_time: string // ISO string
+  duration: number // CRITICAL: This is the duration in seconds
+  description?: string | null
   poster_url?: string | null
-  // Add any other fields from your 'programs' table
 }
 
 export interface CurrentlyPlaying {
@@ -34,9 +33,35 @@ export interface Video {
   duration: number
 }
 
-// New interface for channel access
 export interface ChannelAccess {
   channelId: string
   hasAccess: boolean
   timestamp: number
+}
+
+export interface LibraryItem {
+  id: string
+  title: string
+  type: "video" | "audio" | "document"
+  description?: string
+  media_url?: string
+  thumbnail_url?: string
+  channel_id?: number
+  created_at: string
+  document_text_content?: string
+}
+
+export interface LibraryItemData {
+  id: string
+  title: string
+  description?: string | null
+  type: "document" | "audio" | "video"
+  url?: string | null
+  thumbnail_url?: string | null
+  channel_id?: string | null
+  date_added: string
+  file_size_mb?: number | null
+  duration_seconds?: number | null
+  content?: string | null
+  created_at: string
 }

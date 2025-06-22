@@ -1,166 +1,164 @@
 "use client"
 
-import { useEffect, useState, useCallback, useRef } from "react"
+import { type ReactNode, useEffect, useState, useCallback } from "react"
 import { useParams, useRouter } from "next/navigation"
-import MsePlayer from "@/components/mse-player"
-// Import the new function and the old one (for posters, tentatively)
-import { getCurrentProgram, getVideoUrlForProgram, getFullUrl, fetchChannelDetails } from "@/lib/supabase"
+import VideoPlayer from "@/components/video-player"
+import {
+  getVideoUrlForProgram,
+  getFullUrl,
+  fetchChannelDetails,
+  supabase,
+  STANDBY_PLACEHOLDER_ID,
+} from "@/lib/supabase"
 import type { Program, Channel } from "@/types"
-import { ChevronLeft, RefreshCw, Loader2 } from "lucide-react"
+import { ChevronLeft, Loader2 } from "lucide-react"
 
 export default function WatchPage() {
   const params = useParams()
   const router = useRouter()
-  const channelId = params.channelId as string
+  const channelIdString = params.channelId as string
 
+  const [validatedNumericChannelId, setValidatedNumericChannelId] = useState<number | null>(null)
   const [currentProgram, setCurrentProgram] = useState<Program | null>(null)
   const [channelDetails, setChannelDetails] = useState<Channel | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-
-  const isInitialFetchRef = useRef(true)
-
-  const refreshData = useCallback(async () => {
-    console.log(
-      `WatchPage: refreshData called for channelId: ${channelId}. Initial fetch: ${isInitialFetchRef.current}`,
-    )
-    if (!channelId) {
-      console.warn("WatchPage: refreshData - no channelId, returning.")
-      return
-    }
-    if (isInitialFetchRef.current) {
-      setIsLoading(true)
-    }
-    setError(null)
-
-    try {
-      console.log("WatchPage: Attempting to fetch channel details...")
-      const details = await fetchChannelDetails(channelId)
-      console.log("WatchPage: Fetched channelDetails:", JSON.stringify(details, null, 2))
-      setChannelDetails(details)
-
-      console.log("WatchPage: Attempting to fetch current program...")
-      const program = await getCurrentProgram(channelId)
-      console.log("WatchPage: Fetched currentProgram:", JSON.stringify(program, null, 2))
-      setCurrentProgram(program)
-
-      if (!details && !program && !isInitialFetchRef.current) {
-        console.warn(`WatchPage: Channel details and program not found for ID ${channelId} after initial load.`)
-      }
-    } catch (err: any) {
-      console.error(
-        "WatchPage: Error in refreshData catch block:",
-        JSON.stringify(err, Object.getOwnPropertyNames(err)),
-      )
-      setError(err.message || "Failed to load channel data.")
-    } finally {
-      if (isInitialFetchRef.current) {
-        setIsLoading(false)
-        isInitialFetchRef.current = false
-        console.log("WatchPage: Initial load finished.")
-      } else {
-        console.log("WatchPage: Background refresh finished.")
-      }
-    }
-  }, [channelId])
+  const [videoPlayerKey, setVideoPlayerKey] = useState(Date.now())
 
   useEffect(() => {
-    isInitialFetchRef.current = true
-    refreshData()
-    const intervalId = setInterval(() => {
-      console.log("WatchPage: Interval triggered refreshData.")
-      refreshData()
-    }, 30000)
-    return () => {
-      console.log("WatchPage: Clearing interval.")
-      clearInterval(intervalId)
+    if (!channelIdString) {
+      setError("Channel ID is missing.")
+      setIsLoading(false)
+      return
     }
-  }, [refreshData])
+    const numericId = Number.parseInt(channelIdString, 10)
+    if (isNaN(numericId)) {
+      setError("Invalid channel ID.")
+      setIsLoading(false)
+      return
+    }
+    setValidatedNumericChannelId(numericId)
+    setError(null)
+    const loadChannelDetails = async () => {
+      setIsLoading(true)
+      const details = await fetchChannelDetails(channelIdString)
+      setChannelDetails(details)
+      if (!details) setError((prev) => prev || "Could not load channel details.")
+    }
+    loadChannelDetails()
+  }, [channelIdString])
 
-  // Use the new function for videoSrc
-  const videoSrc = getVideoUrlForProgram(currentProgram)
+  const fetchCurrentProgram = useCallback(async (numericChannelId: number) => {
+    setIsLoading(true)
+    try {
+      const { data: programsData, error: dbError } = await supabase
+        .from("programs")
+        .select("*, duration")
+        .eq("channel_id", numericChannelId)
+        .order("start_time", { ascending: true })
 
-  // For posterSrc, we'll tentatively use the old getFullUrl.
-  // If posters are also in dynamic buckets and poster_url is just a filename,
-  // this will need a similar function like getVideoUrlForProgram.
-  const posterPath = currentProgram?.poster_url
-  const posterSrc = posterPath ? getFullUrl(posterPath) : undefined
-  if (posterPath) {
-    console.log(`WatchPage: Poster path from DB: ${posterPath}, Generated posterSrc: ${posterSrc}`)
-  }
+      if (dbError) throw new Error(dbError.message)
 
-  console.log("WatchPage render: currentProgram:", JSON.stringify(currentProgram, null, 2))
-  console.log("WatchPage render: videoSrc (from getVideoUrlForProgram):", videoSrc)
-  console.log("WatchPage render: isLoading:", isLoading, "isInitialFetchRef.current:", isInitialFetchRef.current)
-  console.log("WatchPage render: error state:", error)
+      const programs = programsData as Program[]
+      const now = new Date()
+      const activeProgram = programs?.find((p) => {
+        if (!p.start_time || typeof p.duration !== "number") return false
+        const start = new Date(p.start_time)
+        const end = new Date(start.getTime() + p.duration * 1000)
+        return now >= start && now < end
+      })
 
-  if (isLoading && isInitialFetchRef.current) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-black text-white">
-        <Loader2 className="h-12 w-12 animate-spin text-red-600 mb-4" />
+      if (activeProgram) {
+        setCurrentProgram((prev) => {
+          if (prev?.id !== activeProgram.id) setVideoPlayerKey(Date.now())
+          return { ...activeProgram, channel_id: numericChannelId }
+        })
+      } else {
+        setCurrentProgram((prev) => {
+          const newStandby = {
+            id: STANDBY_PLACEHOLDER_ID,
+            title: "Standby",
+            description: "Programming will resume shortly.",
+            channel_id: numericChannelId,
+            mp4_url: `channel${numericChannelId}/standby_blacktruthtv.mp4`,
+            duration: 300,
+            start_time: now.toISOString(),
+            poster_url: null,
+          }
+          if (prev?.id !== STANDBY_PLACEHOLDER_ID) setVideoPlayerKey(Date.now())
+          return newStandby
+        })
+      }
+    } catch (e: any) {
+      setError(e.message)
+    } finally {
+      setIsLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (validatedNumericChannelId !== null) {
+      fetchCurrentProgram(validatedNumericChannelId)
+      const intervalId = setInterval(() => fetchCurrentProgram(validatedNumericChannelId), 60000)
+      return () => clearInterval(intervalId)
+    }
+  }, [validatedNumericChannelId, fetchCurrentProgram])
+
+  const videoSrc = currentProgram ? getVideoUrlForProgram(currentProgram) : undefined
+  const posterSrc = currentProgram?.poster_url ? getFullUrl(currentProgram.poster_url) : undefined
+  const isStandbyProgram = currentProgram?.id === STANDBY_PLACEHOLDER_ID
+
+  const handleProgramEnded = useCallback(() => {
+    if (validatedNumericChannelId !== null) {
+      fetchCurrentProgram(validatedNumericChannelId)
+    }
+  }, [validatedNumericChannelId, fetchCurrentProgram])
+
+  let content: ReactNode
+  if (error) {
+    content = <p className="text-red-400 p-4 text-center">Error: {error}</p>
+  } else if (isLoading && !currentProgram) {
+    content = (
+      <div className="flex flex-col items-center justify-center h-full">
+        <Loader2 className="h-10 w-10 animate-spin text-red-500 mb-2" />
         <p>Loading Channel...</p>
       </div>
     )
+  } else if (currentProgram && videoSrc) {
+    content = (
+      <VideoPlayer
+        key={videoPlayerKey}
+        src={videoSrc}
+        poster={posterSrc}
+        isStandby={isStandbyProgram}
+        programTitle={currentProgram?.title}
+        onVideoEnded={isStandbyProgram ? undefined : handleProgramEnded}
+      />
+    )
+  } else {
+    content = <p className="text-gray-400 p-4 text-center">Initializing channel...</p>
   }
 
   return (
     <div className="bg-black min-h-screen flex flex-col text-white">
       <div className="p-4 flex items-center justify-between bg-gray-900/50 sticky top-0 z-10">
-        <button
-          onClick={() => router.back()}
-          className="p-2 rounded-full hover:bg-gray-700 transition-colors"
-          aria-label="Go back"
-        >
+        <button onClick={() => router.back()} className="p-2 rounded-full hover:bg-gray-700" aria-label="Go back">
           <ChevronLeft className="h-6 w-6" />
         </button>
-        <h1 className="text-xl font-semibold truncate px-2">{channelDetails?.name || "Channel"}</h1>
-        <button
-          onClick={() => {
-            isInitialFetchRef.current = true
-            refreshData()
-          }}
-          className="p-2 rounded-full hover:bg-gray-700 transition-colors"
-          aria-label="Refresh"
-          disabled={isLoading && isInitialFetchRef.current}
-        >
-          {isLoading && isInitialFetchRef.current ? (
-            <Loader2 className="h-5 w-5 animate-spin" />
-          ) : (
-            <RefreshCw className="h-5 w-5" />
-          )}
-        </button>
+        <h1 className="text-xl font-semibold truncate px-2">{channelDetails?.name || `Channel ${channelIdString}`}</h1>
+        <div className="w-10 h-10" />
       </div>
-
-      <div className="w-full aspect-video bg-black flex items-center justify-center">
-        {currentProgram && videoSrc ? (
-          <MsePlayer src={videoSrc} poster={posterSrc} />
-        ) : (
-          <div className="text-gray-400 p-4 text-center">
-            {isLoading && isInitialFetchRef.current ? (
-              <Loader2 className="h-10 w-10 animate-spin text-red-500" />
-            ) : error ? (
-              <p className="text-red-400">Error: {error}</p>
-            ) : (
-              <p>Programming will resume shortly.</p>
-            )}
-          </div>
-        )}
-      </div>
-
+      <div className="w-full aspect-video bg-black flex items-center justify-center">{content}</div>
       <div className="p-4 flex-grow">
-        {currentProgram ? (
+        {currentProgram && !isLoading && (
           <>
             <h2 className="text-2xl font-bold">{currentProgram.title}</h2>
-            <p className="text-sm text-gray-400">Channel: {channelDetails?.name || "Loading..."}</p>
-            {currentProgram.start_time && (
-              <p className="text-sm text-gray-400">
-                Started: {new Date(currentProgram.start_time).toLocaleTimeString()}
-              </p>
+            <p className="text-sm text-gray-400">Channel: {channelDetails?.name || "..."}</p>
+            {currentProgram.id !== STANDBY_PLACEHOLDER_ID && (
+              <p className="text-sm text-gray-400">Scheduled: {new Date(currentProgram.start_time).toLocaleString()}</p>
             )}
             <p className="text-xs text-gray-300 mt-1">{currentProgram.description}</p>
           </>
-        ) : (
-          !isLoading && !error && <p className="text-gray-500">Checking for scheduled programs...</p>
         )}
       </div>
     </div>
