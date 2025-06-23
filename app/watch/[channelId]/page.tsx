@@ -1,14 +1,20 @@
-// watch.tsx — Clean version with Upcoming and Daily Guide (no countdown)
+// watch.tsx — With safe guide below video
 "use client"
 
 import { type ReactNode, useEffect, useState, useCallback } from "react"
 import { useParams, useRouter } from "next/navigation"
 import VideoPlayer from "@/components/video-player"
-import { getVideoUrlForProgram, fetchChannelDetails, supabase, STANDBY_PLACEHOLDER_ID } from "@/lib/supabase"
+import {
+  getVideoUrlForProgram,
+  fetchChannelDetails,
+  supabase,
+  STANDBY_PLACEHOLDER_ID,
+} from "@/lib/supabase"
 import type { Program, Channel } from "@/types"
 import { ChevronLeft, Loader2 } from "lucide-react"
 
-const HLS_LIVE_STREAM_URL_CH21 = "https://cdn.livepush.io/hls/fe96095a2d2b4314aa1789fb309e48f8/index.m3u8"
+const HLS_LIVE_STREAM_URL_CH21 =
+  "https://cdn.livepush.io/hls/fe96095a2d2b4314aa1789fb309e48f8/index.m3u8"
 const CH21_ID_NUMERIC = 21
 
 export default function WatchPage() {
@@ -24,7 +30,6 @@ export default function WatchPage() {
   const [error, setError] = useState<string | null>(null)
   const [videoPlayerKey, setVideoPlayerKey] = useState(Date.now())
   const [hlsStreamFailedForCh21, setHlsStreamFailedForCh21] = useState(false)
-  const [dailySchedule, setDailySchedule] = useState<Program[]>([])
 
   useEffect(() => {
     if (!channelIdString) {
@@ -86,26 +91,26 @@ export default function WatchPage() {
           return now >= start && now < end
         })
 
+        let programToSet: Program | null = null
+
         if (activeProgram) {
-          setCurrentProgram({ ...activeProgram, channel_id: numericChannelId })
+          programToSet = { ...activeProgram, channel_id: numericChannelId }
           if (numericChannelId === CH21_ID_NUMERIC) setHlsStreamFailedForCh21(false)
         } else if (numericChannelId === CH21_ID_NUMERIC) {
-          setCurrentProgram(
-            hlsStreamFailedForCh21
-              ? getCh21StandbyMp4Program(now)
-              : {
-                  id: "live-ch21-hls",
-                  title: "Live Broadcast (Channel 21)",
-                  description: "Currently broadcasting live.",
-                  channel_id: CH21_ID_NUMERIC,
-                  mp4_url: `/api/cors-proxy?url=${encodeURIComponent(HLS_LIVE_STREAM_URL_CH21)}`,
-                  duration: 86400 * 7,
-                  start_time: new Date(Date.now() - 3600000).toISOString(),
-                  poster_url: channelDetails?.image_url || null,
-                }
-          )
+          programToSet = hlsStreamFailedForCh21
+            ? getCh21StandbyMp4Program(now)
+            : {
+                id: "live-ch21-hls",
+                title: "Live Broadcast (Channel 21)",
+                description: "Currently broadcasting live.",
+                channel_id: CH21_ID_NUMERIC,
+                mp4_url: `/api/cors-proxy?url=${encodeURIComponent(HLS_LIVE_STREAM_URL_CH21)}`,
+                duration: 86400 * 7,
+                start_time: new Date(Date.now() - 3600000).toISOString(),
+                poster_url: channelDetails?.image_url || null,
+              }
         } else {
-          setCurrentProgram({
+          programToSet = {
             id: STANDBY_PLACEHOLDER_ID,
             title: "Standby Programming",
             description: "Programming will resume shortly.",
@@ -114,11 +119,35 @@ export default function WatchPage() {
             duration: 300,
             start_time: now.toISOString(),
             poster_url: channelDetails?.image_url || null,
-          })
+          }
         }
+
+        setCurrentProgram((prev) => {
+          if (
+            prev?.id !== programToSet!.id ||
+            prev?.start_time !== programToSet!.start_time ||
+            prev?.mp4_url !== programToSet!.mp4_url
+          ) {
+            setVideoPlayerKey(Date.now())
+          }
+          return programToSet
+        })
       } catch (e: any) {
         setError(e.message)
-        setCurrentProgram(getCh21StandbyMp4Program(now))
+        if (numericChannelId === CH21_ID_NUMERIC) {
+          setCurrentProgram(getCh21StandbyMp4Program(now))
+        } else {
+          setCurrentProgram({
+            id: STANDBY_PLACEHOLDER_ID,
+            title: "Standby Programming - Error",
+            description: "Error loading schedule. Standby content will play.",
+            channel_id: numericChannelId,
+            mp4_url: `channel${numericChannelId}/standby_blacktruthtv.mp4`,
+            duration: 300,
+            start_time: now.toISOString(),
+            poster_url: channelDetails?.image_url || null,
+          })
+        }
       } finally {
         setIsLoading(false)
       }
@@ -126,38 +155,54 @@ export default function WatchPage() {
     [hlsStreamFailedForCh21, getCh21StandbyMp4Program, channelDetails]
   )
 
-  const fetchDailySchedule = useCallback(async (channelId: number) => {
-    const now = new Date()
-    const midnight = new Date(now)
-    midnight.setUTCHours(0, 0, 0, 0)
-    const nextMidnight = new Date(midnight)
-    nextMidnight.setUTCDate(midnight.getUTCDate() + 1)
+  const fetchUpcomingPrograms = useCallback(async (numericChannelId: number) => {
+    try {
+      const now = new Date().toISOString()
+      const { data, error } = await supabase
+        .from("programs")
+        .select("*")
+        .eq("channel_id", numericChannelId)
+        .gt("start_time", now)
+        .order("start_time", { ascending: true })
+        .limit(6)
 
-    const { data, error } = await supabase
-      .from("programs")
-      .select("*")
-      .eq("channel_id", channelId)
-      .gte("start_time", midnight.toISOString())
-      .lt("start_time", nextMidnight.toISOString())
-      .order("start_time", { ascending: true })
-
-    if (!error && data) setDailySchedule(data as Program[])
+      if (!error && data) setUpcomingPrograms(data as Program[])
+    } catch (e) {
+      console.warn("Error loading upcoming programs", e)
+    }
   }, [])
 
   useEffect(() => {
     let pollingInterval: NodeJS.Timeout | undefined
     if (validatedNumericChannelId !== null) {
       fetchCurrentProgram(validatedNumericChannelId)
-      fetchDailySchedule(validatedNumericChannelId)
+      fetchUpcomingPrograms(validatedNumericChannelId)
       pollingInterval = setInterval(() => {
         if (document.visibilityState === "visible") {
           fetchCurrentProgram(validatedNumericChannelId)
-          fetchDailySchedule(validatedNumericChannelId)
+          fetchUpcomingPrograms(validatedNumericChannelId)
         }
       }, 60000)
     }
     return () => pollingInterval && clearInterval(pollingInterval)
-  }, [validatedNumericChannelId, fetchCurrentProgram, fetchDailySchedule])
+  }, [validatedNumericChannelId, fetchCurrentProgram, fetchUpcomingPrograms])
+
+  const handlePrimaryLiveStreamError = useCallback(() => {
+    if (validatedNumericChannelId === CH21_ID_NUMERIC && !hlsStreamFailedForCh21) {
+      setHlsStreamFailedForCh21(true)
+      setCurrentProgram(getCh21StandbyMp4Program(new Date()))
+      setVideoPlayerKey(Date.now())
+    }
+  }, [validatedNumericChannelId, hlsStreamFailedForCh21, getCh21StandbyMp4Program])
+
+  const videoSrc = currentProgram ? getVideoUrlForProgram(currentProgram) : undefined
+  const posterSrc = currentProgram?.poster_url || channelDetails?.image_url || undefined
+  const shouldLoopInPlayer = currentProgram?.id === STANDBY_PLACEHOLDER_ID
+  const isPrimaryHLS = currentProgram?.id === "live-ch21-hls"
+  const showNoLiveNoticeForCh21 =
+    validatedNumericChannelId === CH21_ID_NUMERIC &&
+    hlsStreamFailedForCh21 &&
+    currentProgram?.id === STANDBY_PLACEHOLDER_ID
 
   const handleProgramEnded = useCallback(() => {
     if (validatedNumericChannelId !== null) {
@@ -165,9 +210,33 @@ export default function WatchPage() {
     }
   }, [validatedNumericChannelId, fetchCurrentProgram])
 
-  const videoSrc = currentProgram ? getVideoUrlForProgram(currentProgram) : undefined
-  const posterSrc = currentProgram?.poster_url || channelDetails?.image_url || undefined
-  const isStandby = currentProgram?.id === STANDBY_PLACEHOLDER_ID
+  let content: ReactNode
+  if (error) {
+    content = <p className="text-red-400 p-4 text-center">Error: {error}</p>
+  } else if (isLoading && !currentProgram) {
+    content = (
+      <div className="flex flex-col items-center justify-center h-full">
+        <Loader2 className="h-10 w-10 animate-spin text-red-500 mb-2" />
+        <p>Loading Channel...</p>
+      </div>
+    )
+  } else if (currentProgram && videoSrc) {
+    content = (
+      <VideoPlayer
+        key={videoPlayerKey}
+        src={videoSrc}
+        poster={posterSrc}
+        isStandby={shouldLoopInPlayer}
+        programTitle={currentProgram?.title}
+        onVideoEnded={handleProgramEnded}
+        isPrimaryLiveStream={isPrimaryHLS && validatedNumericChannelId === CH21_ID_NUMERIC}
+        onPrimaryLiveStreamError={handlePrimaryLiveStreamError}
+        showNoLiveNotice={showNoLiveNoticeForCh21}
+      />
+    )
+  } else {
+    content = <p className="text-gray-400 p-4 text-center">Initializing channel...</p>
+  }
 
   return (
     <div className="bg-black min-h-screen flex flex-col text-white">
@@ -178,44 +247,41 @@ export default function WatchPage() {
         <h1 className="text-xl font-semibold truncate px-2">{channelDetails?.name || `Channel ${channelIdString}`}</h1>
         <div className="w-10 h-10" />
       </div>
-
-      <div className="w-full aspect-video bg-black flex items-center justify-center">
-        {isLoading ? (
-          <Loader2 className="h-10 w-10 animate-spin text-red-500" />
-        ) : (
-          <VideoPlayer
-            key={videoPlayerKey}
-            src={videoSrc!}
-            poster={posterSrc}
-            isStandby={isStandby}
-            programTitle={currentProgram?.title}
-            onVideoEnded={handleProgramEnded}
-          />
-        )}
-      </div>
-
-      <div className="p-4 space-y-4">
-        {currentProgram && (
-          <div>
+      <div className="w-full aspect-video bg-black flex items-center justify-center">{content}</div>
+      <div className="p-4 flex-grow">
+        {currentProgram && !isLoading && (
+          <>
             <h2 className="text-2xl font-bold">{currentProgram.title}</h2>
-            <p className="text-sm text-gray-400">
-              Start Time: {new Date(currentProgram.start_time).toLocaleString()}
-            </p>
+            <p className="text-sm text-gray-400">Channel: {channelDetails?.name || `Channel ${channelIdString}`}</p>
+            {currentProgram.id !== STANDBY_PLACEHOLDER_ID &&
+              currentProgram.id !== "live-ch21-hls" &&
+              currentProgram.start_time && (
+                <p className="text-sm text-gray-400">
+                  Scheduled Start: {new Date(currentProgram.start_time).toLocaleString()}
+                </p>
+              )}
             <p className="text-xs text-gray-300 mt-1">{currentProgram.description}</p>
-          </div>
-        )}
 
-        {dailySchedule.length > 0 && (
-          <div>
-            <h3 className="text-lg font-semibold text-white mb-2">📅 Today's Schedule</h3>
-            <ul className="text-sm text-gray-300 space-y-1">
-              {dailySchedule.map((program) => (
-                <li key={program.id}>
-                  <span className="font-medium">{program.title}</span> — {new Date(program.start_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                </li>
-              ))}
-            </ul>
-          </div>
+            {upcomingPrograms.length > 0 && (
+              <div className="mt-6">
+                <h3 className="text-lg font-semibold text-white mb-2">Upcoming Programs</h3>
+                <ul className="text-sm text-gray-300 space-y-1">
+                  {upcomingPrograms.map((program) => (
+                    <li key={program.id}>
+                      <span className="font-medium">{program.title}</span>{" "}
+                      <span className="text-gray-400">
+                        — {new Date(program.start_time).toLocaleTimeString("en-US", {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          timeZoneName: "short",
+                        })}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
