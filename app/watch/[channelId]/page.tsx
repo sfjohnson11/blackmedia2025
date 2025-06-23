@@ -1,4 +1,4 @@
-// watch.tsx — Full code with Upcoming Schedule Display
+// watch.tsx — Full code with Local Time and TV Guide
 "use client"
 
 import { type ReactNode, useEffect, useState, useCallback } from "react"
@@ -25,6 +25,7 @@ export default function WatchPage() {
   const [validatedNumericChannelId, setValidatedNumericChannelId] = useState<number | null>(null)
   const [currentProgram, setCurrentProgram] = useState<Program | null>(null)
   const [upcomingPrograms, setUpcomingPrograms] = useState<Program[]>([])
+  const [fullDaySchedule, setFullDaySchedule] = useState<Program[]>([])
   const [channelDetails, setChannelDetails] = useState<Channel | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -90,6 +91,8 @@ export default function WatchPage() {
           const end = new Date(start.getTime() + p.duration * 1000)
           return now >= start && now < end
         })
+
+        setFullDaySchedule(programs.filter((p) => new Date(p.start_time).toDateString() === now.toDateString()))
 
         let programToSet: Program | null = null
 
@@ -253,18 +256,16 @@ export default function WatchPage() {
           <>
             <h2 className="text-2xl font-bold">{currentProgram.title}</h2>
             <p className="text-sm text-gray-400">Channel: {channelDetails?.name || `Channel ${channelIdString}`}</p>
-            {currentProgram.id !== STANDBY_PLACEHOLDER_ID &&
-              currentProgram.id !== "live-ch21-hls" &&
-              currentProgram.start_time && (
-                <p className="text-sm text-gray-400">
-                  Scheduled Start: {new Date(currentProgram.start_time).toLocaleString()}
-                </p>
-              )}
+            {currentProgram.start_time && (
+              <p className="text-sm text-gray-400">
+                Scheduled Start: {new Date(currentProgram.start_time).toLocaleString()}
+              </p>
+            )}
             <p className="text-xs text-gray-300 mt-1">{currentProgram.description}</p>
 
             {upcomingPrograms.length > 0 && (
               <div className="mt-6">
-                <h3 className="text-lg font-semibold text-white mb-2">Upcoming Programs</h3>
+                <h3 className="text-lg font-semibold text-white mb-2">⏳ Next Programs</h3>
                 <ul className="text-sm text-gray-300 space-y-1">
                   {upcomingPrograms.map((program) => (
                     <li key={program.id}>
@@ -273,8 +274,25 @@ export default function WatchPage() {
                         — {new Date(program.start_time).toLocaleTimeString("en-US", {
                           hour: "2-digit",
                           minute: "2-digit",
-                          timeZone: "UTC",
-                          timeZoneName: "short",
+                        })}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {fullDaySchedule.length > 0 && (
+              <div className="mt-8 border-t border-gray-600 pt-4">
+                <h3 className="text-lg font-semibold text-white mb-2">📅 Full Day Schedule</h3>
+                <ul className="text-sm text-gray-300 space-y-1">
+                  {fullDaySchedule.map((program) => (
+                    <li key={program.id}>
+                      <span className="font-medium">{program.title}</span>{" "}
+                      <span className="text-gray-400">
+                        — {new Date(program.start_time).toLocaleTimeString("en-US", {
+                          hour: "2-digit",
+                          minute: "2-digit",
                         })}
                       </span>
                     </li>
