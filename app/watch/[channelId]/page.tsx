@@ -1,4 +1,4 @@
-// watch.tsx — REVERTED VERSION with standby working and no guide/countdown
+// watch.tsx — Clean version before countdown and guide additions
 "use client"
 
 import { type ReactNode, useEffect, useState, useCallback } from "react"
@@ -133,19 +133,20 @@ export default function WatchPage() {
         })
       } catch (e: any) {
         setError(e.message)
-        const fallbackProgram = numericChannelId === CH21_ID_NUMERIC
-          ? getCh21StandbyMp4Program(now)
-          : {
-              id: STANDBY_PLACEHOLDER_ID,
-              title: "Standby Programming - Error",
-              description: "Error loading schedule. Standby content will play.",
-              channel_id: numericChannelId,
-              mp4_url: `channel${numericChannelId}/standby_blacktruthtv.mp4`,
-              duration: 300,
-              start_time: now.toISOString(),
-              poster_url: channelDetails?.image_url || null,
-            }
-        setCurrentProgram(fallbackProgram)
+        if (numericChannelId === CH21_ID_NUMERIC) {
+          setCurrentProgram(getCh21StandbyMp4Program(now))
+        } else {
+          setCurrentProgram({
+            id: STANDBY_PLACEHOLDER_ID,
+            title: "Standby Programming - Error",
+            description: "Error loading schedule. Standby content will play.",
+            channel_id: numericChannelId,
+            mp4_url: `channel${numericChannelId}/standby_blacktruthtv.mp4`,
+            duration: 300,
+            start_time: now.toISOString(),
+            poster_url: channelDetails?.image_url || null,
+          })
+        }
       } finally {
         setIsLoading(false)
       }
@@ -178,6 +179,10 @@ export default function WatchPage() {
   const posterSrc = currentProgram?.poster_url || channelDetails?.image_url || undefined
   const shouldLoopInPlayer = currentProgram?.id === STANDBY_PLACEHOLDER_ID
   const isPrimaryHLS = currentProgram?.id === "live-ch21-hls"
+  const showNoLiveNoticeForCh21 =
+    validatedNumericChannelId === CH21_ID_NUMERIC &&
+    hlsStreamFailedForCh21 &&
+    currentProgram?.id === STANDBY_PLACEHOLDER_ID
 
   const handleProgramEnded = useCallback(() => {
     if (validatedNumericChannelId !== null) {
@@ -206,7 +211,7 @@ export default function WatchPage() {
         onVideoEnded={handleProgramEnded}
         isPrimaryLiveStream={isPrimaryHLS && validatedNumericChannelId === CH21_ID_NUMERIC}
         onPrimaryLiveStreamError={handlePrimaryLiveStreamError}
-        showNoLiveNotice={false}
+        showNoLiveNotice={showNoLiveNoticeForCh21}
       />
     )
   } else {
@@ -223,6 +228,22 @@ export default function WatchPage() {
         <div className="w-10 h-10" />
       </div>
       <div className="w-full aspect-video bg-black flex items-center justify-center">{content}</div>
+      <div className="p-4 flex-grow">
+        {currentProgram && !isLoading && (
+          <>
+            <h2 className="text-2xl font-bold">{currentProgram.title}</h2>
+            <p className="text-sm text-gray-400">Channel: {channelDetails?.name || `Channel ${channelIdString}`}</p>
+            {currentProgram.id !== STANDBY_PLACEHOLDER_ID &&
+              currentProgram.id !== "live-ch21-hls" &&
+              currentProgram.start_time && (
+                <p className="text-sm text-gray-400">
+                  Scheduled Start: {new Date(currentProgram.start_time).toLocaleString()}
+                </p>
+              )}
+            <p className="text-xs text-gray-300 mt-1">{currentProgram.description}</p>
+          </>
+        )}
+      </div>
     </div>
   )
 }
