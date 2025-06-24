@@ -1,4 +1,4 @@
-// watch.tsx — With safe guide below video
+// watch.tsx — With safe guide, video playback logic, and password protection for channels 23–30
 "use client"
 
 import { type ReactNode, useEffect, useState, useCallback } from "react"
@@ -16,6 +16,7 @@ import { ChevronLeft, Loader2 } from "lucide-react"
 const HLS_LIVE_STREAM_URL_CH21 =
   "https://cdn.livepush.io/hls/fe96095a2d2b4314aa1789fb309e48f8/index.m3u8"
 const CH21_ID_NUMERIC = 21
+const PASSWORD_PROTECTED_CHANNELS = [23, 24, 25, 26, 27, 28, 29, 30]
 
 export default function WatchPage() {
   const params = useParams()
@@ -30,6 +31,8 @@ export default function WatchPage() {
   const [error, setError] = useState<string | null>(null)
   const [videoPlayerKey, setVideoPlayerKey] = useState(Date.now())
   const [hlsStreamFailedForCh21, setHlsStreamFailedForCh21] = useState(false)
+  const [passwordInput, setPasswordInput] = useState("")
+  const [isPasswordValid, setIsPasswordValid] = useState(false)
 
   useEffect(() => {
     if (!channelIdString) {
@@ -55,6 +58,31 @@ export default function WatchPage() {
     }
     loadChannelDetails()
   }, [channelIdString])
+
+  useEffect(() => {
+    if (validatedNumericChannelId !== null) {
+      const key = `channel_password_${validatedNumericChannelId}`
+      const saved = localStorage.getItem(key)
+      if (saved === `channel${validatedNumericChannelId}`) {
+        setIsPasswordValid(true)
+      }
+    }
+  }, [validatedNumericChannelId])
+
+  const handlePasswordSubmit = () => {
+    if (
+      validatedNumericChannelId &&
+      passwordInput === `channel${validatedNumericChannelId}`
+    ) {
+      localStorage.setItem(
+        `channel_password_${validatedNumericChannelId}`,
+        passwordInput
+      )
+      setIsPasswordValid(true)
+    } else {
+      alert("Incorrect password")
+    }
+  }
 
   const getCh21StandbyMp4Program = useCallback(
     (now: Date): Program => ({
@@ -174,7 +202,7 @@ export default function WatchPage() {
 
   useEffect(() => {
     let pollingInterval: NodeJS.Timeout | undefined
-    if (validatedNumericChannelId !== null) {
+    if (validatedNumericChannelId !== null && isPasswordValid) {
       fetchCurrentProgram(validatedNumericChannelId)
       fetchUpcomingPrograms(validatedNumericChannelId)
       pollingInterval = setInterval(() => {
@@ -185,7 +213,7 @@ export default function WatchPage() {
       }, 60000)
     }
     return () => pollingInterval && clearInterval(pollingInterval)
-  }, [validatedNumericChannelId, fetchCurrentProgram, fetchUpcomingPrograms])
+  }, [validatedNumericChannelId, fetchCurrentProgram, fetchUpcomingPrograms, isPasswordValid])
 
   const handlePrimaryLiveStreamError = useCallback(() => {
     if (validatedNumericChannelId === CH21_ID_NUMERIC && !hlsStreamFailedForCh21) {
@@ -209,6 +237,31 @@ export default function WatchPage() {
       fetchCurrentProgram(validatedNumericChannelId)
     }
   }, [validatedNumericChannelId, fetchCurrentProgram])
+
+  if (
+    validatedNumericChannelId !== null &&
+    PASSWORD_PROTECTED_CHANNELS.includes(validatedNumericChannelId) &&
+    !isPasswordValid
+  ) {
+    return (
+      <div className="min-h-screen bg-black flex flex-col items-center justify-center text-white px-4">
+        <h1 className="text-xl font-bold mb-4">Enter Password for Channel {validatedNumericChannelId}</h1>
+        <input
+          type="password"
+          value={passwordInput}
+          onChange={(e) => setPasswordInput(e.target.value)}
+          className="mb-4 p-2 rounded text-black"
+          placeholder="Enter password"
+        />
+        <button
+          onClick={handlePasswordSubmit}
+          className="bg-blue-600 px-4 py-2 rounded text-white hover:bg-blue-500"
+        >
+          Submit
+        </button>
+      </div>
+    )
+  }
 
   let content: ReactNode
   if (error) {
