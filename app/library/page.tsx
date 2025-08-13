@@ -1,157 +1,134 @@
-"use client"
+"use client";
 
-import { useState, useEffect } from "react"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Input } from "@/components/ui/input"
-import { Search, FileText, Music, Video, Filter } from "lucide-react"
-import Link from "next/link"
-import Image from "next/image"
-import { Button } from "@/components/ui/button"
-import { Skeleton } from "@/components/ui/skeleton"
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import Image from "next/image";
+import { supabase } from "@/lib/supabase";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Search, FileText, Music, Video, Filter } from "lucide-react";
 
-// Types for our library items
-type MediaType = "document" | "audio" | "video"
+type MediaType = "document" | "audio" | "video";
 
-interface LibraryItem {
-  id: string
-  title: string
-  description: string
-  type: MediaType
-  url: string
-  thumbnail: string
-  channelId: string
-  channelName: string
-  dateAdded: string
-  fileSize?: string
-  duration?: string
-}
+type DbItem = {
+  id: string;
+  title: string;
+  description: string | null;
+  type: "video" | "audio" | "document";
+  url: string | null;
+  thumbnail_url: string | null;
+  channel_id: string | null;
+  date_added: string | null;
+  file_size_mb: number | null;
+  duration_seconds: number | null;
+};
 
-// Mock data for initial display
-const mockLibraryItems: LibraryItem[] = [
-  {
-    id: "1",
-    title: "Introduction to African History",
-    description: "A comprehensive overview of African history from ancient civilizations to modern times.",
-    type: "document",
-    url: "#",
-    thumbnail: "/document-stack.png",
-    channelId: "history",
-    channelName: "History Channel",
-    dateAdded: "2023-05-15",
-    fileSize: "2.4 MB",
-  },
-  {
-    id: "2",
-    title: "The Civil Rights Movement",
-    description: "Documentary exploring the American Civil Rights Movement of the 1950s and 1960s.",
-    type: "video",
-    url: "#",
-    thumbnail: "/placeholder.svg?key=bbnmv",
-    channelId: "documentary",
-    channelName: "Documentary Channel",
-    dateAdded: "2023-06-20",
-    duration: "45:30",
-  },
-  {
-    id: "3",
-    title: "Freedom Songs Collection",
-    description: "A collection of important songs from the Civil Rights Movement.",
-    type: "audio",
-    url: "#",
-    thumbnail: "/placeholder.svg?key=zk5dg",
-    channelId: "music",
-    channelName: "Music Channel",
-    dateAdded: "2023-07-10",
-    duration: "1:12:45",
-  },
-  {
-    id: "4",
-    title: "Black Excellence Through History",
-    description: "A documentary series highlighting achievements of Black individuals throughout history.",
-    type: "video",
-    url: "#",
-    thumbnail: "/placeholder.svg?key=cuhv6",
-    channelId: "documentary",
-    channelName: "Documentary Channel",
-    dateAdded: "2023-08-05",
-    duration: "1:28:15",
-  },
-  {
-    id: "5",
-    title: "Freedom School Curriculum Guide",
-    description: "Educational materials for teaching in Freedom Schools.",
-    type: "document",
-    url: "#",
-    thumbnail: "/placeholder.svg?key=4y17r",
-    channelId: "education",
-    channelName: "Education Channel",
-    dateAdded: "2023-09-12",
-    fileSize: "4.8 MB",
-  },
-  {
-    id: "6",
-    title: "Spoken Word Poetry Collection",
-    description: "A collection of powerful spoken word performances.",
-    type: "audio",
-    url: "#",
-    thumbnail: "/placeholder.svg?key=scual",
-    channelId: "arts",
-    channelName: "Arts Channel",
-    dateAdded: "2023-10-18",
-    duration: "58:20",
-  },
-]
+type Channel = { id: string; name: string };
 
-// Function to get icon based on media type
+type LibraryItem = {
+  id: string;
+  title: string;
+  description: string;
+  type: MediaType;
+  url: string;
+  thumbnail: string;
+  channelId: string;
+  channelName: string;
+  dateAdded: string;
+  fileSize?: string;
+  duration?: string;
+};
+
+const formatDuration = (secs?: number | null) => {
+  if (!secs || secs <= 0) return undefined;
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = secs % 60;
+  if (h) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  return `${m}:${String(s).padStart(2, "0")}`;
+};
+
 const getMediaIcon = (type: MediaType) => {
   switch (type) {
     case "document":
-      return <FileText className="h-6 w-6" />
+      return <FileText className="h-6 w-6" />;
     case "audio":
-      return <Music className="h-6 w-6" />
+      return <Music className="h-6 w-6" />;
     case "video":
-      return <Video className="h-6 w-6" />
+      return <Video className="h-6 w-6" />;
     default:
-      return <FileText className="h-6 w-6" />
+      return <FileText className="h-6 w-6" />;
   }
-}
+};
 
 export default function LibraryPage() {
-  const [searchQuery, setSearchQuery] = useState("")
-  const [activeTab, setActiveTab] = useState("all")
-  const [items, setItems] = useState<LibraryItem[]>([])
-  const [loading, setLoading] = useState(true)
-  const [channels, setChannels] = useState<string[]>([])
-  const [selectedChannel, setSelectedChannel] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeTab, setActiveTab] = useState<"all" | MediaType>("all");
+  const [items, setItems] = useState<LibraryItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [channels, setChannels] = useState<Channel[]>([]);
+  const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
 
   useEffect(() => {
-    // In a real implementation, this would fetch from your Supabase database
-    // For now, we'll use the mock data
-    const timer = setTimeout(() => {
-      setItems(mockLibraryItems)
+    (async () => {
+      setLoading(true);
 
-      // Extract unique channel names
-      const uniqueChannels = Array.from(new Set(mockLibraryItems.map((item) => item.channelName)))
-      setChannels(uniqueChannels)
+      // Load channels for name mapping / filter
+      const { data: chData } = await supabase.from("channels").select("id, name").order("name", { ascending: true });
+      const channelMap = new Map<string, string>(
+        (chData || []).map((c: Channel) => [c.id, c.name])
+      );
+      setChannels(chData || []);
 
-      setLoading(false)
-    }, 1000) // Simulate loading
+      // Load library items
+      const { data, error } = await supabase
+        .from("library_items")
+        .select("*")
+        .order("date_added", { ascending: false });
 
-    return () => clearTimeout(timer)
-  }, [])
+      if (error) {
+        console.error("Load library_items error:", error.message);
+        setItems([]);
+        setLoading(false);
+        return;
+      }
 
-  // Filter items based on search query, active tab, and selected channel
+      const mapped: LibraryItem[] = (data as DbItem[]).map((row) => ({
+        id: row.id,
+        title: row.title,
+        description: row.description ?? "",
+        type: row.type,
+        url: row.url || "#",
+        thumbnail: row.thumbnail_url || "/placeholder.svg",
+        channelId: row.channel_id || "",
+        channelName: row.channel_id ? (channelMap.get(row.channel_id) || row.channel_id) : "",
+        dateAdded: row.date_added || "",
+        fileSize: row.file_size_mb != null ? `${Number(row.file_size_mb).toFixed(2)} MB` : undefined,
+        duration: formatDuration(row.duration_seconds),
+      }));
+
+      setItems(mapped);
+      setLoading(false);
+    })();
+  }, []);
+
+  const channelOptions = useMemo(
+    () => Array.from(new Set(items.map((i) => i.channelName).filter(Boolean))).sort(),
+    [items]
+  );
+
   const filteredItems = items.filter((item) => {
     const matchesSearch =
       item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.description.toLowerCase().includes(searchQuery.toLowerCase())
+      item.description.toLowerCase().includes(searchQuery.toLowerCase());
 
-    const matchesTab = activeTab === "all" || item.type === activeTab
+    const matchesTab = activeTab === "all" || item.type === activeTab;
+    const matchesChannel = !selectedChannel || item.channelName === selectedChannel;
 
-    const matchesChannel = !selectedChannel || item.channelName === selectedChannel
-
-    return matchesSearch && matchesTab && matchesChannel
-  })
+    return matchesSearch && matchesTab && matchesChannel;
+  });
 
   return (
     <div className="container mx-auto px-4 py-8 mt-16">
@@ -162,10 +139,10 @@ export default function LibraryPage() {
         </div>
       </div>
 
-      {/* Search and filter */}
+      {/* Search & Filters */}
       <div className="flex flex-col md:flex-row gap-4 mb-8">
         <div className="relative flex-grow">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
           <Input
             type="text"
             placeholder="Search library..."
@@ -182,9 +159,9 @@ export default function LibraryPage() {
             onChange={(e) => setSelectedChannel(e.target.value || null)}
           >
             <option value="">All Channels</option>
-            {channels.map((channel) => (
-              <option key={channel} value={channel}>
-                {channel}
+            {channelOptions.map((name) => (
+              <option key={name} value={name}>
+                {name}
               </option>
             ))}
           </select>
@@ -197,27 +174,19 @@ export default function LibraryPage() {
       </div>
 
       {/* Tabs */}
-      <Tabs defaultValue="all" value={activeTab} onValueChange={setActiveTab} className="mb-8">
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="mb-8">
         <TabsList className="bg-gray-900">
-          <TabsTrigger value="all" className="data-[state=active]:bg-gray-800">
-            All
-          </TabsTrigger>
-          <TabsTrigger value="video" className="data-[state=active]:bg-gray-800">
-            Videos
-          </TabsTrigger>
-          <TabsTrigger value="audio" className="data-[state=active]:bg-gray-800">
-            Audio
-          </TabsTrigger>
-          <TabsTrigger value="document" className="data-[state=active]:bg-gray-800">
-            Documents
-          </TabsTrigger>
+          <TabsTrigger value="all" className="data-[state=active]:bg-gray-800">All</TabsTrigger>
+          <TabsTrigger value="video" className="data-[state=active]:bg-gray-800">Videos</TabsTrigger>
+          <TabsTrigger value="audio" className="data-[state=active]:bg-gray-800">Audio</TabsTrigger>
+          <TabsTrigger value="document" className="data-[state=active]:bg-gray-800">Documents</TabsTrigger>
         </TabsList>
       </Tabs>
 
-      {/* Library items grid */}
+      {/* Grid */}
       {loading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-          {[...Array(8)].map((_, i) => (
+          {Array.from({ length: 8 }).map((_, i) => (
             <div key={i} className="bg-gray-900 rounded-lg overflow-hidden">
               <Skeleton className="h-40 w-full" />
               <div className="p-4">
@@ -266,5 +235,5 @@ export default function LibraryPage() {
         </div>
       )}
     </div>
-  )
+  );
 }
