@@ -1,358 +1,344 @@
+// app/admin/library-manager/page.tsx
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { supabase } from "@/lib/supabase"; // ✅ use your existing client
+import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle
-} from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue
-} from "@/components/ui/select";
-import {
-  AlertCircle, CheckCircle2, Upload, Loader2, ArrowLeft, ListChecks, PlusCircle
-} from "lucide-react";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Progress } from "@/components/ui/progress";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Loader2, ArrowLeft, Trash2, Pencil, Check, X } from "lucide-react";
+import { format } from "date-fns";
 
-const MEDIA_BUCKET = "library-media";
-const THUMBNAIL_BUCKET = "library-thumbnails";
-
-/** Local types so we don’t depend on external modules */
 type Channel = { id: string; name: string };
-type LibraryItem = {
-  id: string;
+type Program = {
+  id: number;
+  channel_id: string;
   title: string;
-  description: string | null;
-  type: "video" | "audio" | "document";
-  url: string | null;
-  thumbnail_url: string | null;
-  content: string | null;
-  channel_id: string | null;
-  file_size_mb: number | null;
-  duration_seconds: number | null;
-  created_at: string;
-  date_added: string;
+  mp4_url: string;
+  start_time: string; // timestamptz/string in DB
+  duration: number;
 };
 
 export default function LibraryManagerPage() {
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [type, setType] = useState<"document" | "audio" | "video">("video");
-  const [mediaFile, setMediaFile] = useState<File | null>(null);
-  const [thumbnailFile, setThumbnailFile] = useState<File | null>(null);
-  const [mediaUrl, setMediaUrl] = useState("");
-  const [thumbnailUrl, setThumbnailUrl] = useState("");
-  const [content, setContent] = useState("");
   const [channels, setChannels] = useState<Channel[]>([]);
   const [selectedChannelId, setSelectedChannelId] = useState<string>("");
+  const [programs, setPrograms] = useState<Program[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
 
-  const [loading, setLoading] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  // New/Editing program form state
+  const [title, setTitle] = useState("");
+  const [mp4Url, setMp4Url] = useState("");
+  const [startTime, setStartTime] = useState(""); // datetime-local string
+  const [duration, setDuration] = useState<number>(1800);
 
-  const [libraryItems, setLibraryItems] = useState<LibraryItem[]>([]);
-  const [view, setView] = useState<"form" | "list">("list");
+  const [editingId, setEditingId] = useState<number | null>(null);
 
-  const fetchChannels = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("channels")
-      .select("id, name")
-      .order("name");
-    if (error) {
-      console.error(error);
-      setMessage({ type: "error", text: "Failed to load channels." });
-    } else {
-      setChannels((data as Channel[]) || []);
-    }
-  }, []);
-
-  const fetchLibraryItems = useCallback(async () => {
-    setLoading(true);
-    const { data, error } = await supabase
-      .from("library_items")
-      .select("*")
-      .order("created_at", { ascending: false });
-    if (error) {
-      console.error(error);
-      setMessage({ type: "error", text: "Failed to load library items." });
-    } else {
-      setLibraryItems((data as LibraryItem[]) || []);
-    }
-    setLoading(false);
-  }, []);
+  const selectedChannelName = useMemo(
+    () => channels.find(c => c.id === selectedChannelId)?.name || "",
+    [channels, selectedChannelId]
+  );
 
   useEffect(() => {
-    fetchChannels();
-    fetchLibraryItems();
-  }, [fetchChannels, fetchLibraryItems]);
+    (async () => {
+      setLoading(true);
+      setErr(null);
+      try {
+        const { data: ch, error: chErr } = await supabase
+          .from("channels")
+          .select("id, name")
+          .order("name", { ascending: true });
+        if (chErr) throw chErr;
+        setChannels(ch || []);
+        if (!selectedChannelId && ch && ch.length) setSelectedChannelId(ch[0].id);
+      } catch (e: any) {
+        setErr(e?.message || "Failed to load channels.");
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []); // load channels once
+
+  // Load programs when channel changes
+  useEffect(() => {
+    if (!selectedChannelId) return;
+    (async () => {
+      setLoading(true);
+      setErr(null);
+      try {
+        const { data: pr, error: prErr } = await supabase
+          .from("programs")
+          .select("id, channel_id, title, mp4_url, start_time, duration")
+          .eq("channel_id", selectedChannelId)
+          .order("start_time", { ascending: true });
+        if (prErr) throw prErr;
+        setPrograms((pr || []) as Program[]);
+      } catch (e: any) {
+        setErr(e?.message || "Failed to load programs.");
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [selectedChannelId]);
 
   const resetForm = () => {
     setTitle("");
-    setDescription("");
-    setType("video");
-    setMediaFile(null);
-    setThumbnailFile(null);
-    setMediaUrl("");
-    setThumbnailUrl("");
-    setContent("");
-    setSelectedChannelId("");
-    setMessage(null);
-    setProgress(0);
-    (document.getElementById("mediaFile") as HTMLInputElement | null)?.value && ((document.getElementById("mediaFile") as HTMLInputElement).value = "");
-    (document.getElementById("thumbnailFile") as HTMLInputElement | null)?.value && ((document.getElementById("thumbnailFile") as HTMLInputElement).value = "");
+    setMp4Url("");
+    setStartTime("");
+    setDuration(1800);
+    setEditingId(null);
+    setErr(null);
+    setMsg(null);
   };
 
-  const uploadToBucket = async (file: File, bucket: string): Promise<string> => {
-    const ext = file.name.split(".").pop() || "bin";
-    const key = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-    const { error: uploadError } = await supabase.storage.from(bucket).upload(key, file, {
-      cacheControl: "3600",
-      upsert: false,
-    });
-    if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`);
-    const { data: pub } = supabase.storage.from(bucket).getPublicUrl(key);
-    if (!pub?.publicUrl) throw new Error("Could not make public URL.");
-    return pub.publicUrl;
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setMessage(null);
-    setLoading(true);
-    setProgress(10);
-
+  const startEdit = (p: Program) => {
+    setEditingId(p.id);
+    setTitle(p.title || "");
+    setMp4Url(p.mp4_url || "");
+    // Convert DB ISO/timestamp into datetime-local value (YYYY-MM-DDTHH:mm)
     try {
-      if (!title.trim()) throw new Error("Title is required.");
-      if ((type === "video" || type === "audio") && !mediaFile && !mediaUrl.trim()) {
-        throw new Error("For video/audio, provide a file or URL.");
-      }
-      if (type === "document" && !mediaFile && !mediaUrl.trim() && !content.trim()) {
-        throw new Error("For documents, upload a PDF or paste text.");
-      }
+      const dt = new Date(p.start_time);
+      const local = new Date(dt.getTime() - dt.getTimezoneOffset() * 60000)
+        .toISOString()
+        .slice(0, 16);
+      setStartTime(local);
+    } catch {
+      setStartTime("");
+    }
+    setDuration(p.duration || 1800);
+    setMsg(null);
+    setErr(null);
+  };
 
-      let finalMediaUrl = mediaUrl.trim();
-      let finalThumbUrl = thumbnailUrl.trim();
-      let fileSizeMb: number | null = null;
+  const cancelEdit = () => resetForm();
 
-      if (mediaFile) {
-        setProgress(30);
-        finalMediaUrl = await uploadToBucket(mediaFile, MEDIA_BUCKET);
-        fileSizeMb = Number((mediaFile.size / (1024 * 1024)).toFixed(2));
-      }
-
-      if (thumbnailFile) {
-        setProgress(60);
-        finalThumbUrl = await uploadToBucket(thumbnailFile, THUMBNAIL_BUCKET);
-      }
-
-      setProgress(85);
-
+  const saveProgram = async () => {
+    if (!selectedChannelId) return setErr("Pick a channel first.");
+    if (!title.trim() || !mp4Url.trim() || !startTime) {
+      return setErr("Title, MP4 URL, and Start Time are required.");
+    }
+    setSaving(true);
+    setErr(null);
+    setMsg(null);
+    try {
+      // For consistency with your existing code: store the datetime-local string directly.
       const payload = {
         title: title.trim(),
-        description: description.trim() || null,
-        type,
-        url: finalMediaUrl || null,
-        thumbnail_url: finalThumbUrl || null,
-        content: type === "document" && !finalMediaUrl ? (content.trim() || null) : null,
-        channel_id: selectedChannelId || null,
-        file_size_mb: fileSizeMb,
-        duration_seconds: null,
+        mp4_url: mp4Url.trim(),
+        start_time: startTime, // your app already stores string/timestamptz; do not transform
+        duration: Number(duration) || 1800,
+        channel_id: selectedChannelId,
       };
 
-      const { data, error } = await supabase.from("library_items").insert(payload).select().single();
-      if (error) throw new Error(error.message);
+      if (editingId) {
+        const { error } = await supabase.from("programs").update(payload).eq("id", editingId);
+        if (error) throw error;
+        setMsg("Program updated.");
+      } else {
+        const { error } = await supabase.from("programs").insert([payload]);
+        if (error) throw error;
+        setMsg("Program added.");
+      }
 
-      setProgress(100);
-      setMessage({ type: "success", text: `Added "${data.title}" to the library.` });
-      setLibraryItems((prev) => [data as LibraryItem, ...prev]);
+      // Refresh list
+      const { data: pr, error: prErr } = await supabase
+        .from("programs")
+        .select("id, channel_id, title, mp4_url, start_time, duration")
+        .eq("channel_id", selectedChannelId)
+        .order("start_time", { ascending: true });
+      if (prErr) throw prErr;
+      setPrograms((pr || []) as Program[]);
       resetForm();
-      setView("list");
-    } catch (err: any) {
-      console.error(err);
-      setMessage({ type: "error", text: err.message || "Upload failed." });
+    } catch (e: any) {
+      setErr(e?.message || "Save failed.");
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm("Delete this library item?")) return;
-    setLoading(true);
-    const { error } = await supabase.from("library_items").delete().eq("id", id);
-    if (error) {
-      setMessage({ type: "error", text: `Delete failed: ${error.message}` });
-    } else {
-      setLibraryItems((prev) => prev.filter((i) => i.id !== id));
-      setMessage({ type: "success", text: "Item deleted." });
+  const deleteProgram = async (id: number) => {
+    if (!confirm("Delete this program?")) return;
+    setSaving(true);
+    setErr(null);
+    setMsg(null);
+    try {
+      const { error } = await supabase.from("programs").delete().eq("id", id);
+      if (error) throw error;
+      setPrograms(prev => prev.filter(p => p.id !== id));
+      setMsg("Program deleted.");
+    } catch (e: any) {
+      setErr(e?.message || "Delete failed.");
+    } finally {
+      setSaving(false);
     }
-    setLoading(false);
   };
 
   return (
-    <div className="container mx-auto px-4 py-8">
-      {/* Header */}
+    <div className="p-6">
       <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center">
-          <Link href="/admin" className="mr-4">
+        <div className="flex items-center gap-3">
+          <Link href="/admin">
             <Button variant="outline" size="icon">
               <ArrowLeft className="h-4 w-4" />
             </Button>
           </Link>
-          <h1 className="text-3xl font-bold">Library Manager</h1>
+          <h1 className="text-2xl font-bold">Program Library Manager</h1>
         </div>
-        <Button onClick={() => setView(view === "form" ? "list" : "form")} variant="outline">
-          {view === "form" ? (
-            <>
-              <ListChecks className="mr-2 h-4 w-4" /> View List
-            </>
-          ) : (
-            <>
-              <PlusCircle className="mr-2 h-4 w-4" /> Add New Item
-            </>
-          )}
-        </Button>
+
+        <div className="min-w-[240px]">
+          <Label className="text-sm">Channel</Label>
+          <Select value={selectedChannelId} onValueChange={setSelectedChannelId}>
+            <SelectTrigger>
+              <SelectValue placeholder="Pick a channel" />
+            </SelectTrigger>
+            <SelectContent>
+              {channels.map(c => (
+                <SelectItem key={c.id} value={c.id}>
+                  {c.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
-      {/* Alerts */}
-      {message && (
-        <Alert
-          className={`mb-6 ${
-            message.type === "success"
-              ? "border-green-500 text-green-700 dark:text-green-400"
-              : "border-red-500 text-red-700 dark:text-red-400"
-          }`}
-          variant={message.type === "error" ? "destructive" : undefined}
-        >
-          {message.type === "success" ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
-          <AlertTitle>{message.type === "success" ? "Success" : "Error"}</AlertTitle>
-          <AlertDescription>{message.text}</AlertDescription>
-        </Alert>
+      {err && (
+        <div className="mb-4 rounded border border-red-500 bg-red-900/30 p-3 text-red-200">
+          {err}
+        </div>
+      )}
+      {msg && (
+        <div className="mb-4 rounded border border-green-600 bg-green-900/30 p-3 text-green-200">
+          {msg}
+        </div>
       )}
 
       {/* Form */}
-      {view === "form" && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Add New Library Item</CardTitle>
-            <CardDescription>Upload or link media and optionally attach it to a channel.</CardDescription>
-          </CardHeader>
-          <form onSubmit={handleSubmit}>
-            <CardContent className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <Label htmlFor="title">Title <span className="text-red-500">*</span></Label>
-                  <Input id="title" value={title} onChange={(e) => setTitle(e.target.value)} required />
-                </div>
-                <div>
-                  <Label htmlFor="type">Type <span className="text-red-500">*</span></Label>
-                  <Select value={type} onValueChange={(v) => setType(v as any)} required>
-                    <SelectTrigger><SelectValue placeholder="Select media type" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="video">Video</SelectItem>
-                      <SelectItem value="audio">Audio</SelectItem>
-                      <SelectItem value="document">Document</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <div>
-                <Label htmlFor="description">Description</Label>
-                <Textarea id="description" value={description} onChange={(e) => setDescription(e.target.value)} />
-              </div>
-
-              <div>
-                <Label htmlFor="channel">Associated Channel (optional)</Label>
-                <Select value={selectedChannelId} onValueChange={(v) => setSelectedChannelId(v)}>
-                  <SelectTrigger><SelectValue placeholder="Select a channel" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="">None</SelectItem>
-                    {channels.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {type === "document" && (
-                <div>
-                  <Label htmlFor="content">Document Text (if not uploading a PDF)</Label>
-                  <Textarea id="content" value={content} onChange={(e) => setContent(e.target.value)} placeholder="Paste or type document text here…" />
-                  <p className="text-xs text-gray-500 mt-1">Or upload a PDF below.</p>
-                </div>
-              )}
-
-              <div className="space-y-2">
-                <Label htmlFor="mediaFile">Media File (Video, Audio, or PDF)</Label>
-                <Input id="mediaFile" type="file" onChange={(e) => setMediaFile(e.target.files?.[0] ?? null)} />
-                <p className="text-xs text-gray-500">Or paste a direct URL:</p>
-                <Input id="mediaUrl" value={mediaUrl} onChange={(e) => setMediaUrl(e.target.value)} placeholder="https://example.com/media.mp4" />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="thumbnailFile">Thumbnail (image)</Label>
-                <Input id="thumbnailFile" type="file" accept="image/*" onChange={(e) => setThumbnailFile(e.target.files?.[0] ?? null)} />
-                <p className="text-xs text-gray-500">Or paste a direct URL:</p>
-                <Input id="thumbnailUrl" value={thumbnailUrl} onChange={(e) => setThumbnailUrl(e.target.value)} placeholder="https://example.com/thumb.jpg" />
-              </div>
-
-              {loading && <Progress value={progress} className="w-full" />}
-            </CardContent>
-            <CardFooter className="flex justify-end gap-2">
-              <Button type="button" variant="outline" onClick={resetForm} disabled={loading}>Reset</Button>
-              <Button type="submit" disabled={loading}>
-                {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
-                Add Item
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle>{editingId ? "Edit Program" : "Add New Program"}</CardTitle>
+          <CardDescription>
+            {selectedChannelName ? `Channel: ${selectedChannelName}` : "Pick a channel to add programs."}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <Label>Title</Label>
+            <Input value={title} onChange={e => setTitle(e.target.value)} placeholder="Program title" />
+          </div>
+          <div>
+            <Label>MP4 URL</Label>
+            <Input
+              value={mp4Url}
+              onChange={e => setMp4Url(e.target.value)}
+              placeholder="https://…/video.mp4"
+            />
+          </div>
+          <div>
+            <Label>Start Time</Label>
+            <Input
+              type="datetime-local"
+              value={startTime}
+              onChange={e => setStartTime(e.target.value)}
+            />
+          </div>
+          <div>
+            <Label>Duration (seconds)</Label>
+            <Input
+              type="number"
+              value={duration}
+              onChange={e => setDuration(parseInt(e.target.value || "0", 10))}
+              placeholder="1800"
+            />
+          </div>
+          <div className="md:col-span-2">
+            <Label>Notes (optional)</Label>
+            <Textarea placeholder="Optional notes for admins…" />
+          </div>
+        </CardContent>
+        <CardFooter className="flex gap-2 justify-end">
+          {editingId ? (
+            <>
+              <Button variant="outline" onClick={cancelEdit}>
+                <X className="h-4 w-4 mr-2" /> Cancel
               </Button>
-            </CardFooter>
-          </form>
-        </Card>
-      )}
+              <Button onClick={saveProgram} disabled={saving}>
+                {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Check className="h-4 w-4 mr-2" />}
+                Save Changes
+              </Button>
+            </>
+          ) : (
+            <Button onClick={saveProgram} disabled={saving}>
+              {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+              Add Program
+            </Button>
+          )}
+        </CardFooter>
+      </Card>
 
       {/* List */}
-      {view === "list" && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Existing Library Items</CardTitle>
-            <CardDescription>Found: {libraryItems.length}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {loading && libraryItems.length === 0 ? (
-              <div className="flex justify-center items-center py-8">
-                <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
-              </div>
-            ) : libraryItems.length === 0 ? (
-              <p className="text-center text-gray-500 py-8">No library items yet. Click “Add New Item”.</p>
-            ) : (
-              <div className="space-y-4">
-                {libraryItems.map((item) => (
-                  <div key={item.id} className="border p-4 rounded-lg bg-gray-900/50 flex justify-between items-start">
-                    <div className="flex-grow">
-                      <h3 className="font-semibold text-lg">{item.title}</h3>
-                      <p className="text-sm text-gray-400">
-                        {item.type}{item.channel_id ? ` • Channel: ${item.channel_id}` : ""}
-                      </p>
-                      <p className="text-xs text-gray-500 break-all">Media URL: {item.url || "—"}</p>
-                      <p className="text-xs text-gray-500 break-all">Thumb URL: {item.thumbnail_url || "—"}</p>
-                      <p className="text-xs text-gray-500">Added: {new Date(item.date_added).toLocaleString()}</p>
-                    </div>
-                    <div className="ml-4 flex-shrink-0">
-                      <Button variant="destructive" size="sm" onClick={() => handleDelete(item.id)} disabled={loading}>
-                        Delete
+      <Card>
+        <CardHeader>
+          <CardTitle>Programs</CardTitle>
+          <CardDescription>
+            {selectedChannelName ? `Scheduled for ${selectedChannelName}` : "Pick a channel"}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <div className="flex items-center gap-2 text-slate-400">
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+            </div>
+          ) : programs.length === 0 ? (
+            <div className="text-slate-400">No programs scheduled.</div>
+          ) : (
+            <div className="space-y-3">
+              {programs.map(p => (
+                <div key={p.id} className="rounded border border-slate-700 bg-slate-900 p-3">
+                  <div className="flex items-center justify-between">
+                    <div className="font-semibold">{p.title}</div>
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="outline" onClick={() => startEdit(p)}>
+                        <Pencil className="h-4 w-4 mr-1" /> Edit
+                      </Button>
+                      <Button size="sm" variant="destructive" onClick={() => deleteProgram(p.id)}>
+                        <Trash2 className="h-4 w-4 mr-1" /> Delete
                       </Button>
                     </div>
                   </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
+                  <div className="text-sm text-slate-300 mt-1 break-all">
+                    {p.mp4_url || <span className="text-red-400">No MP4 URL</span>}
+                  </div>
+                  <div className="text-xs text-slate-400 mt-1">
+                    {(() => {
+                      try {
+                        return `${format(new Date(p.start_time), "PPP p")} • ${p.duration}s`;
+                      } catch {
+                        return `${p.start_time} • ${p.duration}s`;
+                      }
+                    })()}
+                  </div>
+                  {/* Inline test player (does not alter your main player) */}
+                  {p.mp4_url && (
+                    <video
+                      className="mt-2 w-full max-w-xl rounded"
+                      src={p.mp4_url}
+                      controls
+                      preload="metadata"
+                    />
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
