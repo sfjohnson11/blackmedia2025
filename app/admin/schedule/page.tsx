@@ -101,15 +101,35 @@ export default function ProgramScheduler() {
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <Card className="p-4">
                   <h2 className="font-bold mb-2">Add New Program</h2>
-                  <Input placeholder="Title" value={newProgram.title}
-                    onChange={(e) => handleInput("title", e.target.value)} className="mb-2" />
-                  <Input placeholder="MP4 URL (https://.../file.mp4)" value={newProgram.mp4_url}
-                    onChange={(e) => handleInput("mp4_url", e.target.value)} className="mb-2" />
-                  <Input type="datetime-local" placeholder="Start Time" value={newProgram.start_time}
-                    onChange={(e) => handleInput("start_time", e.target.value)} className="mb-2" />
-                  <Input type="number" placeholder="Duration (seconds)" value={newProgram.duration}
-                    onChange={(e) => handleInput("duration", parseInt(e.target.value || "0", 10))} className="mb-4" />
-                  <Button onClick={handleAddProgram} className="w-full">Add Program</Button>
+                  <Input
+                    placeholder="Title"
+                    value={newProgram.title}
+                    onChange={(e) => handleInput("title", e.target.value)}
+                    className="mb-2"
+                  />
+                  <Input
+                    placeholder="MP4 URL (https://.../file.mp4)"
+                    value={newProgram.mp4_url}
+                    onChange={(e) => handleInput("mp4_url", e.target.value)}
+                    className="mb-2"
+                  />
+                  <Input
+                    type="datetime-local"
+                    placeholder="Start Time"
+                    value={newProgram.start_time}
+                    onChange={(e) => handleInput("start_time", e.target.value)}
+                    className="mb-2"
+                  />
+                  <Input
+                    type="number"
+                    placeholder="Duration (seconds)"
+                    value={newProgram.duration}
+                    onChange={(e) => handleInput("duration", parseInt(e.target.value || "0", 10))}
+                    className="mb-4"
+                  />
+                  <Button onClick={handleAddProgram} className="w-full">
+                    Add Program
+                  </Button>
                 </Card>
 
                 <Card className="p-4">
