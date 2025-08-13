@@ -1,29 +1,34 @@
-import Link from "next/link"
-import type { Channel } from "@/types"
-import { cleanChannelName } from "@/lib/utils"
-import { isPasswordProtected } from "@/lib/channel-access"
-import { Lock } from "lucide-react"
+import Link from "next/link";
+import type { Channel } from "@/types";
+import { cleanChannelName } from "@/lib/utils";
+import { isPasswordProtected } from "@/lib/channel-access";
+import { Lock } from "lucide-react";
 
 interface ChannelCardProps {
-  channel: Channel
+  channel: Channel;
 }
 
 export function ChannelCard({ channel }: ChannelCardProps) {
-  const cleanedName = cleanChannelName(channel.name)
-  const needsPassword = isPasswordProtected(channel.id)
+  const cleanedName = cleanChannelName(channel.name);
+  const needsPassword = isPasswordProtected(channel.id);
 
-  // Generate dynamic placeholder if no logo is set
+  // Fallback image if no logo is set
   const imageUrl =
     channel.logo_url ||
-    `https://placehold.co/400x225?text=${encodeURIComponent(channel.name)}`
+    `https://placehold.co/400x225?text=${encodeURIComponent(channel.name)}`;
 
   return (
-    <Link href={`/watch/${channel.id}`} className="block">
-      <div className="netflix-card bg-gray-800 rounded-lg overflow-hidden transition-all duration-300 hover:scale-105 hover:shadow-xl border border-gray-700 hover:border-red-500">
+    <Link
+      href={`/watch/${channel.id}`}
+      className="block"
+      aria-label={`Open ${cleanedName}${needsPassword ? " (password protected)" : ""}`}
+    >
+      <div className="netflix-card group bg-gray-800 rounded-lg overflow-hidden transition-all duration-300 hover:scale-105 hover:shadow-xl border border-gray-700 hover:border-red-500">
         <div className="relative aspect-video">
           <img
             src={imageUrl}
-            alt={cleanedName}
+            alt={`${cleanedName} channel artwork`}
+            loading="lazy"
             className="object-cover w-full h-full"
           />
 
@@ -34,8 +39,8 @@ export function ChannelCard({ channel }: ChannelCardProps) {
             </div>
           )}
 
-          {/* Overlay on hover */}
-          <div className="absolute inset-0 bg-gradient-to-t from-black via-black/60 to-transparent opacity-0 hover:opacity-100 transition-opacity duration-300 flex items-end justify-center p-4">
+          {/* Overlay on hover (triggered by card hover) */}
+          <div className="absolute inset-0 bg-gradient-to-t from-black via-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end justify-center p-4">
             <span className="text-lg font-bold text-white">
               {needsPassword ? "Password Protected" : "Watch Now"}
             </span>
@@ -56,5 +61,5 @@ export function ChannelCard({ channel }: ChannelCardProps) {
         </div>
       </div>
     </Link>
-  )
+  );
 }
