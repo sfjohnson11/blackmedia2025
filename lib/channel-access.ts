@@ -1,8 +1,6 @@
 // lib/channel-access.ts
-import { cookies } from "next/headers";
-
 export const COOKIE_PREFIX = "channel_unlocked_";
 
-export function hasChannelCookie(key: string) {
-  return cookies().get(`${COOKIE_PREFIX}${key}`)?.value === "1";
-}
+// Re-export the protected list so client components (e.g., cards) can import safely
+export { PROTECTED_CHANNEL_KEYS, isProtectedChannelKey } from "./protectedChannels";
+
