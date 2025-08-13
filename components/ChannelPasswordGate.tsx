@@ -4,16 +4,19 @@ import { useState } from "react";
 export default function ChannelPasswordGate({ channelKey }: { channelKey: string }) {
   const [passcode, setPasscode] = useState("");
   const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
+    setBusy(true);
     const res = await fetch("/api/channel-access", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ channelKey, passcode }),
     });
     const json = await res.json();
+    setBusy(false);
     if (json.ok) {
       window.location.reload();
     } else {
@@ -34,8 +37,11 @@ export default function ChannelPasswordGate({ channelKey }: { channelKey: string
           className="mb-3 w-full rounded-md border border-gray-600 bg-gray-900 px-3 py-2"
         />
         {error && <div className="mb-3 text-sm text-red-400">{error}</div>}
-        <button className="w-full rounded-md bg-red-600 px-3 py-2 text-white hover:bg-red-700">
-          Unlock
+        <button
+          disabled={busy}
+          className="w-full rounded-md bg-red-600 px-3 py-2 text-white hover:bg-red-700 disabled:opacity-60"
+        >
+          {busy ? "Checking…" : "Unlock"}
         </button>
       </form>
     </div>
