@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
-import { Button } from "@/components/ui/button";
 import { AlertCircle, Lock } from "lucide-react";
 
 export default function AdminLoginPage() {
@@ -28,21 +27,21 @@ export default function AdminLoginPage() {
       return;
     }
 
-    // Check role
-    const { data: me, error: pErr } = await supabase
+    // Optional: double-check role on the client (server layout enforces it anyway)
+    const { data: profile, error: pErr } = await supabase
       .from("user_profiles")
       .select("role")
-      .eq("email", email)
+      .eq("id", (await supabase.auth.getUser()).data.user?.id)
       .maybeSingle();
 
-    if (pErr || !me || me.role !== "admin") {
+    if (pErr || !profile || profile.role !== "admin") {
       setErr("This account is not an admin.");
       setLoading(false);
       return;
     }
 
-    const redirectTo = params.get("redirect") || "/admin";
-    router.replace(redirectTo);
+    const dest = params.get("redirect") || "/admin";
+    router.replace(dest);
   }
 
   return (
@@ -88,9 +87,13 @@ export default function AdminLoginPage() {
             </div>
           )}
 
-          <Button type="submit" disabled={loading} className="w-full bg-red-600 hover:bg-red-700">
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full bg-red-600 hover:bg-red-700 text-white py-2 rounded-md"
+          >
             {loading ? "Signing in..." : "Sign in"}
-          </Button>
+          </button>
         </form>
       </div>
     </div>
