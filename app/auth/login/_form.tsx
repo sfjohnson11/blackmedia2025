@@ -11,10 +11,10 @@ export default function LoginForm() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  // Default viewers to /watch if no redirect is present
+  // IMPORTANT: default to your dynamic watch route (channel 21)
   const redirectTo = useMemo(() => {
     const p = searchParams?.get("redirect_to");
-    return p && p.startsWith("/") ? p : "/watch";
+    return p && p.startsWith("/") ? p : "/watch/21";
   }, [searchParams]);
 
   const [mode, setMode] = useState<"signin" | "signup">("signin");
@@ -25,16 +25,14 @@ export default function LoginForm() {
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
-  // ---- tolerant profile ensure: read -> update/fix -> upsert fallback ----
+  // tolerant profile ensure: read -> update/fix -> upsert fallback
   async function ensureProfile(userId: string, userEmail: string): Promise<Role[]> {
-    // 1) Try to read existing profile
     const read = await supabase
       .from("user_profiles")
       .select("id, roles, email")
       .eq("id", userId)
       .maybeSingle();
 
-    // If read worked and we have a row: normalize it
     if (!read.error && read.data) {
       const roles: string[] = Array.isArray(read.data.roles) ? read.data.roles : [];
       const needsStudent = !roles.includes("student");
@@ -48,7 +46,6 @@ export default function LoginForm() {
           .eq("id", userId);
 
         if (updErr) {
-          // If a strict RLS edge case blocked update, heal with UPSERT
           await supabase.from("user_profiles").upsert(
             {
               id: userId,
@@ -61,10 +58,9 @@ export default function LoginForm() {
         }
         return (needsStudent ? [...roles, "student"] : roles) as Role[];
       }
-      return (roles.length ? roles : ["student"]) as Role[];
+      return (Array.isArray(read.data.roles) && read.data.roles.length ? read.data.roles : ["student"]) as Role[];
     }
 
-    // 2) If read failed (e.g., permission) or no row, create/fix via UPSERT
     await supabase.from("user_profiles").upsert(
       {
         id: userId,
@@ -75,7 +71,6 @@ export default function LoginForm() {
       { onConflict: "id" }
     );
 
-    // 3) Re-read; if still blocked, just default to ["student"]
     const reread = await supabase
       .from("user_profiles")
       .select("roles")
@@ -89,14 +84,11 @@ export default function LoginForm() {
   }
 
   async function routeByRoles(roles: Role[]) {
+    // Admins go to /admin; EVERYONE ELSE goes to your dynamic watch route (channel 21) or redirectTo
     if (roles.includes("admin")) {
       router.push("/admin");
-    } else if (roles.includes("membership2")) {
-      router.push("/watch/membership2");
-    } else if (roles.includes("membership1")) {
-      router.push("/watch/membership1");
     } else {
-      router.push(redirectTo || "/watch");
+      router.push(redirectTo || "/watch/21");
     }
     router.refresh();
   }
