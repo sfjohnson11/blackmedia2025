@@ -1,134 +1,119 @@
 // app/page.tsx
-import { supabase } from "@/lib/supabase"
-import type { Channel, Program } from "@/types"
-import { ChannelCarousel } from "@/components/channel-carousel"
-import { FeaturedChannel } from "@/components/featured-channel"
-import Link from "next/link"
+import Link from "next/link";
+import { createClient } from "@supabase/supabase-js";
 
-async function getChannels() {
-  try {
-    const { data, error } = await supabase.from("channels").select("*")
-    if (error) {
-      console.error("Error fetching channels:", error)
-      return []
-    }
-    return (data as Channel[]).sort((a, b) => {
-      const aNum = Number.parseInt(a.id, 10)
-      const bNum = Number.parseInt(b.id, 10)
-      return aNum - bNum
-    })
-  } catch (error) {
-    console.error("Error fetching channels:", error)
-    return []
-  }
+export const dynamic = "force-dynamic"; // render at request time (not at build)
+export const revalidate = 0;
+
+type Channel = {
+  id: string;            // supports numeric ids like "21" and slugs like "freedom_school"
+  name: string | null;
+  description?: string | null;
+  image_url?: string | null;
+};
+
+function ChannelCard({ ch }: { ch: Channel }) {
+  return (
+    <Link
+      href={`/watch/${ch.id}`}
+      className="group rounded-xl overflow-hidden border border-gray-800 hover:border-gray-600 transition-colors bg-gray-900"
+    >
+      <div className="aspect-video bg-black overflow-hidden">
+        {ch.image_url ? (
+          // using <img> to avoid Next/Image domain config issues
+          <img
+            src={ch.image_url}
+            alt={ch.name ?? `Channel ${ch.id}`}
+            className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-300"
+            loading="lazy"
+          />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center text-gray-500 text-sm">
+            No artwork
+          </div>
+        )}
+      </div>
+      <div className="p-3">
+        <div className="text-base font-semibold truncate">
+          {ch.name ?? `Channel ${ch.id}`}
+        </div>
+        {ch.description ? (
+          <div className="text-xs text-gray-400 line-clamp-2 mt-1">{ch.description}</div>
+        ) : null}
+      </div>
+    </Link>
+  );
 }
 
-async function getFeaturedPrograms() {
-  try {
-    const { data: programsData, error: programsError } = await supabase
-      .from("programs")
-      .select("*")
-      .order("start_time", { ascending: false })
-      .limit(5)
-
-    if (programsError) {
-      console.error("Error fetching featured programs (step 1):", programsError.message)
-      return []
-    }
-    if (!programsData || programsData.length === 0) return []
-
-    const channelIds = [
-      ...new Set(
-        programsData
-          .map((p) => p.channel_id)
-          .filter((id) => id !== null && id !== undefined) as string[]
-      ),
-    ]
-
-    if (channelIds.length === 0) {
-      return programsData.map((p) => ({ ...p, channels: null })) as (Program & { channels: Channel | null })[]
-    }
-
-    const { data: channelsData, error: channelsError } = await supabase
-      .from("channels")
-      .select("*")
-      .in("id", channelIds)
-
-    if (channelsError || !channelsData) {
-      if (channelsError) console.error("Error fetching channel details for featured programs (step 2):", channelsError.message)
-      return programsData.map((p) => ({ ...p, channels: null })) as (Program & { channels: Channel | null })[]
-    }
-
-    const channelsMap = new Map(channelsData.map((c) => [c.id, c]))
-    const featuredProgramsWithChannels = programsData.map((program) => ({
-      ...program,
-      channels: program.channel_id ? channelsMap.get(String(program.channel_id)) || null : null,
-    }))
-
-    return featuredProgramsWithChannels as (Program & { channels: Channel | null })[]
-  } catch (error) {
-    console.error("Error in getFeaturedPrograms (outer catch):", error instanceof Error ? error.message : error)
-    return []
-  }
-}
-
-export default async function Home() {
-  const channels = await getChannels()
-  const featuredPrograms = await getFeaturedPrograms()
-
-  if (channels.length === 0) {
+export default async function HomePage() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+  if (!url || !anon) {
     return (
-      <div className="pt-24 px-4 md:px-10 flex items-center justify-center min-h-[80vh]">
-        <div className="bg-gray-800 p-6 rounded-lg max-w-md w-full text-center">
-          <h2 className="text-xl font-semibold mb-4">Welcome to Black Truth TV</h2>
-        <p className="mb-4">No channels found. Please complete the setup to get started.</p>
-          <Link href="/setup" className="text-red-500 hover:underline">Go to Setup</Link>
+      <div className="pt-14 min-h-screen px-4 md:px-10 flex items-center justify-center">
+        <div className="max-w-xl w-full bg-gray-900 border border-gray-800 rounded-lg p-6 text-center">
+          <h1 className="text-2xl font-bold mb-2">Configuration error</h1>
+          <p className="text-gray-300">
+            Missing <code className="text-gray-200">NEXT_PUBLIC_SUPABASE_URL</code> or{" "}
+            <code className="text-gray-200">NEXT_PUBLIC_SUPABASE_ANON_KEY</code>.
+          </p>
         </div>
       </div>
-    )
+    );
   }
 
-  const randomIndex = Math.floor(Math.random() * channels.length)
-  const featuredChannel = channels[randomIndex]
-  const popularChannels = channels.slice(0, 10)
-  const newsChannels = channels.filter(
-    (c) => c.name.toLowerCase().includes("news") || c.description?.toLowerCase().includes("news"),
-  )
-  const entertainmentChannels = channels.filter(
-    (c) => c.name.toLowerCase().includes("entertainment") || c.description?.toLowerCase().includes("entertainment"),
-  )
-  const remainingChannels = channels.filter(
-    (c) => !newsChannels.includes(c) && !entertainmentChannels.includes(c) && c.id !== featuredChannel.id,
-  )
+  // Server-side Supabase client using anon key for public read
+  const supabase = createClient(url, anon);
+
+  // Pull visible channels; adjust table/columns to match your schema exactly
+  const { data, error } = await supabase
+    .from("channels")
+    .select("id, name, description, image_url")
+    .order("sort_order", { ascending: true })
+    .order("name", { ascending: true });
+
+  if (error) {
+    return (
+      <div className="pt-14 min-h-screen px-4 md:px-10 flex items-center justify-center">
+        <div className="max-w-xl w-full bg-gray-900 border border-gray-800 rounded-lg p-6 text-center">
+          <h1 className="text-2xl font-bold mb-2">Couldn’t load channels</h1>
+          <p className="text-gray-300">
+            {error.message}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const channels: Channel[] = (data ?? []).map((r: any) => ({
+    id: String(r.id),
+    name: r.name ?? null,
+    description: r.description ?? null,
+    image_url: r.image_url ?? null,
+  }));
 
   return (
-    // pt-24 to clear fixed Navbar + global ticker from app/layout.tsx
-    <div className="flex flex-col pt-24">
-      <div>
-        <FeaturedChannel channel={featuredChannel} />
-        <section className="px-4 md:px-10 pb-10 relative z-10">
-          <ChannelCarousel
-            title="Popular Channels"
-            channels={popularChannels}
-            autoScroll
-            autoScrollInterval={6000}
-          />
-          {newsChannels.length > 0 && (
-            <ChannelCarousel title="News" channels={newsChannels} autoScroll autoScrollInterval={8000} />
-          )}
-          {entertainmentChannels.length > 0 && (
-            <ChannelCarousel title="Entertainment" channels={entertainmentChannels} autoScroll autoScrollInterval={7000} />
-          )}
-          {remainingChannels.length > 0 && (
-            <ChannelCarousel title="More Channels" channels={remainingChannels} />
-          )}
-          <div className="flex justify-center mt-8">
-            <Link href="/channels" className="text-gray-400 hover:text-white transition-colors">
-              View All Channels
-            </Link>
+    <div className="pt-14 min-h-screen">
+      {/* Hero / cover header */}
+      <section className="px-4 md:px-10 py-8 md:py-10 border-b border-gray-800 bg-[radial-gradient(ellipse_at_top,rgba(239,68,68,0.15),rgba(0,0,0,0))]">
+        <h1 className="text-3xl md:text-4xl font-extrabold">Black Truth TV</h1>
+        <p className="text-gray-300 mt-2 max-w-2xl">
+          Streaming live and on-demand. Choose a channel to start watching.
+        </p>
+      </section>
+
+      {/* Channels grid */}
+      <section className="px-4 md:px-10 py-6">
+        {channels.length === 0 ? (
+          <div className="text-gray-400">No channels available.</div>
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+            {channels.map((ch) => (
+              <ChannelCard key={ch.id} ch={ch} />
+            ))}
           </div>
-        </section>
-      </div>
+        )}
+      </section>
     </div>
-  )
+  );
 }
