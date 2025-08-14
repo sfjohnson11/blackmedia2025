@@ -162,7 +162,7 @@ export default function WatchPage() {
       pollingInterval = setInterval(() => {
         if (document.visibilityState === "visible") {
           fetchCurrentProgram(validatedNumericChannelId);
-          fetchUpcomingPrograms(validicatedNumericChannelId);
+          fetchUpcomingPrograms(validatedNumericChannelId);
         }
       }, 60000);
     }
