@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import "./globals.css";
 
-// If your nav file is named differently, keep your existing nav import:
+// your existing navbar export
 import { Navbar } from "@/components/navbar";
 
+// ⬇️ add this
 import NewsTickerLive from "@/components/news-ticker-live";
 
 export const metadata: Metadata = {
@@ -16,10 +17,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body className="bg-black text-white">
         <Navbar />
-        {/* Ticker right under the fixed navbar */}
         <NewsTickerLive />
-        {/* Push content down so it’s not hidden behind fixed navbar */}
-        <main className="pt-[72px]">
+        {/* Increase padding-top so content clears navbar + ticker (approx 112px) */}
+        <main className="pt-[112px]">
           {children}
         </main>
       </body>
