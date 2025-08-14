@@ -1,101 +1,75 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import NewsTicker from "@/components/NewsTicker"; // capital N
-import { Button } from "@/components/ui/button";
+import { useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 
-type NewsRow = {
-  id: string;
-  content: string;
-  is_active: boolean;
-  sort_order: number;
-  updated_at: string;
-};
+// Load the visual ticker client-side
+const NewsTicker = dynamic(() => import("./NewsTicker"), { ssr: false });
 
-export default function NewsTickerLive({
-  speedPxPerSec = 80,
-  backgroundColor = "bg-red-600",
-  textColor = "text-white",
-}: {
-  speedPxPerSec?: number;
-  backgroundColor?: string;
-  textColor?: string;
-}) {
-  const [items, setItems] = useState<NewsRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
+type Item = { content: string; is_active?: boolean; sort_order?: number };
 
-  const isAdmin = typeof window !== "undefined" && localStorage.getItem("btv_admin_auth") === "blacktruth_admin_2025";
+export default function NewsTickerLive() {
+  const [items, setItems] = useState<string[]>([]);
+  const [isAdmin, setIsAdmin] = useState(false);
 
-  const load = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/news", { cache: "no-store" });
-      const json = await res.json();
-      if (!json.ok) throw new Error(json.error || "Failed to load news");
-      setItems(json.items || []);
-    } catch (e: any) {
-      setError(e?.message || "Failed to load news");
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  // Fetch headlines from API (safe if API missing or key not set)
   useEffect(() => {
-    load();
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/news", { cache: "no-store" });
+        if (!res.ok) throw new Error("http");
+        const json = await res.json();
+        const active: string[] = (json.items ?? [])
+          .filter((x: Item) => x.is_active !== false)
+          .sort((a: Item, b: Item) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+          .map((x: Item) => x.content);
+        if (!cancelled) setItems(active);
+      } catch {
+        // No API or empty table → show nothing for viewers, placeholder for admins
+        if (!cancelled) setItems([]);
+      }
+    })();
+    return () => { cancelled = true; };
   }, []);
 
-  const newsStrings = useMemo(
-    () => items.filter((i) => i.is_active).sort((a, b) => a.sort_order - b.sort_order).map((i) => i.content),
-    [items]
-  );
-
-  const handleUpdateNews = async (updated: string[]) => {
-    setSaving(true);
-    setError(null);
+  // Simple admin detection using your existing localStorage flag
+  useEffect(() => {
     try {
-      const bodyItems = updated.map((content, idx) => ({ content, is_active: true, sort_order: idx }));
-      const res = await fetch("/api/news", {
+      const token = localStorage.getItem("btv_admin_auth");
+      setIsAdmin(!!token);
+    } catch {}
+  }, []);
+
+  // Allow inline edits to save back through the API (no crash if API missing)
+  const handleUpdate = async (next: string[]) => {
+    setItems(next);
+    try {
+      await fetch("/api/news", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items: bodyItems }),
+        body: JSON.stringify({
+          items: next.map((content, i) => ({ content, is_active: true, sort_order: i })),
+        }),
       });
-      const json = await res.json();
-      if (!json.ok) throw new Error(json.error || "Failed to save");
-      setItems(json.items || []);
-      setLastSavedAt(new Date().toLocaleTimeString());
-    } catch (e: any) {
-      setError(e?.message || "Save failed");
-    } finally {
-      setSaving(false);
+    } catch {
+      // Silent fail if API not configured; edits still update locally for this session
     }
   };
 
-  if (loading && !items.length) return null;
-  if (!newsStrings.length) return null;
+  // Hide for viewers if there’s nothing, but let admins see a prompt to add items
+  const renderItems = items.length ? items : isAdmin ? ["Click ✎ to add headlines"] : [];
+
+  if (!renderItems.length) return null;
 
   return (
-    <>
-      <NewsTicker
-        news={newsStrings}
-        speedPxPerSec={speedPxPerSec}
-        backgroundColor={backgroundColor}
-        textColor={textColor}
-        isAdmin={isAdmin}
-        onUpdateNews={handleUpdateNews}
-      />
-      {isAdmin && (
-        <div className="w-full bg-gray-900/60 text-xs text-gray-300 px-4 py-2 flex items-center gap-3">
-          {saving ? <span>Saving…</span> : lastSavedAt ? <span>Saved at {lastSavedAt}</span> : <span>Loaded</span>}
-          <Button size="xs" variant="outline" className="h-6 px-2" onClick={load}>
-            Refresh
-          </Button>
-          {error && <span className="text-red-400">• {error}</span>}
-        </div>
-      )}
-    </>
+    <NewsTicker
+      news={renderItems}
+      isAdmin={isAdmin}
+      onUpdateNews={handleUpdate}
+      backgroundColor="bg-red-600"
+      textColor="text-white"
+      speedPxPerSec={80}
+    />
   );
 }
