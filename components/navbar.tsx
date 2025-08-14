@@ -24,9 +24,8 @@ export function Navbar() {
   }, [])
 
   return (
-    <header
-      className={`fixed top-0 z-50 w-full transition-colors duration-300 ${isScrolled ? "bg-black" : "bg-transparent"}`}
-    >
+    <header className="fixed top-0 z-50 w-full bg-black">
+
       <div className="flex items-center justify-between px-4 py-4 md:px-10">
         <div className="flex items-center space-x-8">
           <Link href="/" className="text-red-600 font-bold text-2xl">
