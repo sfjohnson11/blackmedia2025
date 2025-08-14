@@ -1,6 +1,7 @@
+// app/auth/login/_form.tsx
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
@@ -8,24 +9,65 @@ export function LoginForm() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  const redirectTo = searchParams?.get("redirect_to") || "/";
+  // Only allow internal redirects
+  const redirectTo = useMemo(() => {
+    const p = searchParams?.get("redirect_to");
+    return p && p.startsWith("/") ? p : "/";
+  }, [searchParams]);
+
+  const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [err, setErr] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState("");
   const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
-    setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    setLoading(false);
-    if (error) {
-      setErr(error.message);
+    setMsg(null);
+
+    if (!email || !password) {
+      setErr("Please enter email and password.");
       return;
     }
-    router.push(redirectTo);
-    router.refresh();
+    if (mode === "signup" && password !== confirm) {
+      setErr("Passwords do not match.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      if (mode === "signin") {
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+        if (data.session) {
+          router.push(redirectTo);
+          router.refresh();
+          return;
+        }
+        setErr("Could not create a session. Try again.");
+      } else {
+        // First-time account creation
+        const { data, error } = await supabase.auth.signUp({ email, password });
+        if (error) throw error;
+
+        // If email confirmations are OFF, you’ll get a session and can go straight in
+        if (data.session) {
+          router.push(redirectTo);
+          router.refresh();
+          return;
+        }
+
+        // If confirmations are ON in Supabase Auth settings
+        setMsg("Check your email to confirm your account, then sign in.");
+      }
+    } catch (e: any) {
+      setErr(e?.message || "Something went wrong.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -34,7 +76,10 @@ export function LoginForm() {
         onSubmit={onSubmit}
         className="w-full max-w-md bg-gray-900 border border-gray-800 rounded-lg p-6"
       >
-        <h1 className="text-2xl font-bold mb-4">Sign in</h1>
+        <h1 className="text-2xl font-bold mb-4">
+          {mode === "signin" ? "Sign in to watch" : "Create your account"}
+        </h1>
+
         <label className="block mb-2 text-sm">Email</label>
         <input
           className="w-full mb-4 px-3 py-2 bg-gray-800 border border-gray-700 rounded"
@@ -43,24 +88,67 @@ export function LoginForm() {
           onChange={(e) => setEmail(e.target.value)}
           required
           autoComplete="email"
+          placeholder="you@example.com"
         />
-        <label className="block mb-2 text-sm">Password</label>
+
+        <label className="block mb-2 text-sm">{mode === "signin" ? "Password" : "Create password"}</label>
         <input
           className="w-full mb-4 px-3 py-2 bg-gray-800 border border-gray-700 rounded"
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           required
-          autoComplete="current-password"
+          minLength={6}
+          autoComplete={mode === "signin" ? "current-password" : "new-password"}
+          placeholder={mode === "signin" ? "Your password" : "At least 6 characters"}
         />
+
+        {mode === "signup" && (
+          <>
+            <label className="block mb-2 text-sm">Confirm password</label>
+            <input
+              className="w-full mb-4 px-3 py-2 bg-gray-800 border border-gray-700 rounded"
+              type="password"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              required
+              minLength={6}
+              autoComplete="new-password"
+              placeholder="Repeat your password"
+            />
+          </>
+        )}
+
         {err && <p className="text-sm text-red-400 mb-3">{err}</p>}
+        {msg && <p className="text-sm text-green-400 mb-3">{msg}</p>}
+
         <button
           disabled={loading}
           className="w-full bg-red-600 hover:bg-red-700 py-2 rounded disabled:opacity-50"
         >
-          {loading ? "Signing in..." : "Sign in"}
+          {loading ? "Please wait…" : mode === "signin" ? "Sign in" : "Create account"}
         </button>
+
+        <div className="mt-4 text-sm text-gray-400">
+          {mode === "signin" ? (
+            <>
+              New here?{" "}
+              <button type="button" onClick={() => setMode("signup")} className="text-red-400 hover:underline">
+                Create an account
+              </button>
+            </>
+          ) : (
+            <>
+              Already have an account?{" "}
+              <button type="button" onClick={() => setMode("signin")} className="text-red-400 hover:underline">
+                Sign in
+              </button>
+            </>
+          )}
+        </div>
       </form>
     </div>
   );
 }
+
+export default LoginForm;
