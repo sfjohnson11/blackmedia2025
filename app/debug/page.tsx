@@ -1,7 +1,9 @@
-"use client"
-import Link from "next/link"
-import { Button } from "@/components/ui/button"
-import { ArrowLeft, Database, Video, Shield, RefreshCw } from "lucide-react"
+// app/debug/page.tsx
+"use client";
+
+import Link from "next/link";
+import { Button } from "@/components/ui/button";
+import { ArrowLeft, Database, Video, Shield, RefreshCw } from "lucide-react";
 
 export default function DebugPage() {
   return (
@@ -66,5 +68,5 @@ export default function DebugPage() {
         </div>
       </div>
     </div>
-  )
+  );
 }
