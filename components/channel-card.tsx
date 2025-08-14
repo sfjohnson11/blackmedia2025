@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { Channel } from "@/types";
 import { cleanChannelName } from "@/lib/utils";
-import { isPasswordProtected } from "@/lib/channel-access";
+import { PROTECTED_CHANNELS } from "@/lib/protected-channels";
 import { Lock } from "lucide-react";
 
 interface ChannelCardProps {
@@ -10,16 +10,16 @@ interface ChannelCardProps {
 
 export function ChannelCard({ channel }: ChannelCardProps) {
   const cleanedName = cleanChannelName(channel.name);
-  const needsPassword = isPasswordProtected(channel.id);
+  const idNum =
+    typeof channel.id === "string" ? Number.parseInt(channel.id, 10) : (channel.id as number);
+  const needsPassword = PROTECTED_CHANNELS.has(idNum);
 
-  // Fallback image if no logo is set
   const imageUrl =
-    channel.logo_url ||
-    `https://placehold.co/400x225?text=${encodeURIComponent(channel.name)}`;
+    channel.logo_url || `https://placehold.co/400x225?text=${encodeURIComponent(channel.name)}`;
 
   return (
     <Link
-      href={`/watch/${channel.id}`}
+      href={`/watch/${channel.id}`} // middleware will redirect to /unlock/<id> when needed
       className="block"
       aria-label={`Open ${cleanedName}${needsPassword ? " (password protected)" : ""}`}
     >
@@ -32,14 +32,12 @@ export function ChannelCard({ channel }: ChannelCardProps) {
             className="object-cover w-full h-full"
           />
 
-          {/* Password protection indicator */}
           {needsPassword && (
             <div className="absolute top-2 right-2 bg-black/70 p-1.5 rounded-full">
               <Lock className="h-4 w-4 text-red-500" />
             </div>
           )}
 
-          {/* Overlay on hover (triggered by card hover) */}
           <div className="absolute inset-0 bg-gradient-to-t from-black via-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end justify-center p-4">
             <span className="text-lg font-bold text-white">
               {needsPassword ? "Password Protected" : "Watch Now"}
