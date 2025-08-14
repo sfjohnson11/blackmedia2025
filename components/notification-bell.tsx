@@ -7,42 +7,37 @@ import { Bell } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
 export default function NotificationBell({ className = "" }: { className?: string }) {
-  const [count, setCount] = useState<number>(0);
+  const [count, setCount] = useState(0);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    let unsub = () => {};
+    let cleanup = () => {};
     (async () => {
-      const { data: sess } = await supabase.auth.getSession();
-      const user = sess.session?.user;
+      const { data } = await supabase.auth.getSession();
+      const user = data.session?.user;
+
       if (!user) {
         setCount(0);
         setReady(true);
         return;
       }
 
-      // Initial unread count (HEAD request with count only)
+      // initial unread count
       {
-        const { count, error } = await supabase
+        const { count } = await supabase
           .from("user_notifications")
           .select("*", { count: "exact", head: true })
           .is("read_at", null);
-        if (!error && typeof count === "number") setCount(count);
+        setCount(count || 0);
       }
 
-      // Realtime: scope to current user for efficiency
+      // realtime for this user
       const channel = supabase
         .channel("realtime:bell_badge")
         .on(
           "postgres_changes",
-          {
-            event: "*",
-            schema: "public",
-            table: "user_notifications",
-            filter: `user_id=eq.${user.id}`,
-          },
+          { event: "*", schema: "public", table: "user_notifications", filter: `user_id=eq.${user.id}` },
           async () => {
-            // Recompute on any insert/update/delete
             const { count } = await supabase
               .from("user_notifications")
               .select("*", { count: "exact", head: true })
@@ -52,11 +47,11 @@ export default function NotificationBell({ className = "" }: { className?: strin
         )
         .subscribe();
 
-      unsub = () => supabase.removeChannel(channel);
+      cleanup = () => supabase.removeChannel(channel);
       setReady(true);
     })();
 
-    return () => unsub();
+    return cleanup;
   }, []);
 
   return (
