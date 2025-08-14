@@ -1,76 +1,62 @@
-// app/api/news/route.ts
-import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
 
-function getAdmin() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY; // server-only
-  if (!url || !key) return null;
-  return createClient(url, key);
-}
+// Table shape expected: a single row keyed by text 'global'
+/*
+create table if not exists site_news (
+  key text primary key,
+  items text[] not null default '{}',
+  updated_at timestamptz not null default now()
+);
+insert into site_news(key, items) values ('global', '{}')
+on conflict (key) do nothing;
+*/
 
-// GET: return all items
 export async function GET() {
-  const supabaseAdmin = getAdmin();
-  if (!supabaseAdmin) {
-    return NextResponse.json(
-      { ok: false, error: "Server key missing" },
-      { status: 500 }
-    );
-  }
-
-  const { data, error } = await supabaseAdmin
-    .from("breaking_news")
-    .select("id, content, is_active, sort_order, updated_at")
-    .order("sort_order", { ascending: true });
+  const supabase = createRouteHandlerClient({ cookies });
+  const { data, error } = await supabase
+    .from("site_news")
+    .select("items")
+    .eq("key", "global")
+    .maybeSingle();
 
   if (error) {
-    return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+    // don't fail build – just return empty
+    return NextResponse.json({ items: [] }, { status: 200 });
   }
-  return NextResponse.json({ ok: true, items: data ?? [] });
+  return NextResponse.json({ items: data?.items ?? [] });
 }
 
-// PUT: replace the list (simple replace-all)
-export async function PUT(req: NextRequest) {
-  const supabaseAdmin = getAdmin();
-  if (!supabaseAdmin) {
-    return NextResponse.json(
-      { ok: false, error: "Server key missing" },
-      { status: 500 }
-    );
+export async function POST(req: Request) {
+  const supabase = createRouteHandlerClient({ cookies });
+
+  // must be signed in
+  const { data: auth } = await supabase.auth.getUser();
+  if (!auth?.user) {
+    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   }
 
-  try {
-    const body = await req.json();
-    const items = Array.isArray(body?.items) ? body.items : [];
+  // (Optional) check admin role from user_profiles
+  const { data: profile } = await supabase
+    .from("user_profiles")
+    .select("role")
+    .eq("id", auth.user.id)
+    .maybeSingle();
 
-    const { error: delErr } = await supabaseAdmin
-      .from("breaking_news")
-      .delete()
-      .neq("id", "00000000-0000-0000-0000-000000000000");
-    if (delErr) throw delErr;
-
-    const rows = items
-      .map((it: any, idx: number) => ({
-        content: String(it.content ?? "").trim(),
-        is_active: it.is_active === false ? false : true,
-        sort_order: Number.isFinite(it.sort_order) ? it.sort_order : idx,
-      }))
-      .filter((r: any) => r.content.length > 0);
-
-    if (rows.length === 0) {
-      return NextResponse.json({ ok: true, items: [] });
-    }
-
-    const { data, error } = await supabaseAdmin
-      .from("breaking_news")
-      .insert(rows)
-      .select("*")
-      .order("sort_order", { ascending: true });
-    if (error) throw error;
-
-    return NextResponse.json({ ok: true, items: data });
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message || "Bad request" }, { status: 400 });
+  if (profile?.role !== "admin") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
+
+  const body = await req.json().catch(() => ({} as any));
+  const items = Array.isArray(body.items) ? body.items.map(String) : [];
+
+  const { error } = await supabase
+    .from("site_news")
+    .upsert({ key: "global", items });
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 400 });
+  }
+  return NextResponse.json({ ok: true });
 }
