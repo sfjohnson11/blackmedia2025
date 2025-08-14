@@ -16,13 +16,14 @@ export default function NotificationBell({ className = "" }: { className?: strin
       const { data } = await supabase.auth.getSession();
       const user = data.session?.user;
 
+      // not logged in → no badge
       if (!user) {
         setCount(0);
         setReady(true);
         return;
       }
 
-      // initial unread count
+      // initial unread count (count-only HEAD)
       {
         const { count } = await supabase
           .from("user_notifications")
