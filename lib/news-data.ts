@@ -1,33 +1,35 @@
-"use client";
+// lib/news-data.ts
+const KEY = "btv_news_items";
 
-// Client helpers that talk to /api/news
-// GET returns { items: string[] }
-// POST accepts { items: string[] } (auth required, RLS should allow admins only)
+// Default message so the bar always appears
+const DEFAULT_ITEMS = [
+  "Welcome to Black Truth TV — streaming 24/7.",
+];
 
-export async function getNewsItems(): Promise<string[]> {
+export function getNewsItems(): string[] {
   try {
-    const res = await fetch("/api/news", { cache: "no-store" });
-    if (!res.ok) return [];
-    const json = await res.json();
-    return Array.isArray(json.items) ? json.items : [];
+    if (typeof window === "undefined") {
+      // During SSR return default (BreakingNews runs on client anyway)
+      return DEFAULT_ITEMS;
+    }
+    const raw = window.localStorage.getItem(KEY);
+    if (!raw) return DEFAULT_ITEMS;
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.every((s) => typeof s === "string")) {
+      return parsed.length > 0 ? parsed : DEFAULT_ITEMS;
+    }
+    return DEFAULT_ITEMS;
   } catch {
-    return [];
+    return DEFAULT_ITEMS;
   }
 }
 
-export async function saveNewsItems(items: string[]): Promise<{ ok: boolean; error?: string }> {
+export function saveNewsItems(items: string[]) {
   try {
-    const res = await fetch("/api/news", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items }),
-    });
-    if (!res.ok) {
-      const payload = await res.json().catch(() => ({}));
-      return { ok: false, error: payload?.error || "Failed to save news items" };
-    }
-    return { ok: true };
-  } catch (e: any) {
-    return { ok: false, error: e?.message || "Network error" };
+    if (typeof window === "undefined") return;
+    const clean = (Array.isArray(items) ? items : []).filter((s) => !!s && typeof s === "string");
+    window.localStorage.setItem(KEY, JSON.stringify(clean));
+  } catch {
+    // ignore
   }
 }
