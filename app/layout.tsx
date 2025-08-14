@@ -1,11 +1,7 @@
-import type { Metadata } from "next";
 import "./globals.css";
-
-// your existing navbar export
+import type { Metadata } from "next";
 import { Navbar } from "@/components/navbar";
-
-// ⬇️ add this
-import NewsTickerLive from "@/components/news-ticker-live";
+import { NewsTickerLive } from "@/components/news-ticker-live";
 
 export const metadata: Metadata = {
   title: "Black Truth TV",
@@ -16,10 +12,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body className="bg-black text-white">
+        {/* Fixed top nav */}
         <Navbar />
-        <NewsTickerLive />
-        {/* Increase padding-top so content clears navbar + ticker (approx 112px) */}
-        <main className="pt-[112px]">
+
+        {/* Single, global ticker just below the navbar */}
+        <div id="global-news-ticker">
+          <NewsTickerLive />
+        </div>
+
+        {/* Push content below the fixed header + ticker height */}
+        <main className="pt-28">
           {children}
         </main>
       </body>
