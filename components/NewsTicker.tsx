@@ -1,3 +1,4 @@
+// components/NewsTicker.tsx — marquee ticker with optional admin editing
 "use client";
 
 import { useState, useEffect } from "react";
@@ -6,14 +7,19 @@ import { Button } from "@/components/ui/button";
 
 interface NewsTickerProps {
   news?: string[];
+  /** seconds for one full marquee pass (default 30) */
   speed?: number;
+  /** Tailwind class for background (default bg-red-600) */
   backgroundColor?: string;
+  /** Tailwind class for text (default text-white) */
   textColor?: string;
+  /** When true, show edit controls below the ticker */
   isAdmin?: boolean;
+  /** Called whenever the list is saved/updated */
   onUpdateNews?: (news: string[]) => void;
 }
 
-export function NewsTicker({
+function NewsTickerComponent({
   news = [],
   speed = 30,
   backgroundColor = "bg-red-600",
@@ -27,21 +33,23 @@ export function NewsTicker({
   const [newNewsItem, setNewNewsItem] = useState("");
 
   useEffect(() => {
-    if (news.length > 0) setEditableNews(news);
+    setEditableNews(Array.isArray(news) ? news : []);
   }, [news]);
 
   const handleSaveNews = () => {
-    onUpdateNews?.(editableNews);
+    const cleaned = editableNews.map((s) => s.trim()).filter(Boolean);
+    setEditableNews(cleaned);
+    onUpdateNews?.(cleaned);
     setIsEditing(false);
   };
 
   const handleAddNewsItem = () => {
-    if (newNewsItem.trim()) {
-      const updated = [...editableNews, newNewsItem.trim()];
-      setEditableNews(updated);
-      setNewNewsItem("");
-      onUpdateNews?.(updated);
-    }
+    const next = newNewsItem.trim();
+    if (!next) return;
+    const updated = [...editableNews, next];
+    setEditableNews(updated);
+    setNewNewsItem("");
+    onUpdateNews?.(updated);
   };
 
   const handleRemoveNewsItem = (index: number) => {
@@ -54,19 +62,27 @@ export function NewsTicker({
 
   return (
     <div className={`w-full ${backgroundColor} relative shadow-md`}>
+      {/* Ticker row */}
       <div className="flex items-center py-3 px-4 gap-4 overflow-hidden">
+        {/* Label */}
         <div className="shrink-0">
           <span className={`font-bold ${textColor} text-sm md:text-base uppercase tracking-wider`}>
-            BREAKING NEWS
+            Breaking News
           </span>
         </div>
 
-        <div className="flex-1 overflow-hidden">
+        {/* Scroller */}
+        <div className="flex-1 overflow-hidden relative">
           <div
             className={`whitespace-nowrap ${textColor} font-medium text-sm md:text-base animate-marquee ${
               isPaused ? "paused" : ""
             }`}
-            style={{ display: "inline-block", whiteSpace: "nowrap", animationDuration: `${speed}s` }}
+            style={{
+              display: "inline-block",
+              whiteSpace: "nowrap",
+              // speed is seconds for one full cycle
+              animationDuration: `${Math.max(5, speed)}s`,
+            }}
           >
             {editableNews.map((item, i) => (
               <span key={i} className="mx-8 inline-block">
@@ -76,13 +92,14 @@ export function NewsTicker({
           </div>
         </div>
 
-        <div className="flex items-center gap-1">
+        {/* Controls */}
+        <div className="ml-2 flex items-center">
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => setIsPaused(!isPaused)}
+            onClick={() => setIsPaused((p) => !p)}
             className={`${textColor} hover:bg-white/20`}
-            aria-label={isPaused ? "Play" : "Pause"}
+            aria-label={isPaused ? "Play ticker" : "Pause ticker"}
           >
             {isPaused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
           </Button>
@@ -91,9 +108,9 @@ export function NewsTicker({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setIsEditing(!isEditing)}
-              className={`${textColor} hover:bg-white/20`}
-              aria-label="Edit News"
+              onClick={() => setIsEditing((e) => !e)}
+              className={`${textColor} hover:bg-white/20 ml-1`}
+              aria-label="Edit news items"
             >
               <Edit className="h-4 w-4" />
             </Button>
@@ -101,6 +118,7 @@ export function NewsTicker({
         </div>
       </div>
 
+      {/* Admin editor */}
       {isAdmin && isEditing && (
         <div className="bg-gray-900 p-4 border-t border-gray-700">
           <h3 className="font-bold mb-3">Edit Breaking News</h3>
@@ -155,5 +173,8 @@ export function NewsTicker({
   );
 }
 
-// ✅ allow both `import { NewsTicker }` AND `import NewsTicker`
+// export both ways so imports like `import NewsTicker from "./NewsTicker"`
+// and `import { NewsTicker } from "./NewsTicker"` both work.
+const NewsTicker = NewsTickerComponent;
+export { NewsTicker };
 export default NewsTicker;
