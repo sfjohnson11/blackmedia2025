@@ -1,17 +1,15 @@
-// app/auth/login/_form.tsx
 "use client";
 
 import { useMemo, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
-type Role = "admin" | "student";
+type Role = "admin" | "membership1" | "membership2" | "student";
 
 export default function LoginForm() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  // Default viewers to /watch if no redirect is present
   const redirectTo = useMemo(() => {
     const p = searchParams?.get("redirect_to");
     return p && p.startsWith("/") ? p : "/watch";
@@ -25,33 +23,50 @@ export default function LoginForm() {
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
-  async function ensureProfile(userId: string, userEmail: string): Promise<Role> {
-    // Try to read existing profile
+  async function ensureProfile(userId: string, userEmail: string): Promise<Role[]> {
     const { data: existing, error: selErr } = await supabase
       .from("user_profiles")
-      .select("id, role")
+      .select("id, roles, email")
       .eq("id", userId)
       .maybeSingle();
 
     if (selErr) throw new Error("Could not read user profile.");
 
-    if (existing?.role) return existing.role as Role;
+    if (!existing) {
+      const { error: insErr } = await supabase.from("user_profiles").insert({
+        id: userId,
+        email: userEmail,
+        roles: ["student"],
+        created_at: new Date().toISOString(),
+      });
+      if (insErr) throw new Error("Could not create user profile.");
+      return ["student"];
+    }
 
-    // Create a default viewer profile
-    const { error: insErr } = await supabase.from("user_profiles").insert({
-      id: userId,
-      email: userEmail,
-      role: "student",
-      created_at: new Date().toISOString(),
-    });
+    const roles: string[] = Array.isArray(existing.roles) ? existing.roles : [];
+    const needsStudent = !roles.includes("student");
+    const needsEmail = !existing.email;
 
-    if (insErr) throw new Error("Could not create user profile.");
-    return "student";
+    if (needsStudent || needsEmail) {
+      const nextRoles = needsStudent ? [...roles, "student"] : roles;
+      const { error: updErr } = await supabase
+        .from("user_profiles")
+        .update({ roles: nextRoles, email: existing.email ?? userEmail })
+        .eq("id", userId);
+      if (updErr) throw new Error("Could not update user profile.");
+      return nextRoles as Role[];
+    }
+
+    return roles as Role[];
   }
 
-  async function routeByRole(role: Role) {
-    if (role === "admin") {
+  async function routeByRoles(roles: Role[]) {
+    if (roles.includes("admin")) {
       router.push("/admin");
+    } else if (roles.includes("membership2")) {
+      router.push("/watch/membership2");
+    } else if (roles.includes("membership1")) {
+      router.push("/watch/membership1");
     } else {
       router.push(redirectTo || "/watch");
     }
@@ -81,20 +96,16 @@ export default function LoginForm() {
         });
         if (error) {
           const m = (error.message || "").toLowerCase();
-          if (m.includes("invalid login credentials")) {
-            throw new Error("Wrong email or password.");
-          }
+          if (m.includes("invalid login credentials")) throw new Error("Wrong email or password.");
           throw error;
         }
         const user = data?.user;
         if (!user) throw new Error("Sign-in succeeded but no user returned.");
 
-        // Ensure a profile exists and then route by role
-        const role = await ensureProfile(user.id, user.email || email.trim());
-        await routeByRole(role);
+        const roles = await ensureProfile(user.id, user.email || email.trim());
+        await routeByRoles(roles as Role[]);
         return;
       } else {
-        // SIGN UP
         const origin =
           typeof window !== "undefined"
             ? window.location.origin
@@ -104,9 +115,7 @@ export default function LoginForm() {
           email: email.trim(),
           password,
           options: {
-            emailRedirectTo: `${origin}/auth/callback?redirect_to=${encodeURIComponent(
-              redirectTo
-            )}`,
+            emailRedirectTo: `${origin}/auth/callback?redirect_to=${encodeURIComponent(redirectTo)}`,
           },
         });
         if (error) {
@@ -117,10 +126,9 @@ export default function LoginForm() {
           throw error;
         }
 
-        // If email confirmation is OFF, session exists now; otherwise ask to confirm
         if (data?.session?.user) {
-          const role = await ensureProfile(data.session.user.id, data.session.user.email!);
-          await routeByRole(role);
+          const roles = await ensureProfile(data.session.user.id, data.session.user.email!);
+          await routeByRoles(roles as Role[]);
           return;
         }
 
@@ -198,22 +206,14 @@ export default function LoginForm() {
           {mode === "signin" ? (
             <>
               New here?{" "}
-              <button
-                type="button"
-                onClick={() => setMode("signup")}
-                className="text-red-400 hover:underline"
-              >
+              <button type="button" onClick={() => setMode("signup")} className="text-red-400 hover:underline">
                 Create an account
               </button>
             </>
           ) : (
             <>
               Already have an account?{" "}
-              <button
-                type="button"
-                onClick={() => setMode("signin")}
-                className="text-red-400 hover:underline"
-              >
+              <button type="button" onClick={() => setMode("signin")} className="text-red-400 hover:underline">
                 Sign in
               </button>
             </>
