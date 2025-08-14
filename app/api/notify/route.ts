@@ -1,10 +1,10 @@
 // app/api/notify/route.ts
-export const runtime = "nodejs"; // ensure Node runtime so env vars are available
+export const runtime = "nodejs"; // ensure Node runtime so process.env is available
 
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
-import { supabaseAdmin } from "@/lib/supabase-server";
+import { getSupabaseAdmin } from "@/lib/supabase-server";
 
 type Payload =
   | { scope: "all"; title: string; body?: string; link?: string; type?: string; channel_id?: string }
@@ -12,16 +12,8 @@ type Payload =
   | { scope: "emails"; emails: string[]; title: string; body?: string; link?: string; type?: string; channel_id?: string };
 
 export async function POST(req: Request) {
-  // Guard: service key present?
-  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    return NextResponse.json(
-      { error: "SUPABASE_SERVICE_ROLE_KEY is missing in Vercel env. Add it and redeploy." },
-      { status: 500 }
-    );
-  }
-
   try {
-    // 1) Auth
+    // 1) Auth (uses anon key & url from env — make sure those are set too)
     const cookieStore = cookies();
     const supabase = createRouteHandlerClient({ cookies: () => cookieStore });
     const { data: { user } } = await supabase.auth.getUser();
@@ -49,7 +41,10 @@ export async function POST(req: Request) {
     const type = "type" in payload && payload.type ? String(payload.type) : "info";
     const channel_id = "channel_id" in payload && payload.channel_id ? String(payload.channel_id) : null;
 
-    // 4) Resolve recipients (service role bypasses RLS)
+    // 4) Create admin client lazily (at request time)
+    const supabaseAdmin = getSupabaseAdmin();
+
+    // 5) Resolve recipients with service role (bypasses RLS)
     let userIds: string[] = [];
     if (payload.scope === "all") {
       const { data, error } = await supabaseAdmin.from("user_profiles").select("user_id");
@@ -73,13 +68,24 @@ export async function POST(req: Request) {
     userIds = Array.from(new Set(userIds));
     if (userIds.length === 0) return NextResponse.json({ inserted: 0, note: "No recipients matched" });
 
-    // 5) Insert notifications
+    // 6) Insert notifications
     const rows = userIds.map((uid) => ({ user_id: uid, type, title, body, link, channel_id }));
     const { error: insErr } = await supabaseAdmin.from("user_notifications").insert(rows, { returning: "minimal" });
     if (insErr) throw insErr;
 
     return NextResponse.json({ inserted: rows.length });
   } catch (e: any) {
+    // Clear, actionable error when envs are missing
+    if (String(e?.message || "").includes("Missing Supabase env vars")) {
+      return NextResponse.json(
+        {
+          error:
+            "SUPABASE_SERVICE_ROLE_KEY (and/or NEXT_PUBLIC_SUPABASE_URL) missing on server. " +
+            "Add them in Vercel → Project → Settings → Environment Variables, then redeploy.",
+        },
+        { status: 500 }
+      );
+    }
     return NextResponse.json({ error: e?.message || "Server error" }, { status: 500 });
   }
 }
