@@ -1,7 +1,7 @@
 // app/watch/[channelId]/page.tsx — YouTube live override for Channel 21
 "use client";
 
-import { type ReactNode, useEffect, useState, useCallback } from "react";
+import { type ReactNode, useEffect, useState, useCallback, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import VideoPlayer from "@/components/video-player";
 import {
@@ -15,6 +15,11 @@ import { ChevronLeft, Loader2 } from "lucide-react";
 import YouTubeEmbed from "@/components/youtube-embed";
 
 const CH21_ID_NUMERIC = 21;
+
+// Normalize URLs to avoid remounts when only query params rotate
+function baseUrl(u?: string | null) {
+  return (u ?? "").split("?")[0];
+}
 
 export default function WatchPage() {
   const params = useParams();
@@ -92,7 +97,10 @@ export default function WatchPage() {
 
   const fetchCurrentProgram = useCallback(
     async (numericChannelId: number) => {
-      setIsLoading(true);
+      // Do not toggle isLoading spinner during steady polling if we already have a program
+      const firstLoad = !currentProgram;
+      if (firstLoad) setIsLoading(true);
+
       const now = new Date();
       try {
         const { data: programsData, error: dbError } = await supabase
@@ -120,7 +128,7 @@ export default function WatchPage() {
           !!channelDetails?.youtube_is_live;
 
         if (ch21YouTubeLive) {
-          // Override schedule while live (start_time will change each poll; don't use it to decide remounts)
+          // Override schedule while live (start_time may vary; ignore for remount decisions)
           programToSet = {
             id: "live-ch21-youtube",
             title: "Live Broadcast (Channel 21)",
@@ -137,23 +145,26 @@ export default function WatchPage() {
           programToSet = getStandbyMp4Program(numericChannelId, now);
         }
 
-        // ✅ Only remount when media URL or program identity actually changes (no start_time comparison)
+        // Only remount when media actually changes
         setCurrentProgram((prev) => {
-          const shouldRemount =
-            prev?.mp4_url !== programToSet!.mp4_url ||
-            prev?.id !== programToSet!.id;
+          const prevSrc = baseUrl(prev?.mp4_url);
+          const nextSrc = baseUrl(programToSet!.mp4_url);
+          const shouldRemount = prevSrc !== nextSrc || prev?.id !== programToSet!.id;
 
-          if (shouldRemount) setVideoPlayerKey(Date.now());
+          if (shouldRemount) {
+            setVideoPlayerKey(Date.now());
+            // console.log("REMOUNT due to", { prevSrc, nextSrc, prevId: prev?.id, nextId: programToSet!.id });
+          }
           return programToSet;
         });
       } catch (e: any) {
         setError(e.message);
         setCurrentProgram(getStandbyMp4Program(numericChannelId, now));
       } finally {
-        setIsLoading(false);
+        if (firstLoad) setIsLoading(false);
       }
     },
-    [channelDetails, getStandbyMp4Program]
+    [channelDetails, getStandbyMp4Program, currentProgram]
   );
 
   const fetchUpcomingPrograms = useCallback(async (numericChannelId: number) => {
@@ -181,26 +192,32 @@ export default function WatchPage() {
       pollingInterval = setInterval(() => {
         if (document.visibilityState === "visible") {
           fetchCurrentProgram(validatedNumericChannelId);
-          fetchUpcomingPrograms(validatedNumericChannelId); // fixed variable name
+          fetchUpcomingPrograms(validatedNumericChannelId);
         }
       }, 60000);
     }
     return () => pollingInterval && clearInterval(pollingInterval);
   }, [validatedNumericChannelId, fetchCurrentProgram, fetchUpcomingPrograms]);
 
-  const videoSrc = currentProgram ? getVideoUrlForProgram(currentProgram) : undefined;
-  const posterSrc = currentProgram?.poster_url || channelDetails?.image_url || undefined;
-  const shouldLoopInPlayer = currentProgram?.id === STANDBY_PLACEHOLDER_ID;
-
-  // YouTube-live branch flag
-  const isYouTubeLive =
-    validatedNumericChannelId === CH21_ID_NUMERIC && currentProgram?.id === "live-ch21-youtube";
-
+  // Stable callbacks so child players don’t restart on prop identity changes
   const handleProgramEnded = useCallback(() => {
     if (validatedNumericChannelId !== null) {
       fetchCurrentProgram(validatedNumericChannelId);
     }
   }, [validatedNumericChannelId, fetchCurrentProgram]);
+
+  const handlePrimaryLiveStreamError = useCallback(() => {}, []);
+
+  // Derive render pieces
+  const videoSrc = useMemo(
+    () => (currentProgram ? getVideoUrlForProgram(currentProgram) : undefined),
+    [currentProgram]
+  );
+  const posterSrc = currentProgram?.poster_url || channelDetails?.image_url || undefined;
+  const shouldLoopInPlayer = currentProgram?.id === STANDBY_PLACEHOLDER_ID;
+
+  const isYouTubeLive =
+    validatedNumericChannelId === CH21_ID_NUMERIC && currentProgram?.id === "live-ch21-youtube";
 
   let content: ReactNode;
   if (error) {
@@ -233,7 +250,7 @@ export default function WatchPage() {
         programTitle={currentProgram?.title}
         onVideoEnded={handleProgramEnded}
         isPrimaryLiveStream={false}
-        onPrimaryLiveStreamError={() => {}}
+        onPrimaryLiveStreamError={handlePrimaryLiveStreamError}
         showNoLiveNotice={false}
       />
     );
