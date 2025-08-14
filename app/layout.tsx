@@ -1,7 +1,7 @@
 // app/layout.tsx
-import "./globals.css";
 import type { Metadata } from "next";
-import { Navbar } from "@/components/navbar";
+import "./globals.css";
+import Header from "@/components/header";
 
 export const metadata: Metadata = {
   title: "Black Truth TV",
@@ -10,11 +10,10 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body>
-        <Navbar />
-        {/* push content below fixed navbar */}
-        <main className="pt-16">{children}</main>
+    <html lang="en" className="bg-black">
+      <body className="bg-black text-white min-h-screen">
+        <Header />
+        <main className="pt-14">{children}</main>
       </body>
     </html>
   );
