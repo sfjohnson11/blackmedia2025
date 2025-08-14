@@ -1,6 +1,8 @@
+// app/admin/users/_client.tsx
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 type Profile = {
@@ -14,27 +16,64 @@ type Profile = {
 const ROLE_KEYS = ["admin", "membership1", "membership2", "student"] as const;
 
 export default function AdminUsersClient() {
+  const router = useRouter();
   const [profiles, setProfiles] = useState<Profile[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [phase, setPhase] = useState<"checking" | "loading" | "ready" | "denied">("checking");
   const [saving, setSaving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function load() {
-    setLoading(true);
+  async function guardAndLoad() {
+    setPhase("checking");
     setError(null);
+
+    // 1) Must be logged in
+    const { data: userData } = await supabase.auth.getUser();
+    const user = userData?.user;
+    if (!user) {
+      router.replace("/auth/login?redirect_to=/admin/users");
+      return;
+    }
+
+    // 2) Must be admin
+    const { data: prof, error: profErr } = await supabase
+      .from("user_profiles")
+      .select("roles")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (profErr) {
+      setError(profErr.message);
+      setPhase("denied");
+      return;
+    }
+
+    const roles: string[] = Array.isArray(prof?.roles) ? (prof!.roles as string[]) : [];
+    if (!roles.includes("admin")) {
+      router.replace("/auth/login?redirect_to=/admin/users");
+      return;
+    }
+
+    // 3) Load profiles
+    setPhase("loading");
     const { data, error } = await supabase
       .from("user_profiles")
       .select("id, email, name, roles, created_at")
       .order("created_at", { ascending: false })
       .limit(200);
 
-    if (error) setError(error.message);
+    if (error) {
+      setError(error.message);
+      setPhase("denied");
+      return;
+    }
+
     setProfiles(data || []);
-    setLoading(false);
+    setPhase("ready");
   }
 
   useEffect(() => {
-    load();
+    guardAndLoad();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function toggleRole(current: string[] | null | undefined, role: string) {
@@ -54,11 +93,23 @@ export default function AdminUsersClient() {
       .eq("id", id);
 
     if (error) setError(error.message);
-    await load();
+    // Reload after save to reflect any RLS-side changes
+    await guardAndLoad();
     setSaving(null);
   }
 
-  if (loading) return <div className="p-6 text-white">Loading users…</div>;
+  if (phase === "checking" || phase === "loading") {
+    return <div className="p-6 text-white">Loading…</div>;
+  }
+
+  if (phase === "denied") {
+    return (
+      <main className="p-6 text-white">
+        <h1 className="text-xl font-semibold mb-2">Access denied</h1>
+        {error && <div className="text-red-400">{error}</div>}
+      </main>
+    );
+  }
 
   return (
     <main className="p-6 text-white">
@@ -72,7 +123,7 @@ export default function AdminUsersClient() {
               <th className="text-left px-4 py-3">Name</th>
               <th className="text-left px-4 py-3">Email</th>
               <th className="text-left px-4 py-3">Created</th>
-              {ROLE_KEYS.map(r => (
+              {ROLE_KEYS.map((r) => (
                 <th key={r} className="px-4 py-3">{r}</th>
               ))}
               <th className="px-4 py-3">Actions</th>
@@ -85,7 +136,9 @@ export default function AdminUsersClient() {
                 <tr key={p.id} className="border-t border-gray-800">
                   <td className="px-4 py-3">{p.name || "—"}</td>
                   <td className="px-4 py-3">{p.email || "—"}</td>
-                  <td className="px-4 py-3">{p.created_at ? new Date(p.created_at).toLocaleString() : "—"}</td>
+                  <td className="px-4 py-3">
+                    {p.created_at ? new Date(p.created_at).toLocaleString() : "—"}
+                  </td>
                   {ROLE_KEYS.map((r) => {
                     const checked = roles.includes(r);
                     return (
@@ -96,10 +149,9 @@ export default function AdminUsersClient() {
                           onChange={() => {
                             const next = toggleRole(roles, r);
                             // optimistic UI
+                            (p as any).roles = next;
                             setProfiles((cur) =>
-                              cur.map((row) =>
-                                row.id === p.id ? { ...row, roles: next } : row
-                              )
+                              cur.map((row) => (row.id === p.id ? { ...row, roles: next } : row))
                             );
                           }}
                         />
@@ -110,7 +162,9 @@ export default function AdminUsersClient() {
                     <button
                       disabled={saving === p.id}
                       className="bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded disabled:opacity-50"
-                      onClick={() => saveRoles(p.id, Array.isArray(p.roles) ? (p.roles as string[]) : [])}
+                      onClick={() =>
+                        saveRoles(p.id, Array.isArray(p.roles) ? (p.roles as string[]) : [])
+                      }
                     >
                       {saving === p.id ? "Saving…" : "Save"}
                     </button>
