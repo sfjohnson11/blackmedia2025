@@ -1,14 +1,12 @@
+// app/layout.tsx
 import "./globals.css";
 import type { Metadata } from "next";
 
-// ⬇️ your existing nav component (adjust the path/name to match your project)
-import SiteHeader from "@/components/site-header"; 
+// ✅ your navbar
+import { Navbar } from "@/components/navbar";
 
-// ⬇️ the live ticker wrapper we added
+// ✅ live ticker wrapper we added earlier
 import NewsTickerLive from "@/components/news-ticker-live";
-
-// (optional) your footer or other globals
-// import SiteFooter from "@/components/site-footer";
 
 export const metadata: Metadata = {
   title: "Black Truth TV",
@@ -18,18 +16,19 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className="bg-black">
-      <body className="min-h-screen bg-black text-white flex flex-col">
-        {/* ✅ your top nav stays */}
-        <SiteHeader />
+      <body className="min-h-screen bg-black text-white">
+        {/* Fixed navbar (from your code) */}
+        <Navbar />
 
-        {/* ✅ ticker appears right under the nav and sticks to the top on scroll */}
-        <div className="sticky top-0 z-30">
+        {/* Stick the ticker BELOW the fixed navbar */}
+        {/* If your navbar is ~64px tall, top-[64px] keeps them from overlapping. */}
+        {/* Tweak 56/64/72px if your header height differs. */}
+        <div className="sticky z-40" style={{ top: "64px" }}>
           <NewsTickerLive />
         </div>
 
-        <main className="flex-1">{children}</main>
-
-        {/* <SiteFooter /> */}
+        {/* Add top padding so page content isn't hidden behind the fixed navbar */}
+        <main className="pt-24">{children}</main>
       </body>
     </html>
   );
