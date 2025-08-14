@@ -8,25 +8,33 @@ const COOKIE_PREFIX = "channel_unlocked_";
 export async function middleware(req: NextRequest) {
   // Let the Supabase helper attach/refresh cookies on the response if needed
   const res = NextResponse.next();
-  const { pathname } = req.nextUrl;
 
   // Only guard /watch/:id routes
+  const { pathname, search } = req.nextUrl;
   if (!pathname.startsWith("/watch/")) return res;
 
+  // ✅ IMPORTANT: pass your NEXT_PUBLIC_* keys so the middleware can see your project
+  const supabase = createMiddlewareClient(
+    { req, res },
+    {
+      supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      supabaseKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    }
+  );
+
   // 1) REQUIRE LOGIN for any /watch/*
-  const supabase = createMiddlewareClient({ req, res });
   const {
     data: { session },
   } = await supabase.auth.getSession();
 
   if (!session) {
-    const loginUrl = req.nextUrl.clone();
-    loginUrl.pathname = "/auth/login";
-    loginUrl.searchParams.set("redirect_to", pathname);
+    const loginUrl = new URL("/auth/login", req.url);
+    // preserve the whole target (path + ?query)
+    loginUrl.searchParams.set("redirect_to", pathname + (search || ""));
     return NextResponse.redirect(loginUrl);
   }
 
-  // 2) EXTRA PASSCODE for protected channels (23–29)
+  // 2) EXTRA PASSCODE for protected channels (e.g., 23–29)
   const idStr = pathname.split("/")[2] ?? "";
   const id = Number.parseInt(idStr, 10);
 
@@ -34,9 +42,8 @@ export async function middleware(req: NextRequest) {
     const cookieName = `${COOKIE_PREFIX}${id}`;
     const unlocked = req.cookies.get(cookieName)?.value === "1";
     if (!unlocked) {
-      const unlockUrl = req.nextUrl.clone();
-      unlockUrl.pathname = `/unlock/${id}`;
-      unlockUrl.searchParams.set("redirect_to", pathname); // <- use redirect_to
+      const unlockUrl = new URL(`/unlock/${id}`, req.url);
+      unlockUrl.searchParams.set("redirect_to", pathname + (search || ""));
       return NextResponse.redirect(unlockUrl);
     }
   }
