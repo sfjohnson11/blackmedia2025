@@ -1,30 +1,21 @@
-import type React from "react"
-import "./globals.css"
-import { Inter } from "next/font/google"
-import { Navbar } from "@/components/navbar"
-import { Footer } from "@/components/footer"
+import "./globals.css";
+import type { Metadata } from "next";
+import AdminLoginButton from "@/components/admin-login-button";
 
-const inter = Inter({ subsets: ["latin"] })
+export const metadata: Metadata = {
+  title: "Black Truth TV",
+  description: "Streaming network",
+};
 
-export const metadata = {
-  title: "Black Truth TV - 24/7 Streaming",
-  description: "Watch your favorite channels 24/7",
-    generator: 'v0.dev'
-}
-
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body className={`${inter.className} bg-black text-white min-h-screen flex flex-col`}>
-        <Navbar />
-        {/* Add padding-top to account for fixed navbar */}
-        <main className="flex-grow pt-16">{children}</main>
-        <Footer />
+    <html lang="en" className="bg-black">
+      <body className="min-h-screen bg-black text-white flex flex-col">
+        <main className="flex-1">{children}</main>
+
+        {/* Floating Admin Login button */}
+        <AdminLoginButton />
       </body>
     </html>
-  )
+  );
 }
