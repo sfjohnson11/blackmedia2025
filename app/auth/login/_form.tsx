@@ -5,11 +5,10 @@ import { useMemo, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
-export function LoginForm() {
+export default function LoginForm() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  // Only allow internal redirects
   const redirectTo = useMemo(() => {
     const p = searchParams?.get("redirect_to");
     return p && p.startsWith("/") ? p : "/";
@@ -49,22 +48,29 @@ export function LoginForm() {
         }
         setErr("Could not create a session. Try again.");
       } else {
+        // SIGN UP — include emailRedirectTo so the magic link returns to /auth/callback
+        const origin =
+          typeof window !== "undefined"
+            ? window.location.origin
+            : process.env.NEXT_PUBLIC_SITE_URL || "";
+
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
           options: {
-            emailRedirectTo: `${location.origin}/auth/callback?redirect_to=${encodeURIComponent(
-              redirectTo
-            )}`,
+            emailRedirectTo: `${origin}/auth/callback?redirect_to=${encodeURIComponent(redirectTo)}`,
           },
         });
         if (error) throw error;
 
         if (data.session) {
+          // (If email confirmation is OFF) you’ll already be logged in
           router.push(redirectTo);
           router.refresh();
           return;
         }
+
+        // (If confirmation is ON)
         setMsg("Check your email to confirm your account, then sign in.");
       }
     } catch (e: any) {
@@ -156,5 +162,3 @@ export function LoginForm() {
     </div>
   );
 }
-
-export default LoginForm;
