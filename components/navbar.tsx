@@ -84,13 +84,12 @@ export function Navbar() {
             <Search className="h-5 w-5" />
           </button>
 
-          {/* Notifications button */}
-          <Link href="/notifications" className="text-white hover:text-gray-300 transition-colors relative">
-            <Bell className="h-5 w-5" />
-            <span className="absolute -top-1 -right-1 bg-red-600 rounded-full w-4 h-4 text-xs flex items-center justify-center">
-              3
-            </span>
-          </Link>
+          import NotificationBell from "@/components/notification-bell";
+
+// ...
+
+<NotificationBell className="text-white hover:text-gray-300 transition-colors" />
+
 
           {/* User profile button */}
           <div className="relative">
