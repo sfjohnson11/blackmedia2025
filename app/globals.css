@@ -185,3 +185,16 @@ input[type="range"]::-moz-range-thumb:hover {
   height: 14px;
   background-color: #f87171;
 }
+
+/* ===== News Ticker marquee (keep at the bottom) ===== */
+.animate-marquee {
+  animation: marquee 30s linear infinite; /* default; component can override via inline style */
+  will-change: transform;
+}
+.paused {
+  animation-play-state: paused;
+}
+@keyframes marquee {
+  0%   { transform: translateX(100%); }
+  100% { transform: translateX(-100%); }
+}
