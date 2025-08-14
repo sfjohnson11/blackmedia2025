@@ -1,4 +1,3 @@
-// components/notification-bell.tsx
 "use client";
 
 import Link from "next/link";
@@ -15,15 +14,13 @@ export default function NotificationBell({ className = "" }: { className?: strin
     (async () => {
       const { data } = await supabase.auth.getSession();
       const user = data.session?.user;
-
-      // not logged in → no badge
       if (!user) {
         setCount(0);
         setReady(true);
         return;
       }
 
-      // initial unread count (count-only HEAD)
+      // initial unread count
       {
         const { count } = await supabase
           .from("user_notifications")
@@ -32,7 +29,7 @@ export default function NotificationBell({ className = "" }: { className?: strin
         setCount(count || 0);
       }
 
-      // realtime for this user
+      // realtime updates for this user
       const channel = supabase
         .channel("realtime:bell_badge")
         .on(
