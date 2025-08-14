@@ -12,18 +12,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body className="bg-black text-white">
-        {/* Fixed top nav */}
         <Navbar />
-
-        {/* Single, global ticker just below the navbar */}
         <div id="global-news-ticker">
           <NewsTickerLive />
         </div>
-
-        {/* Push content below the fixed header + ticker height */}
-        <main className="pt-28">
-          {children}
-        </main>
+        <main className="pt-28">{children}</main>
       </body>
     </html>
   );
