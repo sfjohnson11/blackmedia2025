@@ -1,38 +1,32 @@
-// app/api/channel-access/route.ts
-import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
-import { COOKIE_PREFIX } from "@/lib/channel-access";
+import { NextRequest, NextResponse } from "next/server";
+import { PASSCODES, PROTECTED_CHANNELS } from "@/lib/protected-channels";
 
-export async function POST(req: Request) {
-  const { channelKey, passcode } = await req.json();
-  if (!channelKey || !passcode) {
-    return NextResponse.json({ ok: false, message: "Missing data" }, { status: 400 });
-  }
+const COOKIE_PREFIX = "channel_unlocked_";
 
-  const supabase = createRouteHandlerClient({ cookies });
+export async function POST(req: NextRequest) {
+  try {
+    const { channelId, passcode } = await req.json();
+    const id = Number.parseInt(String(channelId), 10);
 
-  const { data, error } = await supabase.rpc("verify_channel_passcode", {
-    p_channel_key: channelKey,
-    p_passcode: passcode,
-  });
+    if (!Number.isFinite(id) || !PROTECTED_CHANNELS.has(id)) {
+      return NextResponse.json({ ok: false, error: "Invalid channel" }, { status: 400 });
+    }
 
-  if (error) {
-    return NextResponse.json({ ok: false, message: error.message }, { status: 500 });
-  }
+    const expected = PASSCODES[id];
+    if (!expected || passcode !== expected) {
+      return NextResponse.json({ ok: false, error: "Invalid passcode" }, { status: 401 });
+    }
 
-  const ok = !!data;
-  const res = NextResponse.json({ ok });
-
-  if (ok) {
-    // Set cookie on the response (correct for Route Handlers)
-    res.cookies.set(`${COOKIE_PREFIX}${channelKey}`, "1", {
+    const res = NextResponse.json({ ok: true });
+    res.cookies.set(`${COOKIE_PREFIX}${id}`, "1", {
       httpOnly: true,
       secure: true,
       sameSite: "lax",
       path: "/",
       maxAge: 60 * 60 * 12, // 12 hours
     });
+    return res;
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, error: e?.message || "Bad request" }, { status: 400 });
   }
-  return res;
 }
