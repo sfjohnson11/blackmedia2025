@@ -29,7 +29,7 @@ export default function WatchPage() {
   const [error, setError] = useState<string | null>(null);
   const [videoPlayerKey, setVideoPlayerKey] = useState(Date.now());
 
-  // Accept numeric id or slug like "freedom_school"
+  // Accept numeric id OR slug like "freedom_school"
   useEffect(() => {
     let cancelled = false;
 
@@ -43,7 +43,7 @@ export default function WatchPage() {
       setIsLoading(true);
       setError(null);
 
-      // Always resolve details via the string (works for id or slug)
+      // Resolve details using the string (works for numeric id or slug)
       const details = await fetchChannelDetails(channelIdString);
       if (!details) {
         if (!cancelled) {
@@ -68,7 +68,9 @@ export default function WatchPage() {
     }
 
     init();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [channelIdString]);
 
   const getStandbyMp4Program = useCallback(
@@ -118,12 +120,13 @@ export default function WatchPage() {
           !!channelDetails?.youtube_is_live;
 
         if (ch21YouTubeLive) {
+          // Override schedule while live (start_time will change each poll; don't use it to decide remounts)
           programToSet = {
             id: "live-ch21-youtube",
             title: "Live Broadcast (Channel 21)",
             description: "Currently broadcasting live via YouTube.",
             channel_id: CH21_ID_NUMERIC,
-            mp4_url: `youtube_channel:${channelDetails!.youtube_channel_id}`,
+            mp4_url: `youtube_channel:${channelDetails!.youtube_channel_id}`, // marker for render
             duration: 86400 * 7,
             start_time: new Date(Date.now() - 3600000).toISOString(),
             poster_url: channelDetails?.image_url || null,
@@ -134,14 +137,13 @@ export default function WatchPage() {
           programToSet = getStandbyMp4Program(numericChannelId, now);
         }
 
+        // ✅ Only remount when media URL or program identity actually changes (no start_time comparison)
         setCurrentProgram((prev) => {
-          if (
-            prev?.id !== programToSet!.id ||
-            prev?.start_time !== programToSet!.start_time ||
-            prev?.mp4_url !== programToSet!.mp4_url
-          ) {
-            setVideoPlayerKey(Date.now());
-          }
+          const shouldRemount =
+            prev?.mp4_url !== programToSet!.mp4_url ||
+            prev?.id !== programToSet!.id;
+
+          if (shouldRemount) setVideoPlayerKey(Date.now());
           return programToSet;
         });
       } catch (e: any) {
@@ -179,7 +181,7 @@ export default function WatchPage() {
       pollingInterval = setInterval(() => {
         if (document.visibilityState === "visible") {
           fetchCurrentProgram(validatedNumericChannelId);
-          fetchUpcomingPrograms(validatedNumericChannelId); // ✅ fixed variable name
+          fetchUpcomingPrograms(validatedNumericChannelId); // fixed variable name
         }
       }, 60000);
     }
@@ -190,6 +192,7 @@ export default function WatchPage() {
   const posterSrc = currentProgram?.poster_url || channelDetails?.image_url || undefined;
   const shouldLoopInPlayer = currentProgram?.id === STANDBY_PLACEHOLDER_ID;
 
+  // YouTube-live branch flag
   const isYouTubeLive =
     validatedNumericChannelId === CH21_ID_NUMERIC && currentProgram?.id === "live-ch21-youtube";
 
@@ -210,6 +213,7 @@ export default function WatchPage() {
       </div>
     );
   } else if (isYouTubeLive) {
+    // Render YouTube when live
     const chId = currentProgram?.mp4_url?.startsWith("youtube_channel:")
       ? currentProgram.mp4_url.split(":")[1]
       : channelDetails?.youtube_channel_id || "";
@@ -219,6 +223,7 @@ export default function WatchPage() {
       <p className="text-gray-400 p-4 text-center">Live stream not configured.</p>
     );
   } else if (currentProgram && videoSrc) {
+    // VOD / scheduled MP4/HLS
     content = (
       <VideoPlayer
         key={videoPlayerKey}
