@@ -1,72 +1,23 @@
-// Store news items in localStorage for easy updates
-const NEWS_STORAGE_KEY = "blacktruth_news_items"
+// lib/news-data.ts
+const KEY = "btv_news_items";
 
-// Default news items if none are stored
-const DEFAULT_NEWS = [
-  "Welcome to Black Truth TV - Your source for 24/7 streaming across 29 channels",
-  "Channels 23-29 are password protected - Contact admin for access",
-  "All content on Black Truth TV is provided under Fair Use for educational purposes",
-  "New content added daily - Check back regularly for updates",
-  "Support our mission by visiting the Donate page",
-]
-
-// Get news items from localStorage or use defaults
 export function getNewsItems(): string[] {
-  if (typeof window === "undefined") return DEFAULT_NEWS
-
+  if (typeof window === "undefined") return [];
   try {
-    const storedNews = localStorage.getItem(NEWS_STORAGE_KEY)
-    // Parse stored news or use defaults
-    return storedNews ? JSON.parse(storedNews) : DEFAULT_NEWS
-  } catch (error) {
-    console.error("Error loading news items:", error)
-    return DEFAULT_NEWS
+    const raw = localStorage.getItem(KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((s) => typeof s === "string") : [];
+  } catch {
+    return [];
   }
 }
 
-// Save news items to localStorage
-export function saveNewsItems(news: string[]): void {
-  if (typeof window === "undefined") return
-
+export function setNewsItems(items: string[]) {
+  if (typeof window === "undefined") return;
   try {
-    // Validate news is an array
-    if (!Array.isArray(news)) {
-      console.error("Invalid news format, expected array")
-      return
-    }
-
-    // Clear existing items first
-    localStorage.removeItem(NEWS_STORAGE_KEY)
-    // Then save the new items
-    localStorage.setItem(NEWS_STORAGE_KEY, JSON.stringify(news))
-    console.log("News items saved successfully:", news)
-  } catch (error) {
-    console.error("Error saving news items:", error)
-  }
-}
-
-// Add a new news item
-export function addNewsItem(item: string): string[] {
-  const currentNews = getNewsItems()
-  const updatedNews = [...currentNews, item]
-  saveNewsItems(updatedNews)
-  return updatedNews
-}
-
-// Remove a news item by index
-export function removeNewsItem(index: number): string[] {
-  const currentNews = getNewsItems()
-  const updatedNews = currentNews.filter((_, i) => i !== index)
-  saveNewsItems(updatedNews)
-  return updatedNews
-}
-
-// Update a news item at a specific index
-export function updateNewsItem(index: number, newText: string): string[] {
-  const currentNews = getNewsItems()
-  if (index >= 0 && index < currentNews.length) {
-    currentNews[index] = newText
-    saveNewsItems(currentNews)
-  }
-  return currentNews
+    localStorage.setItem(KEY, JSON.stringify(items));
+    // fire an event so other tabs/components can react
+    window.dispatchEvent(new StorageEvent("storage", { key: KEY, newValue: JSON.stringify(items) }));
+  } catch {}
 }
