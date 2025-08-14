@@ -1,12 +1,24 @@
+// app/api/news/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!; // server-only env var
-const supabaseAdmin = createClient(url, serviceKey);
+function getAdmin() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY; // server-only
+  if (!url || !key) return null;
+  return createClient(url, key);
+}
 
-// GET: return all items (we filter active on the client)
+// GET: return all items
 export async function GET() {
+  const supabaseAdmin = getAdmin();
+  if (!supabaseAdmin) {
+    return NextResponse.json(
+      { ok: false, error: "Server key missing" },
+      { status: 500 }
+    );
+  }
+
   const { data, error } = await supabaseAdmin
     .from("breaking_news")
     .select("id, content, is_active, sort_order, updated_at")
@@ -20,6 +32,14 @@ export async function GET() {
 
 // PUT: replace the list (simple replace-all)
 export async function PUT(req: NextRequest) {
+  const supabaseAdmin = getAdmin();
+  if (!supabaseAdmin) {
+    return NextResponse.json(
+      { ok: false, error: "Server key missing" },
+      { status: 500 }
+    );
+  }
+
   try {
     const body = await req.json();
     const items = Array.isArray(body?.items) ? body.items : [];
