@@ -1,23 +1,30 @@
-import "./globals.css";
+// app/layout.tsx
 import type { Metadata } from "next";
+import "./globals.css";
 import { Navbar } from "@/components/navbar";
-import { NewsTickerLive } from "@/components/news-ticker-live";
+import { BreakingNews } from "@/components/breaking-news";
 
 export const metadata: Metadata = {
   title: "Black Truth TV",
-  description: "Streaming",
+  description: "Streaming channels and live programming",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <html lang="en">
       <body className="bg-black text-white">
+        {/* Fixed navbar (from your components/navbar.tsx) */}
         <Navbar />
-        {/* Ticker sits below fixed navbar */}
-        <NewsTickerLive />
 
-        {/* If you previously added big padding here, you can reduce a bit now */}
-        <main className="pt-4">{children}</main>
+        {/* Scrolls under the fixed navbar, shows only if there are news items */}
+        <BreakingNews />
+
+        {/* Page content */}
+        <main>{children}</main>
       </body>
     </html>
   );
