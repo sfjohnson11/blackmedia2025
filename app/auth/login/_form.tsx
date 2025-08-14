@@ -4,8 +4,9 @@
 import { useMemo, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import Turnstile from "react-turnstile";
 
-export function LoginForm() {
+export default function LoginForm() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
@@ -23,6 +24,11 @@ export function LoginForm() {
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
+  // Captcha (optional)
+  const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || "";
+  const captchaEnabled = !!siteKey;
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
@@ -36,11 +42,19 @@ export function LoginForm() {
       setErr("Passwords do not match.");
       return;
     }
+    if (captchaEnabled && !captchaToken) {
+      setErr("Please complete the captcha.");
+      return;
+    }
 
     setLoading(true);
     try {
       if (mode === "signin") {
-        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+          options: captchaEnabled ? { captchaToken: captchaToken ?? undefined } : undefined,
+        });
         if (error) throw error;
         if (data.session) {
           router.push(redirectTo);
@@ -53,10 +67,13 @@ export function LoginForm() {
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
-          // IMPORTANT: so confirmation links return to your site (if confirmations are ON)
           options: {
-            emailRedirectTo: `${location.origin}/auth/callback?redirect_to=${encodeURIComponent(redirectTo)}`
-          }
+            ...(captchaEnabled ? { captchaToken: captchaToken ?? undefined } : {}),
+            // Where Supabase should send the confirm-email link:
+            emailRedirectTo: `${location.origin}/auth/callback?redirect_to=${encodeURIComponent(
+              redirectTo
+            )}`,
+          },
         });
         if (error) throw error;
 
@@ -67,7 +84,7 @@ export function LoginForm() {
           return;
         }
 
-        // If confirmations are ON in Supabase Auth settings
+        // If confirmations are ON
         setMsg("Check your email to confirm your account, then sign in.");
       }
     } catch (e: any) {
@@ -98,7 +115,9 @@ export function LoginForm() {
           placeholder="you@example.com"
         />
 
-        <label className="block mb-2 text-sm">{mode === "signin" ? "Password" : "Create password"}</label>
+        <label className="block mb-2 text-sm">
+          {mode === "signin" ? "Password" : "Create password"}
+        </label>
         <input
           className="w-full mb-4 px-3 py-2 bg-gray-800 border border-gray-700 rounded"
           type="password"
@@ -126,36 +145,51 @@ export function LoginForm() {
           </>
         )}
 
+        {/* Optional captcha (only renders if site key is set) */}
+        {captchaEnabled && (
+          <div className="mb-4">
+            <Turnstile
+              sitekey={siteKey}
+              onVerify={(token) => setCaptchaToken(token)}
+              onExpire={() => setCaptchaToken(null)}
+              onError={() => setCaptchaToken(null)}
+              options={{ theme: "dark" }}
+            />
+          </div>
+        )}
+
         {err && <p className="text-sm text-red-400 mb-3">{err}</p>}
         {msg && <p className="text-sm text-green-400 mb-3">{msg}</p>}
 
         <button
-          disabled={loading}
+          disabled={loading || (captchaEnabled && !captchaToken)}
           className="w-full bg-red-600 hover:bg-red-700 py-2 rounded disabled:opacity-50"
         >
           {loading ? "Please wait…" : mode === "signin" ? "Sign in" : "Create account"}
         </button>
 
-        <div className="mt-4 text-sm text-gray-400 flex items-center justify-between">
+        <div className="mt-4 text-sm text-gray-400">
           {mode === "signin" ? (
             <>
-              <span>
-                New here?{" "}
-                <button type="button" onClick={() => setMode("signup")} className="text-red-400 hover:underline">
-                  Create an account
-                </button>
-              </span>
-              <a href="/auth/forgot" className="hover:underline">Forgot password?</a>
+              New here?{" "}
+              <button
+                type="button"
+                onClick={() => setMode("signup")}
+                className="text-red-400 hover:underline"
+              >
+                Create an account
+              </button>
             </>
           ) : (
             <>
-              <span>
-                Already have an account?{" "}
-                <button type="button" onClick={() => setMode("signin")} className="text-red-400 hover:underline">
-                  Sign in
-                </button>
-              </span>
-              <span />
+              Already have an account?{" "}
+              <button
+                type="button"
+                onClick={() => setMode("signin")}
+                className="text-red-400 hover:underline"
+              >
+                Sign in
+              </button>
             </>
           )}
         </div>
@@ -163,5 +197,3 @@ export function LoginForm() {
     </div>
   );
 }
-
-export default LoginForm;
