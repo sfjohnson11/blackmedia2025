@@ -10,10 +10,10 @@ type Role = "admin" | "membership1" | "membership2" | "student";
 export default function LoginForm() {
   const searchParams = useSearchParams();
 
-  // IMPORTANT: your app uses /watch/[channelId] -> default to channel 21
+  // Prefer the channel the user originally clicked (middleware sets ?redirect_to=/watch/:id)
   const redirectTo = useMemo(() => {
-    const p = searchParams?.get("redirect_to");
-    return p && p.startsWith("/") ? p : "/watch/21";
+    const p = searchParams?.get("redirect_to") || "";
+    return p.startsWith("/") ? p : null; // <— prefer this if present
   }, [searchParams]);
 
   const [mode, setMode] = useState<"signin" | "signup">("signin");
@@ -84,16 +84,22 @@ export default function LoginForm() {
     return ["student"];
   }
 
-  // wait until supabase has a non-null session, then hard navigate
+  // wait for a non-null session, then HARD navigate so middleware/SSR sees cookies
   async function waitForSessionAndGo(target: string) {
-    // try up to ~2s (20 * 100ms)
     for (let i = 0; i < 20; i++) {
       const { data: { session } } = await supabase.auth.getSession();
       if (session) break;
       await new Promise((r) => setTimeout(r, 100));
     }
-    // hard navigation so SSR sees cookies immediately
     window.location.assign(target);
+  }
+
+  function pickTarget(roles: Role[]): string {
+    // 1) If we have a redirect_to from middleware, ALWAYS use it (this is the channel they clicked)
+    if (redirectTo) return redirectTo;
+
+    // 2) Otherwise, if no redirect, send admins to /admin, everyone else to your default channel
+    return roles.includes("admin") ? "/admin" : "/watch/21";
   }
 
   async function onSubmit(e: React.FormEvent) {
@@ -126,8 +132,7 @@ export default function LoginForm() {
         if (!user) throw new Error("Sign-in succeeded but no user returned.");
 
         const roles = await ensureProfile(user.id, user.email || email.trim());
-        const target = roles.includes("admin") ? "/admin" : (redirectTo || "/watch/21");
-        await waitForSessionAndGo(target);
+        await waitForSessionAndGo(pickTarget(roles as Role[]));
         return;
       } else {
         const origin =
@@ -139,7 +144,10 @@ export default function LoginForm() {
           email: email.trim(),
           password,
           options: {
-            emailRedirectTo: `${origin}/auth/callback?redirect_to=${encodeURIComponent(redirectTo)}`,
+            // preserve redirect_to so confirmation flows land back on that channel
+            emailRedirectTo: `${origin}/auth/callback?redirect_to=${encodeURIComponent(
+              redirectTo ?? "/watch/21"
+            )}`,
           },
         });
         if (error) {
@@ -152,8 +160,7 @@ export default function LoginForm() {
 
         if (data?.session?.user) {
           const roles = await ensureProfile(data.session.user.id, data.session.user.email!);
-          const target = roles.includes("admin") ? "/admin" : (redirectTo || "/watch/21");
-          await waitForSessionAndGo(target);
+          await waitForSessionAndGo(pickTarget(roles as Role[]));
           return;
         }
 
@@ -223,6 +230,7 @@ export default function LoginForm() {
         <button
           disabled={loading}
           className="w-full bg-red-600 hover:bg-red-700 py-2 rounded disabled:opacity-50"
+          type="submit"
         >
           {loading ? "Please wait…" : mode === "signin" ? "Sign in" : "Create account"}
         </button>
@@ -231,14 +239,22 @@ export default function LoginForm() {
           {mode === "signin" ? (
             <>
               New here?{" "}
-              <button type="button" onClick={() => setMode("signup")} className="text-red-400 hover:underline">
+              <button
+                type="button"
+                onClick={() => setMode("signup")}
+                className="text-red-400 hover:underline"
+              >
                 Create an account
               </button>
             </>
           ) : (
             <>
               Already have an account?{" "}
-              <button type="button" onClick={() => setMode("signin")} className="text-red-400 hover:underline">
+              <button
+                type="button"
+                onClick={() => setMode("signin")}
+                className="text-red-400 hover:underline"
+              >
                 Sign in
               </button>
             </>
