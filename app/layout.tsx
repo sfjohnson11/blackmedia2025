@@ -13,10 +13,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body className="bg-black text-white">
         <Navbar />
-        <div id="global-news-ticker">
-          <NewsTickerLive />
-        </div>
-        <main className="pt-28">{children}</main>
+        {/* Ticker sits below fixed navbar */}
+        <NewsTickerLive />
+
+        {/* If you previously added big padding here, you can reduce a bit now */}
+        <main className="pt-4">{children}</main>
       </body>
     </html>
   );
