@@ -7,7 +7,6 @@ import { usePathname } from "next/navigation";
 
 export function NewsTickerLive() {
   const pathname = usePathname();
-  // Only show edit controls on the dedicated admin page
   const isAdmin = pathname?.startsWith("/admin/news") ?? false;
 
   const [mounted, setMounted] = useState(false);
@@ -17,7 +16,6 @@ export function NewsTickerLive() {
     setMounted(true);
     setItems(getNewsItems());
 
-    // keep in sync if another tab updates
     const handler = (e: StorageEvent) => {
       if (e.key === "btv_news_items") {
         try {
@@ -34,11 +32,12 @@ export function NewsTickerLive() {
 
   if (!mounted) return null;
 
-  // Helpful fallback so you see *something* if nothing is set yet.
-  const effectiveItems = items.length > 0 ? items : ["Welcome to Black Truth TV • Breaking updates appear here."];
+  const effectiveItems =
+    items.length > 0 ? items : ["Welcome to Black Truth TV • Breaking updates appear here."];
 
+  // mt-16 ensures the ticker sits *below* the fixed navbar
   return (
-    <div className="bg-red-600 text-white w-full z-20">
+    <div className="bg-red-600 text-white w-full z-20 mt-16">
       <NewsTicker
         news={effectiveItems}
         isAdmin={isAdmin}
@@ -50,3 +49,5 @@ export function NewsTickerLive() {
     </div>
   );
 }
+
+export default NewsTickerLive;
