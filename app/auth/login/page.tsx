@@ -1,7 +1,8 @@
+// app/auth/login/page.tsx
 "use client";
 
 import { Suspense } from "react";
-import { LoginForm } from "./_form";
+import LoginForm from "./_form"; // ⟵ default import (fix)
 
 export default function LoginPage() {
   return (
