@@ -1,3 +1,4 @@
+// components/notification-bell.tsx
 "use client";
 
 import Link from "next/link";
@@ -14,6 +15,7 @@ export default function NotificationBell({ className = "" }: { className?: strin
     (async () => {
       const { data } = await supabase.auth.getSession();
       const user = data.session?.user;
+
       if (!user) {
         setCount(0);
         setReady(true);
@@ -62,7 +64,6 @@ export default function NotificationBell({ className = "" }: { className?: strin
       {ready && count > 0 && (
         <span
           className="absolute -top-0.5 -right-0.5 min-w-[1rem] h-4 px-1 rounded-full bg-red-600 text-[10px] leading-4 text-white text-center"
-          aria-label={`${count} unread notifications`}
         >
           {count > 99 ? "99+" : count}
         </span>
