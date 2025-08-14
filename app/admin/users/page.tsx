@@ -1,10 +1,8 @@
-import { requireAnyRole } from "@/lib/roles";
+// app/admin/users/page.tsx
+"use client";
+
 import AdminUsersClient from "./_client";
 
-export default async function AdminUsersPage() {
-  const gate = await requireAnyRole(["admin"]);
-  if (!gate.ok) {
-    return <meta httpEquiv="refresh" content={`0; url=${gate.redirect}`} />;
-  }
+export default function AdminUsersPage() {
   return <AdminUsersClient />;
 }
