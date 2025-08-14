@@ -2,10 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!; // Server-only env var
+const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!; // server-only env var
 const supabaseAdmin = createClient(url, serviceKey);
 
-// GET: return all items (we’ll filter active client-side)
+// GET: return all items (we filter active on the client)
 export async function GET() {
   const { data, error } = await supabaseAdmin
     .from("breaking_news")
@@ -18,13 +18,12 @@ export async function GET() {
   return NextResponse.json({ ok: true, items: data ?? [] });
 }
 
-// PUT: replace the list
+// PUT: replace the list (simple replace-all)
 export async function PUT(req: NextRequest) {
   try {
     const body = await req.json();
     const items = Array.isArray(body?.items) ? body.items : [];
 
-    // Replace-all strategy for simplicity
     const { error: delErr } = await supabaseAdmin
       .from("breaking_news")
       .delete()
