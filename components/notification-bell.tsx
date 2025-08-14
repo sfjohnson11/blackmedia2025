@@ -62,9 +62,7 @@ export default function NotificationBell({ className = "" }: { className?: strin
     >
       <Bell className="h-5 w-5" />
       {ready && count > 0 && (
-        <span
-          className="absolute -top-0.5 -right-0.5 min-w-[1rem] h-4 px-1 rounded-full bg-red-600 text-[10px] leading-4 text-white text-center"
-        >
+        <span className="absolute -top-0.5 -right-0.5 min-w-[1rem] h-4 px-1 rounded-full bg-red-600 text-[10px] leading-4 text-white text-center">
           {count > 99 ? "99+" : count}
         </span>
       )}
