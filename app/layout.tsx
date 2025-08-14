@@ -1,17 +1,26 @@
+// app/layout.tsx
 import "./globals.css";
-import type { ReactNode } from "react";
+import type { Metadata } from "next";
 import { Navbar } from "@/components/navbar";
-import SiteTicker from "@/components/site-ticker"; // <- our single ticker
+import NewsTickerLive from "@/components/news-ticker-live";
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export const metadata: Metadata = {
+  title: "Black Truth TV",
+  description: "Streaming 24/7",
+};
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className="bg-black text-white">
+      <body>
+        {/* Fixed navbar you already have */}
         <Navbar />
-        <SiteTicker speed={12} /> {/* ONE ticker, fast enough to see it move */}
-        <main>{children}</main>
+
+        {/* ONE ticker for the whole site (sits below the fixed navbar) */}
+        <NewsTickerLive />
+
+        {children}
       </body>
     </html>
   );
 }
-
