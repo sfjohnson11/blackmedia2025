@@ -50,7 +50,14 @@ export function LoginForm() {
         setErr("Could not create a session. Try again.");
       } else {
         // First-time account creation
-        const { data, error } = await supabase.auth.signUp({ email, password });
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          // IMPORTANT: so confirmation links return to your site (if confirmations are ON)
+          options: {
+            emailRedirectTo: `${location.origin}/auth/callback?redirect_to=${encodeURIComponent(redirectTo)}`
+          }
+        });
         if (error) throw error;
 
         // If email confirmations are OFF, you’ll get a session and can go straight in
@@ -129,20 +136,26 @@ export function LoginForm() {
           {loading ? "Please wait…" : mode === "signin" ? "Sign in" : "Create account"}
         </button>
 
-        <div className="mt-4 text-sm text-gray-400">
+        <div className="mt-4 text-sm text-gray-400 flex items-center justify-between">
           {mode === "signin" ? (
             <>
-              New here?{" "}
-              <button type="button" onClick={() => setMode("signup")} className="text-red-400 hover:underline">
-                Create an account
-              </button>
+              <span>
+                New here?{" "}
+                <button type="button" onClick={() => setMode("signup")} className="text-red-400 hover:underline">
+                  Create an account
+                </button>
+              </span>
+              <a href="/auth/forgot" className="hover:underline">Forgot password?</a>
             </>
           ) : (
             <>
-              Already have an account?{" "}
-              <button type="button" onClick={() => setMode("signin")} className="text-red-400 hover:underline">
-                Sign in
-              </button>
+              <span>
+                Already have an account?{" "}
+                <button type="button" onClick={() => setMode("signin")} className="text-red-400 hover:underline">
+                  Sign in
+                </button>
+              </span>
+              <span />
             </>
           )}
         </div>
