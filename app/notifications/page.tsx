@@ -23,7 +23,7 @@ type NotificationRow = {
 const PAGE_SIZE = 20;
 
 function timeAgo(iso: string) {
-  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000 | 0);
+  const s = Math.max(0, ((Date.now() - new Date(iso).getTime()) / 1000) | 0);
   if (s < 60) return `${s | 0}s ago`;
   const m = (s / 60) | 0;
   if (m < 60) return `${m}m ago`;
@@ -40,23 +40,59 @@ export default function NotificationsPage() {
   const [list, setList] = useState<NotificationRow[]>([]);
   const [hasMore, setHasMore] = useState(true);
   const [busyIds, setBusyIds] = useState<Record<string, boolean>>({});
-  const [clearing, setClearing] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const sessionRef = useRef<Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"] | null>(null);
-  const newestSeenRef = useRef<string | null>(null); // first page newest id
+  const userIdRef = useRef<string | null>(null);
+  const isInitRef = useRef(false);
 
-  // Ensure user is logged in; otherwise redirect to login with return path
+  async function loadPage(reset = false) {
+    setError(null);
+    setLoading(true);
+    try {
+      let query = supabase
+        .from("user_notifications")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(PAGE_SIZE);
+
+      if (!reset && list.length > 0) {
+        const last = list[list.length - 1];
+        if (last) query = query.lt("created_at", last.created_at);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      const rows = (data ?? []) as NotificationRow[];
+      if (reset) {
+        setList(rows);
+      } else {
+        setList((curr) => [...curr, ...rows]);
+      }
+      setHasMore(rows.length === PAGE_SIZE);
+    } catch (e: any) {
+      setError(e?.message || "Failed to load notifications.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Initial auth + realtime
   useEffect(() => {
     (async () => {
       const { data } = await supabase.auth.getSession();
-      sessionRef.current = data.session;
-      if (!data.session?.user) {
+      const user = data.session?.user;
+      if (!user) {
         router.replace(`/auth/login?redirect_to=/notifications`);
         return;
       }
-      // initial load
-      void loadPage(true);
-      // realtime channel (RLS will scope to this user)
+      userIdRef.current = user.id;
+
+      // First page
+      await loadPage(true);
+
+      // Realtime scoped to this user (extra filter for efficiency)
       const channel = supabase
         .channel("realtime:user_notifications")
         .on(
@@ -65,12 +101,11 @@ export default function NotificationsPage() {
             event: "*",
             schema: "public",
             table: "user_notifications",
+            filter: `user_id=eq.${user.id}`,
           },
           (payload) => {
             if (payload.eventType === "INSERT") {
-              const row = payload.new as NotificationRow;
-              // Put newest on top
-              setList((curr) => [row, ...curr]);
+              setList((curr) => [payload.new as NotificationRow, ...curr]);
             } else if (payload.eventType === "UPDATE") {
               const row = payload.new as NotificationRow;
               setList((curr) => curr.map((n) => (n.id === row.id ? row : n)));
@@ -82,6 +117,7 @@ export default function NotificationsPage() {
         )
         .subscribe();
 
+      isInitRef.current = true;
       return () => {
         supabase.removeChannel(channel);
       };
@@ -89,96 +125,58 @@ export default function NotificationsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function loadPage(reset = false) {
-    setLoading(true);
-    try {
-      let query = supabase
-        .from("user_notifications")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(PAGE_SIZE);
-
-      if (!reset && list.length > 0) {
-        const last = list[list.length - 1];
-        if (last) {
-          query = query.lt("created_at", last.created_at);
-        }
-      }
-
-      const { data, error } = await query;
-      if (error) throw error;
-
-      const rows = (data ?? []) as NotificationRow[];
-      if (reset) {
-        setList(rows);
-        newestSeenRef.current = rows[0]?.id ?? null;
-      } else {
-        setList((curr) => [...curr, ...rows]);
-      }
-      setHasMore(rows.length === PAGE_SIZE);
-    } catch (e: any) {
-      console.error("loadPage error:", e.message);
-    } finally {
-      setLoading(false);
-    }
-  }
-
   async function markRead(id: string) {
     setBusyIds((b) => ({ ...b, [id]: true }));
+    setError(null);
     try {
       const { error } = await supabase
         .from("user_notifications")
         .update({ read_at: new Date().toISOString() })
         .eq("id", id);
       if (error) throw error;
+
+      // Optimistic UI
       setList((curr) => curr.map((n) => (n.id === id ? { ...n, read_at: new Date().toISOString() } : n)));
     } catch (e: any) {
-      console.error("markRead error:", e.message);
+      setError(e?.message || "Failed to mark as read.");
     } finally {
       setBusyIds((b) => ({ ...b, [id]: false }));
     }
   }
 
-  async function deleteOne(id: string) {
-    setBusyIds((b) => ({ ...b, [id]: true }));
-    try {
-      const { error } = await supabase.from("user_notifications").delete().eq("id", id);
-      if (error) throw error;
-      setList((curr) => curr.filter((n) => n.id !== id));
-    } catch (e: any) {
-      console.error("deleteOne error:", e.message);
-    } finally {
-      setBusyIds((b) => ({ ...b, [id]: false }));
-    }
-  }
-
+  // ✅ Fixed: use a server-side RPC that touches ONLY the current user's rows
   async function markAllRead() {
-    setClearing(true);
+    setBulkBusy(true);
+    setError(null);
     try {
-      const { error } = await supabase
-        .from("user_notifications")
-        .update({ read_at: new Date().toISOString() })
-        .is("read_at", null);
+      const { data, error } = await supabase.rpc("mark_all_notifications_read");
       if (error) throw error;
-      setList((curr) => curr.map((n) => (n.read_at ? n : { ...n, read_at: new Date().toISOString() })));
+
+      // Update all unread rows locally
+      setList((curr) =>
+        curr.map((n) => (n.read_at ? n : { ...n, read_at: new Date().toISOString() }))
+      );
     } catch (e: any) {
-      console.error("markAllRead error:", e.message);
+      setError(e?.message || "Failed to mark all as read.");
     } finally {
-      setClearing(false);
+      setBulkBusy(false);
     }
   }
 
+  // ✅ Fixed: use RPC to clear ONLY current user's rows
   async function clearAll() {
-    setClearing(true);
+    setBulkBusy(true);
+    setError(null);
     try {
-      const { error } = await supabase.from("user_notifications").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+      const { data, error } = await supabase.rpc("clear_all_notifications");
       if (error) throw error;
+
       setList([]);
       setHasMore(false);
     } catch (e: any) {
-      console.error("clearAll error:", e.message);
+      setError(e?.message || "Failed to clear notifications.");
     } finally {
-      setClearing(false);
+      setBulkBusy(false);
     }
   }
 
@@ -202,7 +200,7 @@ export default function NotificationsPage() {
           <div className="flex items-center gap-2">
             <Button
               size="sm"
-              disabled={clearing || unreadCount === 0}
+              disabled={bulkBusy || unreadCount === 0}
               onClick={markAllRead}
               className="bg-gray-700 hover:bg-gray-600 text-white"
             >
@@ -211,7 +209,7 @@ export default function NotificationsPage() {
             </Button>
             <Button
               size="sm"
-              disabled={clearing || list.length === 0}
+              disabled={bulkBusy || list.length === 0}
               onClick={clearAll}
               className="bg-gray-700 hover:bg-gray-600 text-white"
             >
@@ -220,6 +218,12 @@ export default function NotificationsPage() {
             </Button>
           </div>
         </div>
+
+        {error && (
+          <div className="mb-4 p-3 rounded border border-red-700 bg-red-900/30 text-red-200">
+            {error}
+          </div>
+        )}
 
         <div className="bg-gray-800 rounded-lg overflow-hidden divide-y divide-gray-700">
           {list.length === 0 && !loading && (
@@ -249,7 +253,7 @@ export default function NotificationsPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  {isUnread && (
+                  {!n.read_at && (
                     <Button
                       size="sm"
                       variant="secondary"
@@ -266,7 +270,20 @@ export default function NotificationsPage() {
                     variant="secondary"
                     className="bg-gray-700 hover:bg-gray-600 text-white"
                     disabled={busyIds[n.id]}
-                    onClick={() => deleteOne(n.id)}
+                    onClick={() => {
+                      // small local-UX optimization
+                      setBusyIds((b) => ({ ...b, [n.id]: true }));
+                      supabase
+                        .from("user_notifications")
+                        .delete()
+                        .eq("id", n.id)
+                        .then(({ error }) => {
+                          if (error) throw error;
+                          setList((curr) => curr.filter((x) => x.id !== n.id));
+                        })
+                        .catch((e) => setError(e?.message || "Failed to delete."))
+                        .finally(() => setBusyIds((b) => ({ ...b, [n.id]: false })));
+                    }}
                   >
                     <Trash2 className="h-4 w-4 mr-2" />
                     Delete
