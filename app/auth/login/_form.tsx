@@ -1,3 +1,4 @@
+// app/auth/login/_form.tsx
 "use client";
 
 import { useMemo, useState } from "react";
@@ -10,6 +11,7 @@ export default function LoginForm() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
+  // Default viewers to /watch if no redirect is present
   const redirectTo = useMemo(() => {
     const p = searchParams?.get("redirect_to");
     return p && p.startsWith("/") ? p : "/watch";
@@ -23,41 +25,67 @@ export default function LoginForm() {
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
+  // ---- tolerant profile ensure: read -> update/fix -> upsert fallback ----
   async function ensureProfile(userId: string, userEmail: string): Promise<Role[]> {
-    const { data: existing, error: selErr } = await supabase
+    // 1) Try to read existing profile
+    const read = await supabase
       .from("user_profiles")
       .select("id, roles, email")
       .eq("id", userId)
       .maybeSingle();
 
-    if (selErr) throw new Error("Could not read user profile.");
+    // If read worked and we have a row: normalize it
+    if (!read.error && read.data) {
+      const roles: string[] = Array.isArray(read.data.roles) ? read.data.roles : [];
+      const needsStudent = !roles.includes("student");
+      const needsEmail = !read.data.email;
 
-    if (!existing) {
-      const { error: insErr } = await supabase.from("user_profiles").insert({
+      if (needsStudent || needsEmail) {
+        const nextRoles = needsStudent ? [...roles, "student"] : roles;
+        const { error: updErr } = await supabase
+          .from("user_profiles")
+          .update({ roles: nextRoles, email: read.data.email ?? userEmail })
+          .eq("id", userId);
+
+        if (updErr) {
+          // If a strict RLS edge case blocked update, heal with UPSERT
+          await supabase.from("user_profiles").upsert(
+            {
+              id: userId,
+              email: userEmail,
+              roles: nextRoles.length ? nextRoles : ["student"],
+              created_at: new Date().toISOString(),
+            },
+            { onConflict: "id" }
+          );
+        }
+        return (needsStudent ? [...roles, "student"] : roles) as Role[];
+      }
+      return (roles.length ? roles : ["student"]) as Role[];
+    }
+
+    // 2) If read failed (e.g., permission) or no row, create/fix via UPSERT
+    await supabase.from("user_profiles").upsert(
+      {
         id: userId,
         email: userEmail,
         roles: ["student"],
         created_at: new Date().toISOString(),
-      });
-      if (insErr) throw new Error("Could not create user profile.");
-      return ["student"];
+      },
+      { onConflict: "id" }
+    );
+
+    // 3) Re-read; if still blocked, just default to ["student"]
+    const reread = await supabase
+      .from("user_profiles")
+      .select("roles")
+      .eq("id", userId)
+      .maybeSingle();
+
+    if (Array.isArray(reread.data?.roles) && reread.data!.roles.length) {
+      return reread.data!.roles as Role[];
     }
-
-    const roles: string[] = Array.isArray(existing.roles) ? existing.roles : [];
-    const needsStudent = !roles.includes("student");
-    const needsEmail = !existing.email;
-
-    if (needsStudent || needsEmail) {
-      const nextRoles = needsStudent ? [...roles, "student"] : roles;
-      const { error: updErr } = await supabase
-        .from("user_profiles")
-        .update({ roles: nextRoles, email: existing.email ?? userEmail })
-        .eq("id", userId);
-      if (updErr) throw new Error("Could not update user profile.");
-      return nextRoles as Role[];
-    }
-
-    return roles as Role[];
+    return ["student"];
   }
 
   async function routeByRoles(roles: Role[]) {
@@ -206,14 +234,22 @@ export default function LoginForm() {
           {mode === "signin" ? (
             <>
               New here?{" "}
-              <button type="button" onClick={() => setMode("signup")} className="text-red-400 hover:underline">
+              <button
+                type="button"
+                onClick={() => setMode("signup")}
+                className="text-red-400 hover:underline"
+              >
                 Create an account
               </button>
             </>
           ) : (
             <>
               Already have an account?{" "}
-              <button type="button" onClick={() => setMode("signin")} className="text-red-400 hover:underline">
+              <button
+                type="button"
+                onClick={() => setMode("signin")}
+                className="text-red-400 hover:underline"
+              >
                 Sign in
               </button>
             </>
