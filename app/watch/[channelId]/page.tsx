@@ -12,7 +12,7 @@ import {
 } from "@/lib/supabase";
 import type { Program, Channel } from "@/types";
 import { ChevronLeft, Loader2 } from "lucide-react";
-import YouTubeEmbed from "@/components/youtube-embed"; // <-- A) IMPORT HERE
+import YouTubeEmbed from "@/components/youtube-embed";
 
 const CH21_ID_NUMERIC = 21;
 
@@ -29,28 +29,46 @@ export default function WatchPage() {
   const [error, setError] = useState<string | null>(null);
   const [videoPlayerKey, setVideoPlayerKey] = useState(Date.now());
 
+  // Accept numeric id or slug like "freedom_school"
   useEffect(() => {
-    if (!channelIdString) {
-      setError("Channel ID is missing in URL.");
-      setIsLoading(false);
-      return;
-    }
-    const numericId = Number.parseInt(channelIdString, 10);
-    if (isNaN(numericId)) {
-      setError("Invalid channel ID format in URL.");
-      setIsLoading(false);
-      return;
-    }
-    setValidatedNumericChannelId(numericId);
-    setError(null);
+    let cancelled = false;
 
-    const loadChannelDetails = async () => {
+    async function init() {
+      if (!channelIdString) {
+        setError("Channel ID is missing in URL.");
+        setIsLoading(false);
+        return;
+      }
+
       setIsLoading(true);
+      setError(null);
+
+      // Always resolve details via the string (works for id or slug)
       const details = await fetchChannelDetails(channelIdString);
+      if (!details) {
+        if (!cancelled) {
+          setError("Could not load channel details.");
+          setIsLoading(false);
+        }
+        return;
+      }
+
+      if (cancelled) return;
       setChannelDetails(details);
-      if (!details) setError("Could not load channel details.");
-    };
-    loadChannelDetails();
+
+      const numericId = Number.parseInt(String((details as any).id), 10);
+      if (Number.isNaN(numericId)) {
+        setError("Channel misconfigured: missing numeric id.");
+        setIsLoading(false);
+        return;
+      }
+
+      setValidatedNumericChannelId(numericId);
+      setIsLoading(false);
+    }
+
+    init();
+    return () => { cancelled = true; };
   }, [channelIdString]);
 
   const getStandbyMp4Program = useCallback(
@@ -100,13 +118,12 @@ export default function WatchPage() {
           !!channelDetails?.youtube_is_live;
 
         if (ch21YouTubeLive) {
-          // Override schedule while live
           programToSet = {
             id: "live-ch21-youtube",
             title: "Live Broadcast (Channel 21)",
             description: "Currently broadcasting live via YouTube.",
             channel_id: CH21_ID_NUMERIC,
-            mp4_url: `youtube_channel:${channelDetails!.youtube_channel_id}`, // marker for render
+            mp4_url: `youtube_channel:${channelDetails!.youtube_channel_id}`,
             duration: 86400 * 7,
             start_time: new Date(Date.now() - 3600000).toISOString(),
             poster_url: channelDetails?.image_url || null,
@@ -162,7 +179,7 @@ export default function WatchPage() {
       pollingInterval = setInterval(() => {
         if (document.visibilityState === "visible") {
           fetchCurrentProgram(validatedNumericChannelId);
-          fetchUpcomingPrograms(validatedNumericChannelId);
+          fetchUpcomingPrograms(validatedNumericChannelId); // ✅ fixed variable name
         }
       }, 60000);
     }
@@ -173,7 +190,6 @@ export default function WatchPage() {
   const posterSrc = currentProgram?.poster_url || channelDetails?.image_url || undefined;
   const shouldLoopInPlayer = currentProgram?.id === STANDBY_PLACEHOLDER_ID;
 
-  // YouTube-live branch flag
   const isYouTubeLive =
     validatedNumericChannelId === CH21_ID_NUMERIC && currentProgram?.id === "live-ch21-youtube";
 
@@ -194,7 +210,6 @@ export default function WatchPage() {
       </div>
     );
   } else if (isYouTubeLive) {
-    // Render YouTube when live
     const chId = currentProgram?.mp4_url?.startsWith("youtube_channel:")
       ? currentProgram.mp4_url.split(":")[1]
       : channelDetails?.youtube_channel_id || "";
@@ -204,7 +219,6 @@ export default function WatchPage() {
       <p className="text-gray-400 p-4 text-center">Live stream not configured.</p>
     );
   } else if (currentProgram && videoSrc) {
-    // VOD / scheduled MP4/HLS
     content = (
       <VideoPlayer
         key={videoPlayerKey}
