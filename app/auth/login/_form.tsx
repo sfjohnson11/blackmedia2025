@@ -4,9 +4,8 @@
 import { useMemo, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import Turnstile from "react-turnstile";
 
-export default function LoginForm() {
+export function LoginForm() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
@@ -24,11 +23,6 @@ export default function LoginForm() {
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
-  // Captcha (optional)
-  const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || "";
-  const captchaEnabled = !!siteKey;
-  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
-
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
@@ -42,19 +36,11 @@ export default function LoginForm() {
       setErr("Passwords do not match.");
       return;
     }
-    if (captchaEnabled && !captchaToken) {
-      setErr("Please complete the captcha.");
-      return;
-    }
 
     setLoading(true);
     try {
       if (mode === "signin") {
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-          options: captchaEnabled ? { captchaToken: captchaToken ?? undefined } : undefined,
-        });
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
         if (data.session) {
           router.push(redirectTo);
@@ -63,13 +49,10 @@ export default function LoginForm() {
         }
         setErr("Could not create a session. Try again.");
       } else {
-        // First-time account creation
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
           options: {
-            ...(captchaEnabled ? { captchaToken: captchaToken ?? undefined } : {}),
-            // Where Supabase should send the confirm-email link:
             emailRedirectTo: `${location.origin}/auth/callback?redirect_to=${encodeURIComponent(
               redirectTo
             )}`,
@@ -77,14 +60,11 @@ export default function LoginForm() {
         });
         if (error) throw error;
 
-        // If email confirmations are OFF, you’ll get a session and can go straight in
         if (data.session) {
           router.push(redirectTo);
           router.refresh();
           return;
         }
-
-        // If confirmations are ON
         setMsg("Check your email to confirm your account, then sign in.");
       }
     } catch (e: any) {
@@ -145,24 +125,11 @@ export default function LoginForm() {
           </>
         )}
 
-        {/* Optional captcha (only renders if site key is set) */}
-        {captchaEnabled && (
-          <div className="mb-4">
-            <Turnstile
-              sitekey={siteKey}
-              onVerify={(token) => setCaptchaToken(token)}
-              onExpire={() => setCaptchaToken(null)}
-              onError={() => setCaptchaToken(null)}
-              options={{ theme: "dark" }}
-            />
-          </div>
-        )}
-
         {err && <p className="text-sm text-red-400 mb-3">{err}</p>}
         {msg && <p className="text-sm text-green-400 mb-3">{msg}</p>}
 
         <button
-          disabled={loading || (captchaEnabled && !captchaToken)}
+          disabled={loading}
           className="w-full bg-red-600 hover:bg-red-700 py-2 rounded disabled:opacity-50"
         >
           {loading ? "Please wait…" : mode === "signin" ? "Sign in" : "Create account"}
@@ -172,22 +139,14 @@ export default function LoginForm() {
           {mode === "signin" ? (
             <>
               New here?{" "}
-              <button
-                type="button"
-                onClick={() => setMode("signup")}
-                className="text-red-400 hover:underline"
-              >
+              <button type="button" onClick={() => setMode("signup")} className="text-red-400 hover:underline">
                 Create an account
               </button>
             </>
           ) : (
             <>
               Already have an account?{" "}
-              <button
-                type="button"
-                onClick={() => setMode("signin")}
-                className="text-red-400 hover:underline"
-              >
+              <button type="button" onClick={() => setMode("signin")} className="text-red-400 hover:underline">
                 Sign in
               </button>
             </>
@@ -197,3 +156,5 @@ export default function LoginForm() {
     </div>
   );
 }
+
+export default LoginForm;
