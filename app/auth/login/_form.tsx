@@ -2,16 +2,15 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 type Role = "admin" | "membership1" | "membership2" | "student";
 
 export default function LoginForm() {
   const searchParams = useSearchParams();
-  const router = useRouter();
 
-  // IMPORTANT: default to your dynamic watch route (channel 21)
+  // IMPORTANT: your app uses /watch/[channelId] -> default to channel 21
   const redirectTo = useMemo(() => {
     const p = searchParams?.get("redirect_to");
     return p && p.startsWith("/") ? p : "/watch/21";
@@ -25,7 +24,7 @@ export default function LoginForm() {
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
-  // tolerant profile ensure: read -> update/fix -> upsert fallback
+  // tolerant ensureProfile: read -> update -> upsert fallback
   async function ensureProfile(userId: string, userEmail: string): Promise<Role[]> {
     const read = await supabase
       .from("user_profiles")
@@ -44,7 +43,6 @@ export default function LoginForm() {
           .from("user_profiles")
           .update({ roles: nextRoles, email: read.data.email ?? userEmail })
           .eq("id", userId);
-
         if (updErr) {
           await supabase.from("user_profiles").upsert(
             {
@@ -58,9 +56,12 @@ export default function LoginForm() {
         }
         return (needsStudent ? [...roles, "student"] : roles) as Role[];
       }
-      return (Array.isArray(read.data.roles) && read.data.roles.length ? read.data.roles : ["student"]) as Role[];
+      return (Array.isArray(read.data.roles) && read.data.roles.length
+        ? read.data.roles
+        : ["student"]) as Role[];
     }
 
+    // if read failed or row missing, create it
     await supabase.from("user_profiles").upsert(
       {
         id: userId,
@@ -83,14 +84,16 @@ export default function LoginForm() {
     return ["student"];
   }
 
-  async function routeByRoles(roles: Role[]) {
-    // Admins go to /admin; EVERYONE ELSE goes to your dynamic watch route (channel 21) or redirectTo
-    if (roles.includes("admin")) {
-      router.push("/admin");
-    } else {
-      router.push(redirectTo || "/watch/21");
+  // wait until supabase has a non-null session, then hard navigate
+  async function waitForSessionAndGo(target: string) {
+    // try up to ~2s (20 * 100ms)
+    for (let i = 0; i < 20; i++) {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) break;
+      await new Promise((r) => setTimeout(r, 100));
     }
-    router.refresh();
+    // hard navigation so SSR sees cookies immediately
+    window.location.assign(target);
   }
 
   async function onSubmit(e: React.FormEvent) {
@@ -123,7 +126,8 @@ export default function LoginForm() {
         if (!user) throw new Error("Sign-in succeeded but no user returned.");
 
         const roles = await ensureProfile(user.id, user.email || email.trim());
-        await routeByRoles(roles as Role[]);
+        const target = roles.includes("admin") ? "/admin" : (redirectTo || "/watch/21");
+        await waitForSessionAndGo(target);
         return;
       } else {
         const origin =
@@ -148,7 +152,8 @@ export default function LoginForm() {
 
         if (data?.session?.user) {
           const roles = await ensureProfile(data.session.user.id, data.session.user.email!);
-          await routeByRoles(roles as Role[]);
+          const target = roles.includes("admin") ? "/admin" : (redirectTo || "/watch/21");
+          await waitForSessionAndGo(target);
           return;
         }
 
@@ -226,22 +231,14 @@ export default function LoginForm() {
           {mode === "signin" ? (
             <>
               New here?{" "}
-              <button
-                type="button"
-                onClick={() => setMode("signup")}
-                className="text-red-400 hover:underline"
-              >
+              <button type="button" onClick={() => setMode("signup")} className="text-red-400 hover:underline">
                 Create an account
               </button>
             </>
           ) : (
             <>
               Already have an account?{" "}
-              <button
-                type="button"
-                onClick={() => setMode("signin")}
-                className="text-red-400 hover:underline"
-              >
+              <button type="button" onClick={() => setMode("signin")} className="text-red-400 hover:underline">
                 Sign in
               </button>
             </>
