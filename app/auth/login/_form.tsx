@@ -20,6 +20,7 @@ export default function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [inviteCode, setInviteCode] = useState(""); // NEW
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -39,6 +40,7 @@ export default function LoginForm() {
       return role;
     }
 
+    // Fallback if trigger hasn't created the row yet (rare race)
     await supabase.from("user_profiles").upsert(
       { id: userId, email: userEmail, role: "student", created_at: new Date().toISOString() },
       { onConflict: "id" }
@@ -48,9 +50,21 @@ export default function LoginForm() {
     return (reread.data?.role as Role) || "student";
   }
 
+  // Try to redeem the invite code (optional, non-blocking)
+  async function redeemInviteIfAny(code: string) {
+    const trimmed = code.trim();
+    if (!trimmed) return false;
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (!sessionData?.session) return false; // no session yet (email confirm flow)
+    const { data, error } = await supabase.rpc("redeem_invite_code", { p_code: trimmed });
+    return !error && data === true;
+  }
+
   // Write server cookie so middleware sees auth immediately
   async function writeServerCookie() {
-    const { data: { session } } = await supabase.auth.getSession();
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
     if (session) {
       await fetch("/auth/callback", {
         method: "POST",
@@ -61,7 +75,6 @@ export default function LoginForm() {
   }
 
   async function pickTarget(role: Role) {
-    // back to clicked channel if provided
     if (redirectTo) return redirectTo;
     if (role === "admin") return "/admin";
     if (role === "student") return "/watch/freedom_school";
@@ -70,7 +83,8 @@ export default function LoginForm() {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setErr(null); setMsg(null);
+    setErr(null);
+    setMsg(null);
 
     if (!email || !password) return setErr("Please enter email and password.");
     if (mode === "signup" && password !== confirm) return setErr("Passwords do not match.");
@@ -87,12 +101,22 @@ export default function LoginForm() {
         const user = data?.user;
         if (!user) throw new Error("Sign-in succeeded but no user returned.");
 
+        // Ensure a profile row exists
+        await ensureProfile(user.id, user.email || email.trim());
+
+        // Try to redeem invite code if provided, then re-read role
+        if (inviteCode.trim()) {
+          await redeemInviteIfAny(inviteCode);
+        }
+
         const role = await ensureProfile(user.id, user.email || email.trim());
+
         await writeServerCookie();
         window.location.assign(await pickTarget(role));
         return;
       } else {
-        const origin = typeof window !== "undefined" ? window.location.origin : process.env.NEXT_PUBLIC_SUPABASE_SITE_URL || "";
+        const origin =
+          typeof window !== "undefined" ? window.location.origin : process.env.NEXT_PUBLIC_SUPABASE_SITE_URL || "";
         const { data, error } = await supabase.auth.signUp({
           email: email.trim(),
           password,
@@ -105,13 +129,26 @@ export default function LoginForm() {
           if (m.includes("user already registered")) throw new Error("This email is already registered. Try signing in instead.");
           throw error;
         }
+
+        // If your project creates an instant session on sign-up, redeem now
         if (data?.session?.user) {
-          const role = await ensureProfile(data.session.user.id, data.session.user.email!);
+          const u = data.session.user;
+          await ensureProfile(u.id, u.email || email.trim());
+          if (inviteCode.trim()) {
+            await redeemInviteIfAny(inviteCode);
+          }
+          const role = await ensureProfile(u.id, u.email || email.trim());
           await writeServerCookie();
           window.location.assign(await pickTarget(role));
           return;
         }
-        setMsg("Check your email to confirm your account, then sign in.");
+
+        // Email confirmation flow: tell them what to do about the invite
+        setMsg(
+          inviteCode.trim()
+            ? "Check your email to confirm your account. After confirming, sign in again and paste your invite code to upgrade your access."
+            : "Check your email to confirm your account, then sign in."
+        );
       }
     } catch (e: any) {
       setErr(e?.message || "Something went wrong.");
@@ -123,39 +160,85 @@ export default function LoginForm() {
   return (
     <div className="min-h-screen bg-black flex items-center justify-center px-4">
       <form onSubmit={onSubmit} className="w-full max-w-md bg-gray-900 border border-gray-800 rounded-lg p-6">
-        <h1 className="text-2xl font-bold mb-4">{mode === "signin" ? "Sign in to Watch Black Truth TV" : "Create your account"}</h1>
+        <h1 className="text-2xl font-bold mb-4">
+          {mode === "signin" ? "Sign in to Watch Black Truth TV" : "Create your account"}
+        </h1>
 
         <label className="block mb-2 text-sm">Email</label>
-        <input className="w-full mb-4 px-3 py-2 bg-gray-800 border border-gray-700 rounded" type="email"
-               value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" placeholder="you@example.com" />
+        <input
+          className="w-full mb-4 px-3 py-2 bg-gray-800 border border-gray-700 rounded"
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          required
+          autoComplete="email"
+          placeholder="you@example.com"
+        />
 
         <label className="block mb-2 text-sm">{mode === "signin" ? "Password" : "Create password"}</label>
-        <input className="w-full mb-4 px-3 py-2 bg-gray-800 border border-gray-700 rounded" type="password"
-               value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6}
-               autoComplete={mode === "signin" ? "current-password" : "new-password"}
-               placeholder={mode === "signin" ? "Your password" : "At least 6 characters"} />
+        <input
+          className="w-full mb-4 px-3 py-2 bg-gray-800 border border-gray-700 rounded"
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          required
+          minLength={6}
+          autoComplete={mode === "signin" ? "current-password" : "new-password"}
+          placeholder={mode === "signin" ? "Your password" : "At least 6 characters"}
+        />
 
         {mode === "signup" && (
           <>
             <label className="block mb-2 text-sm">Confirm password</label>
-            <input className="w-full mb-4 px-3 py-2 bg-gray-800 border border-gray-700 rounded" type="password"
-                   value={confirm} onChange={(e) => setConfirm(e.target.value)} required minLength={6}
-                   autoComplete="new-password" placeholder="Repeat your password" />
+            <input
+              className="w-full mb-4 px-3 py-2 bg-gray-800 border border-gray-700 rounded"
+              type="password"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              required
+              minLength={6}
+              autoComplete="new-password"
+              placeholder="Repeat your password"
+            />
           </>
         )}
+
+        {/* NEW: Invite code (optional) — shown on both signup and signin */}
+        <label className="block mb-2 text-sm">Invite code (optional)</label>
+        <input
+          className="w-full mb-4 px-3 py-2 bg-gray-800 border border-gray-700 rounded"
+          type="text"
+          value={inviteCode}
+          onChange={(e) => setInviteCode(e.target.value)}
+          placeholder="Paste your invite code if you have one"
+        />
 
         {err && <p className="text-sm text-red-400 mb-3">{err}</p>}
         {msg && <p className="text-sm text-green-400 mb-3">{msg}</p>}
 
-        <button disabled={loading} className="w-full bg-red-600 hover:bg-red-700 py-2 rounded disabled:opacity-50" type="submit">
+        <button
+          disabled={loading}
+          className="w-full bg-red-600 hover:bg-red-700 py-2 rounded disabled:opacity-50"
+          type="submit"
+        >
           {loading ? "Please wait…" : mode === "signin" ? "Sign in" : "Create account"}
         </button>
 
         <div className="mt-4 text-sm text-gray-400">
           {mode === "signin" ? (
-            <>New here? <button type="button" onClick={() => setMode("signup")} className="text-red-400 hover:underline">Create an account</button></>
+            <>
+              New here?{" "}
+              <button type="button" onClick={() => setMode("signup")} className="text-red-400 hover:underline">
+                Create an account
+              </button>
+            </>
           ) : (
-            <>Already have an account? <button type="button" onClick={() => setMode("signin")} className="text-red-400 hover:underline">Sign in</button></>
+            <>
+              Already have an account?{" "}
+              <button type="button" onClick={() => setMode("signin")} className="text-red-400 hover:underline">
+                Sign in
+              </button>
+            </>
           )}
         </div>
       </form>
