@@ -14,7 +14,7 @@ export async function middleware(req: NextRequest) {
     data: { session },
   } = await supabase.auth.getSession();
 
-  // ---- Guard /freedom-school
+  // ---- Gate /freedom-school to students/admins
   if (pathname === "/freedom-school") {
     if (!session) {
       const loginUrl = req.nextUrl.clone();
@@ -22,17 +22,18 @@ export async function middleware(req: NextRequest) {
       loginUrl.searchParams.set("redirect_to", pathname);
       return NextResponse.redirect(loginUrl);
     }
-    // fetch role
-    const { data: profile, error } = await supabase
+
+    // NOTE: use id (NOT user_id)
+    const { data: profile } = await supabase
       .from("user_profiles")
       .select("role")
-      .eq("user_id", session.user.id)
+      .eq("id", session.user.id)
       .maybeSingle();
 
     const role = profile?.role ?? null;
-    if (error || !role || !["student", "admin"].includes(role)) {
+    if (!role || !["student", "admin"].includes(role)) {
       const deny = req.nextUrl.clone();
-      deny.pathname = "/"; // or a dedicated "no access" page
+      deny.pathname = "/";
       deny.searchParams.set("error", "fs_access_denied");
       return NextResponse.redirect(deny);
     }
@@ -53,6 +54,7 @@ export async function middleware(req: NextRequest) {
   // Extra passcode for protected channels (23–29)
   const idStr = pathname.split("/")[2] ?? "";
   const id = Number.parseInt(idStr, 10);
+
   if (Number.isFinite(id) && PROTECTED_CHANNELS.has(id)) {
     const cookieName = `${COOKIE_PREFIX}${id}`;
     const unlocked = req.cookies.get(cookieName)?.value === "1";
