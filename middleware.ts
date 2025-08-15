@@ -5,50 +5,61 @@ import { PROTECTED_CHANNELS } from "./lib/protected-channels";
 
 const COOKIE_PREFIX = "channel_unlocked_";
 
-function projectRefFromUrl(url?: string | null) {
-  if (!url) return null;
-  const m = url.match(/^https?:\/\/([^.]+)\.supabase\.co/i);
-  return m?.[1] ?? null;
-}
-
 export async function middleware(req: NextRequest) {
   const res = NextResponse.next();
-  const { pathname, search } = req.nextUrl;
+  const { pathname } = req.nextUrl;
 
-  // Only guard /watch/*
+  const supabase = createMiddlewareClient({ req, res });
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  // ---- Guard /freedom-school
+  if (pathname === "/freedom-school") {
+    if (!session) {
+      const loginUrl = req.nextUrl.clone();
+      loginUrl.pathname = "/auth/login";
+      loginUrl.searchParams.set("redirect_to", pathname);
+      return NextResponse.redirect(loginUrl);
+    }
+    // fetch role
+    const { data: profile, error } = await supabase
+      .from("user_profiles")
+      .select("role")
+      .eq("user_id", session.user.id)
+      .maybeSingle();
+
+    const role = profile?.role ?? null;
+    if (error || !role || !["student", "admin"].includes(role)) {
+      const deny = req.nextUrl.clone();
+      deny.pathname = "/"; // or a dedicated "no access" page
+      deny.searchParams.set("error", "fs_access_denied");
+      return NextResponse.redirect(deny);
+    }
+    return res;
+  }
+
+  // ---- Only guard /watch/*
   if (!pathname.startsWith("/watch/")) return res;
 
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-
-  const supabase = createMiddlewareClient(
-    { req, res },
-    { supabaseUrl, supabaseKey }
-  );
-
-  // Try to refresh/resolve session
-  const { data: { session } } = await supabase.auth.getSession();
-
-  // Fallback: accept auth if we see the auth cookie even if session wasn't resolved yet
-  const ref = projectRefFromUrl(supabaseUrl);
-  const hasAuthCookie = ref ? Boolean(req.cookies.get(`sb-${ref}-auth-token`)) : false;
-  const isAuthed = Boolean(session) || hasAuthCookie;
-
-  if (!isAuthed) {
-    const loginUrl = new URL("/auth/login", req.url);
-    loginUrl.searchParams.set("redirect_to", pathname + (search || ""));
+  // Require login for any /watch/*
+  if (!session) {
+    const loginUrl = req.nextUrl.clone();
+    loginUrl.pathname = "/auth/login";
+    loginUrl.searchParams.set("redirect_to", pathname);
     return NextResponse.redirect(loginUrl);
   }
 
-  // Extra passcode for protected channels
+  // Extra passcode for protected channels (23–29)
   const idStr = pathname.split("/")[2] ?? "";
-  const asNumber = Number.parseInt(idStr, 10);
-  if (Number.isFinite(asNumber) && PROTECTED_CHANNELS.has(asNumber)) {
-    const cookieName = `${COOKIE_PREFIX}${asNumber}`;
+  const id = Number.parseInt(idStr, 10);
+  if (Number.isFinite(id) && PROTECTED_CHANNELS.has(id)) {
+    const cookieName = `${COOKIE_PREFIX}${id}`;
     const unlocked = req.cookies.get(cookieName)?.value === "1";
     if (!unlocked) {
-      const unlockUrl = new URL(`/unlock/${asNumber}`, req.url);
-      unlockUrl.searchParams.set("redirect_to", pathname + (search || ""));
+      const unlockUrl = req.nextUrl.clone();
+      unlockUrl.pathname = `/unlock/${id}`;
+      unlockUrl.searchParams.set("redirect_to", pathname);
       return NextResponse.redirect(unlockUrl);
     }
   }
@@ -57,5 +68,5 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/watch/:path*"],
+  matcher: ["/watch/:path*", "/freedom-school"],
 };
