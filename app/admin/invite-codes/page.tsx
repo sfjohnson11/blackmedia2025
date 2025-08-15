@@ -28,12 +28,11 @@ export default function InviteCodesPage() {
   const [plainCode, setPlainCode] = useState("");
   const [role, setRole] = useState<Row["role"]>("student");
   const [label, setLabel] = useState("");
-  const [expires, setExpires] = useState<string>(""); // HTML datetime-local (local)
+  const [expires, setExpires] = useState<string>(""); // datetime-local (browser local time)
   const [maxUses, setMaxUses] = useState<string>("");
 
   const expiresUtcIso = useMemo(() => {
     if (!expires) return null;
-    // Convert local datetime to UTC ISO
     const d = new Date(expires);
     return isNaN(d.getTime()) ? null : d.toISOString();
   }, [expires]);
@@ -76,7 +75,7 @@ export default function InviteCodesPage() {
     }
     setSubmitting(true);
     try {
-      // Hash in browser; only the hash is stored in DB.
+      // Hash in browser; only the hash is stored in DB (plaintext never leaves admin page)
       const code_hash = await sha256Hex(plainCode.trim());
       const payload: Partial<Row> & { code_hash: string } = {
         code_hash,
@@ -255,3 +254,4 @@ export default function InviteCodesPage() {
     </div>
   );
 }
+
