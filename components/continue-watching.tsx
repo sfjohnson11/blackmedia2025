@@ -1,89 +1,120 @@
-"use client"
+// components/continue-watching.tsx
+"use client";
 
-import { useState, useEffect } from "react"
-import { createClient } from "@supabase/supabase-js"
-import Link from "next/link"
-import Image from "next/image"
-import { Play } from "lucide-react"
-import { Progress } from "@/components/ui/progress"
-import { getWatchProgress } from "@/lib/supabase"
+import { useState, useEffect } from "react";
+import { createClient } from "@supabase/supabase-js";
+import Link from "next/link";
+import Image from "next/image";
+import { Play } from "lucide-react";
+import { Progress } from "@/components/ui/progress";
+import { getWatchProgress } from "@/lib/supabase";
 
 interface WatchHistoryItem {
-  channelId: number
-  timestamp: number
-  progress: number
-  duration: number
+  channelId: number;
+  timestamp: number;
+  progress: number;
+  duration: number;
 }
 
-interface ChannelData {
-  id: number
-  name: string
-  image_url: string
+type ChannelRow = Record<string, any>;
+
+function toPublicUrl(raw?: string | null) {
+  if (!raw) return null;
+  // already a URL (http/https/data:)
+  if (/^(https?:)?\/\//i.test(raw) || raw.startsWith("data:")) return raw;
+  // treat as storage path
+  const base = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (!base) return null;
+  const clean = raw.replace(/^\/+/, "");
+  return `${base}/storage/v1/object/public/${clean}`;
+}
+
+function pickImage(row: ChannelRow): string | null {
+  const candidate =
+    row.image_url ??
+    row.image ??
+    row.img_url ??
+    row.image_path ??
+    row.logo_url ??
+    row.thumbnail_url ??
+    null;
+
+  return toPublicUrl(candidate);
 }
 
 export function ContinueWatching() {
-  const [history, setHistory] = useState<WatchHistoryItem[]>([])
-  const [channels, setChannels] = useState<Record<number, ChannelData>>({})
-  const [loading, setLoading] = useState(true)
+  const [history, setHistory] = useState<WatchHistoryItem[]>([]);
+  const [channels, setChannels] = useState<Record<number, ChannelRow>>({});
+  const [loading, setLoading] = useState(true);
 
-  const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!)
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const supabaseAnon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+  const supabase = createClient(supabaseUrl, supabaseAnon);
 
   useEffect(() => {
     const loadHistory = async () => {
       try {
-        // Get watch history from localStorage
-        const watchHistory = getWatchProgress()
+        // 1) read local watch history
+        const watchHistory = getWatchProgress() as Record<
+          string,
+          { timestamp: number; progress: number; duration: number }
+        >;
 
-        if (Object.keys(watchHistory).length === 0) {
-          setLoading(false)
-          return
+        if (!watchHistory || Object.keys(watchHistory).length === 0) {
+          setLoading(false);
+          return;
         }
 
-        // Convert to array and sort by most recent
-        const historyArray = Object.entries(watchHistory).map(([channelId, data]) => ({
-          channelId: Number.parseInt(channelId),
-          timestamp: data.timestamp,
-          progress: data.progress,
-          duration: data.duration,
-        }))
+        // 2) normalize + sort
+        const historyArray: WatchHistoryItem[] = Object.entries(watchHistory)
+          .map(([channelId, data]) => ({
+            channelId: Number.parseInt(channelId, 10),
+            timestamp: Number(data.timestamp || 0),
+            progress: Number(data.progress || 0),
+            duration: Number(data.duration || 0),
+          }))
+          .filter((h) => Number.isFinite(h.channelId) && h.channelId > 0)
+          .sort((a, b) => b.timestamp - a.timestamp);
 
-        // Sort by most recent first
-        historyArray.sort((a, b) => b.timestamp - a.timestamp)
+        const recentHistory = historyArray.slice(0, 10);
+        setHistory(recentHistory);
 
-        // Limit to 10 most recent
-        const recentHistory = historyArray.slice(0, 10)
+        // 3) fetch channel details (defensive: select("*") to avoid column errors)
+        const uniqueIds = Array.from(new Set(recentHistory.map((i) => i.channelId)));
+        if (uniqueIds.length === 0) {
+          setLoading(false);
+          return;
+        }
 
-        setHistory(recentHistory)
-
-        // Get channel details for all history items
-        const channelIds = recentHistory.map((item) => item.channelId)
-
-        const { data, error } = await supabase.from("channels").select("id, name, image_url").in("id", channelIds)
+        const { data, error } = await supabase
+          .from("channels")
+          .select("*")
+          .in("id", uniqueIds);
 
         if (error) {
-          throw error
+          // Don’t crash the UI; just log and continue with names missing
+          console.error("Supabase channels query failed:", error);
         }
 
-        // Convert to record for easy lookup
-        const channelsRecord: Record<number, ChannelData> = {}
-        data?.forEach((channel) => {
-          channelsRecord[channel.id] = channel
-        })
+        const rec: Record<number, ChannelRow> = {};
+        (data || []).forEach((row: ChannelRow) => {
+          // assume numeric ids; if UUIDs, adapt by keeping as string keys
+          const id: number = typeof row.id === "number" ? row.id : Number(row.id);
+          if (Number.isFinite(id)) rec[id] = row;
+        });
 
-        setChannels(channelsRecord)
-      } catch (error) {
-        console.error("Error loading watch history:", error)
+        setChannels(rec);
+      } catch (e) {
+        console.error("Error loading watch history:", e);
       } finally {
-        setLoading(false)
+        setLoading(false);
       }
-    }
+    };
 
-    loadHistory()
-  }, [])
+    loadHistory();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (loading || history.length === 0) {
-    return null
-  }
+  if (loading || history.length === 0) return null;
 
   return (
     <div className="mb-12">
@@ -96,17 +127,28 @@ export function ContinueWatching() {
 
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
         {history.map((item) => {
-          const channel = channels[item.channelId]
-          if (!channel) return null
+          const channel = channels[item.channelId];
+          if (!channel) return null;
+
+          const img = pickImage(channel) || "/placeholder.svg?height=180&width=320&query=channel";
+          const pct =
+            item.duration > 0 ? Math.max(0, Math.min(100, (item.progress / item.duration) * 100)) : 0;
+
+          const name =
+            channel.name ??
+            channel.title ??
+            `Channel ${String(channel.id ?? item.channelId)}`;
 
           return (
             <div key={item.channelId} className="group relative">
               <div className="aspect-video relative rounded-md overflow-hidden">
                 <Image
-                  src={channel.image_url || "/placeholder.svg?height=180&width=320&query=channel"}
-                  alt={channel.name}
+                  src={img}
+                  alt={name}
                   fill
                   className="object-cover"
+                  // If your images are external and not in next.config.js images.domains, you can uncomment:
+                  // unoptimized
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent" />
                 <Link
@@ -119,13 +161,13 @@ export function ContinueWatching() {
                 </Link>
               </div>
 
-              <Progress value={(item.progress / item.duration) * 100} className="h-1 bg-gray-700 mt-1" />
+              <Progress value={pct} className="h-1 bg-gray-700 mt-1" />
 
-              <h3 className="text-sm font-medium text-white mt-2 truncate">{channel.name}</h3>
+              <h3 className="text-sm font-medium text-white mt-2 truncate">{name}</h3>
             </div>
-          )
+          );
         })}
       </div>
     </div>
-  )
+  );
 }
