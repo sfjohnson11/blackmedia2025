@@ -1,7 +1,7 @@
 // app/admin/page.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,6 +19,20 @@ type Stats = {
   channelCount: number;
   programCount: number;
   loading: boolean;
+};
+
+type AdminLink = {
+  name: string;
+  href: string;
+  icon: ReactNode;
+  flag?: "beta";
+};
+
+type AdminSection = {
+  title: string;
+  description: string;
+  icon: ReactNode;
+  links: AdminLink[];
 };
 
 export default function AdminDashboard() {
@@ -50,7 +64,7 @@ export default function AdminDashboard() {
     };
   }, []);
 
-  const adminLinks = [
+  const adminLinks: AdminSection[] = [
     {
       title: "Channel Management",
       description: "Import, edit, and manage channel data",
@@ -85,10 +99,10 @@ export default function AdminDashboard() {
         { name: "SQL Setup", href: "/setup/sql-setup", icon: <Database className="h-4 w-4" /> },
         { name: "Debug Storage", href: "/debug", icon: <RefreshCw className="h-4 w-4" /> },
         { name: "SQL Query Tool", href: "/admin/sql-query", icon: <Code className="h-4 w-4" />, flag: "beta" },
-        { name: "Invite Codes", href: "/admin/invite-codes", icon: <Lock className="h-4 w-4" /> }, // ← added
+        { name: "Invite Codes", href: "/admin/invite-codes", icon: <Lock className="h-4 w-4" /> }, // added
       ],
     },
-  ] as const;
+  ];
 
   return (
     <div>
@@ -167,3 +181,52 @@ export default function AdminDashboard() {
                 <Button className="w-full">Open Video Processor</Button>
               </Link>
             </CardFooter>
+          </Card>
+        )}
+
+        {/* Reset Programs (danger-gated + confirmed) */}
+        {ALLOW_DANGER && (
+          <Card className="bg-red-900/10 border-red-900/30">
+            <CardHeader>
+              <CardTitle className="text-red-400">Reset Programs</CardTitle>
+              <CardDescription>Delete all programs and start fresh</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-gray-400 mb-4">
+                Completely reset program data to fix issues with old or duplicate programs.
+              </p>
+            </CardContent>
+            <CardFooter>
+              <ConfirmLink href="/admin/reset-programs" label="Reset Programs" />
+            </CardFooter>
+          </Card>
+        )}
+
+        {/* SQL Tool (beta-gated) */}
+        {ADMIN_BETA && (
+          <Card className="bg-blue-900/10 border-blue-900/30">
+            <CardHeader>
+              <CardTitle className="text-blue-400">SQL Query Tool</CardTitle>
+              <CardDescription>Run SQL for power management</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-gray-400 mb-4">
+                Execute SQL queries directly against your database for advanced troubleshooting and data management.
+              </p>
+            </CardContent>
+            <CardFooter>
+              <Link href="/admin/sql-query" className="w-full">
+                <Button className="w-full bg-blue-600 hover:bg-blue-700">
+                  Open SQL Tool
+                </Button>
+              </Link>
+            </CardFooter>
+          </Card>
+        )}
+      </div>
+
+      {/* Client-side Clear Cache (no route) */}
+      <ClearCacheCard />
+    </div>
+  );
+}
