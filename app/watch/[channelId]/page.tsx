@@ -52,7 +52,7 @@ export default function WatchPage() {
   const stablePosterRef = useRef<string | undefined>(undefined);
   const stableTitleRef = useRef<string | undefined>(undefined);
 
-  // --- NEW: resume from ?t= (seconds) and track user id for progress
+  // --- resume from ?t= (seconds) + user id for progress
   const resumeSeconds = useMemo(() => {
     const t = searchParams?.get("t");
     const n = t ? parseInt(t, 10) : 0;
@@ -60,14 +60,14 @@ export default function WatchPage() {
   }, [searchParams]);
   const [userId, setUserId] = useState<string | null>(null);
 
-  // --- NEW: tiny helper to grab the actual <video> element rendered by VideoPlayer
+  // tiny helper to grab the actual <video> element rendered by VideoPlayer
   const getVideoEl = useCallback((): HTMLVideoElement | null => {
     return typeof document !== "undefined"
       ? (document.querySelector("video") as HTMLVideoElement | null)
       : null;
   }, []);
 
-  // Accept numeric id OR slug like "freedom_school"
+  // ---------- INIT (with robust fallback) ----------
   useEffect(() => {
     let cancelled = false;
 
@@ -81,45 +81,86 @@ export default function WatchPage() {
       setIsLoading(true);
       setError(null);
 
-      const details = await fetchChannelDetails(channelIdString);
-      if (!details) {
-        if (!cancelled) {
-          setError("Could not load channel details.");
-          setIsLoading(false);
-        }
-        return;
+      let details: Channel | null = null;
+      try {
+        details = await fetchChannelDetails(channelIdString);
+      } catch (e) {
+        // soft log; don’t break the page
+        console.warn("fetchChannelDetails failed:", e);
       }
       if (cancelled) return;
 
-      setChannelDetails(details);
+      if (details) {
+        setChannelDetails(details);
+        const numericId = Number.parseInt(String((details as any).id), 10);
+        if (Number.isNaN(numericId)) {
+          setError("Channel misconfigured: missing numeric id.");
+          setIsLoading(false);
+          return;
+        }
+        setValidatedNumericChannelId(numericId);
 
-      const numericId = Number.parseInt(String((details as any).id), 10);
-      if (Number.isNaN(numericId)) {
-        setError("Channel misconfigured: missing numeric id.");
+        // Always-live short-circuit
+        if (ALWAYS_LIVE_CHANNEL_IDS.has(numericId)) {
+          const liveProgram: Program = {
+            id: "live-ch21-youtube",
+            title: "Live Broadcast (Channel 21)",
+            description: "24/7 broadcasting via YouTube.",
+            channel_id: CH21_ID_NUMERIC,
+            mp4_url: `youtube_channel:${YT_CH21}`,
+            duration: 86400 * 365,
+            start_time: new Date(Date.now() - 3600000).toISOString(),
+            poster_url: details?.image_url || null,
+          };
+          setCurrentProgram(liveProgram);
+          stableTitleRef.current = liveProgram.title;
+          setIsLoading(false);
+          return;
+        }
+
         setIsLoading(false);
         return;
       }
-      setValidatedNumericChannelId(numericId);
 
-      // ⟵ ALWAYS-LIVE SHORT-CIRCUIT for CH 21
-      if (ALWAYS_LIVE_CHANNEL_IDS.has(numericId)) {
-        const liveProgram: Program = {
-          id: "live-ch21-youtube",
-          title: "Live Broadcast (Channel 21)",
-          description: "24/7 broadcasting via YouTube.",
-          channel_id: CH21_ID_NUMERIC,
-          mp4_url: `youtube_channel:${YT_CH21}`, // marker for render branch
-          duration: 86400 * 365, // long fake duration
-          start_time: new Date(Date.now() - 3600000).toISOString(),
-          poster_url: details?.image_url || null,
-        };
-        setCurrentProgram(liveProgram);
-        stableTitleRef.current = liveProgram.title;
-        // No need to set src/poster for YouTube embed branch
+      // ---- Fallback if details couldn’t load (keeps the page working)
+      const numericIdFallback = Number.parseInt(channelIdString, 10);
+      if (!Number.isNaN(numericIdFallback)) {
+        setValidatedNumericChannelId(numericIdFallback);
+        // Minimal Channel placeholder to avoid UI nulls
+        setChannelDetails({
+          // @ts-expect-error: allow minimal shape to satisfy UI
+          id: numericIdFallback,
+          name: `Channel ${numericIdFallback}`,
+          image_url: null,
+          description: null,
+          created_at: null,
+          updated_at: null,
+          slug: null,
+        } as any);
+
+        if (ALWAYS_LIVE_CHANNEL_IDS.has(numericIdFallback)) {
+          const liveProgram: Program = {
+            id: "live-ch21-youtube",
+            title: "Live Broadcast (Channel 21)",
+            description: "24/7 broadcasting via YouTube.",
+            channel_id: CH21_ID_NUMERIC,
+            mp4_url: `youtube_channel:${YT_CH21}`,
+            duration: 86400 * 365,
+            start_time: new Date(Date.now() - 3600000).toISOString(),
+            poster_url: null,
+          };
+          setCurrentProgram(liveProgram);
+          stableTitleRef.current = liveProgram.title;
+          setIsLoading(false);
+          return;
+        }
+
         setIsLoading(false);
-        return; // skip schedule fetch entirely
+        return;
       }
 
+      // If we get here, neither details nor numeric fallback worked
+      setError("Could not load channel details.");
       setIsLoading(false);
     }
 
@@ -269,7 +310,7 @@ export default function WatchPage() {
   const isYouTubeLive = currentProgram?.id === "live-ch21-youtube";
   const shouldLoopInPlayer = currentProgram?.id === STANDBY_PLACEHOLDER_ID;
 
-  // --- NEW: get the current user once (for progress attribution)
+  // get the current user once (for progress attribution)
   useEffect(() => {
     let canceled = false;
     (async () => {
@@ -279,7 +320,7 @@ export default function WatchPage() {
     return () => { canceled = true; };
   }, []);
 
-  // --- NEW: seek to ?t= when the video is ready
+  // seek to ?t= when the video is ready
   useEffect(() => {
     if (!resumeSeconds) return;
 
@@ -298,11 +339,11 @@ export default function WatchPage() {
     attempt();
   }, [resumeSeconds, getVideoEl, frozenSrc]);
 
-  // --- NEW: save progress every ~10s and on ended
+  // save progress every ~10s and on ended
   useEffect(() => {
     if (!userId || !currentProgram) return;
 
-    const assetId = currentProgram.id; // or baseUrl(frozenSrc) if you prefer URL identity
+    const assetId = currentProgram.id; // or baseUrl(frozenSrc)
     const assetTitle = currentProgram.title ?? null;
     const channelId = currentProgram.channel_id ?? validatedNumericChannelId ?? null;
 
