@@ -1,7 +1,7 @@
 // app/watch/[channelId]/page.tsx — Channel 21 is ALWAYS YouTube Live (24/7) + stable player
 "use client";
 
-import { type ReactNode, useEffect, useState, useCallback, useRef } from "react";
+import { type ReactNode, useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import VideoPlayer from "@/components/video-player";
 import {
