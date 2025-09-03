@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 
@@ -13,21 +13,18 @@ type ResumeItem = {
 };
 
 function parseChannelIdFromUrl(u: string): number | null {
-  // try /channel{N}/something.mp4
   const m1 = u.match(/channel(\d+)\b/i);
   if (m1) return parseInt(m1[1], 10);
-  // try .../channels/{N}/...
   const m2 = u.match(/\/channels\/(\d+)\b/i);
   if (m2) return parseInt(m2[1], 10);
   return null;
 }
 
-export default function ContinueAdminPage() {
+export default function Page() {
   const router = useRouter();
   const [items, setItems] = useState<ResumeItem[]>([]);
   const [ready, setReady] = useState(false);
 
-  // read localStorage resume entries created by the Watch page
   useEffect(() => {
     try {
       const found: ResumeItem[] = [];
@@ -37,10 +34,8 @@ export default function ContinueAdminPage() {
 
         const secondsRaw = localStorage.getItem(key) ?? '0';
         const seconds = Math.max(0, parseFloat(secondsRaw) || 0);
-
         const baseUrl = key.replace('btv:resume:', '');
 
-        // look for optional metadata (if present)
         let title: string | null = null;
         let channelId: number | null = null;
         try {
@@ -50,16 +45,13 @@ export default function ContinueAdminPage() {
             if (typeof meta?.title === 'string') title = meta.title;
             if (typeof meta?.channel_id === 'number') channelId = meta.channel_id;
           }
-        } catch {
-          /* ignore bad meta JSON */
-        }
+        } catch { /* ignore bad meta JSON */ }
 
         if (channelId == null) channelId = parseChannelIdFromUrl(baseUrl);
 
         found.push({ key, baseUrl, seconds, title, channelId });
       }
 
-      // no timestamps in LS; just sort by key for stability
       found.sort((a, b) => a.baseUrl.localeCompare(b.baseUrl));
       setItems(found);
     } catch {
@@ -74,7 +66,7 @@ export default function ContinueAdminPage() {
       localStorage.removeItem(k);
       localStorage.removeItem(`btv:resume-meta:${baseUrl}`);
     } catch {}
-    setItems((prev) => prev.filter((x) => x.key !== k));
+    setItems(prev => prev.filter(x => x.key !== k));
   };
 
   const clearAll = () => {
@@ -91,8 +83,10 @@ export default function ContinueAdminPage() {
     const hh = Math.floor(s / 3600);
     const mm = Math.floor((s % 3600) / 60);
     const ss = Math.floor(s % 60);
-    return hh > 0 ? `${hh}:${String(mm).padStart(2,'0')}:${String(ss).padStart(2,'0')}` : `${mm}:${String(ss).padStart(2,'0')}`;
-    };
+    return hh > 0
+      ? `${hh}:${String(mm).padStart(2,'0')}:${String(ss).padStart(2,'0')}`
+      : `${mm}:${String(ss).padStart(2,'0')}`;
+  };
 
   return (
     <main className="max-w-4xl mx-auto p-6 text-white">
@@ -113,7 +107,9 @@ export default function ContinueAdminPage() {
             {items.map((it) => (
               <li key={it.key} className="rounded border border-slate-700 bg-slate-900 p-4">
                 <div className="text-sm text-slate-400 mb-1">
-                  {it.title ? <span className="font-medium text-white">{it.title}</span> : <span>{it.baseUrl}</span>}
+                  {it.title
+                    ? <span className="font-medium text-white">{it.title}</span>
+                    : <span>{it.baseUrl}</span>}
                 </div>
                 <div className="text-slate-300 mb-3">Saved at {fmt(it.seconds)}</div>
                 <div className="flex gap-2">
