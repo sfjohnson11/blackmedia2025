@@ -1,7 +1,7 @@
 // app/watch/[channelId]/page.tsx — Channel 21 is ALWAYS YouTube Live (24/7) + stable player
 "use client";
 
-import { type ReactNode, useEffect, useState, useCallback, useMemo, useRef } from "react";
+import { type ReactNode, useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import VideoPlayer from "@/components/video-player";
 import {
@@ -96,7 +96,7 @@ export default function WatchPage() {
           mp4_url: `youtube_channel:${YT_CH21}`, // marker for render branch
           duration: 86400 * 365, // long fake duration
           start_time: new Date(Date.now() - 3600000).toISOString(),
-          poster_url: details?.image_url || null,
+          poster_url: (details as any)?.image_url || null,
         };
         setCurrentProgram(liveProgram);
         stableTitleRef.current = liveProgram.title;
@@ -180,7 +180,7 @@ export default function WatchPage() {
         if (!stableSrcRef.current || prevSrcBase !== nextSrcBase) {
           stableSrcRef.current = fullSrc;
         }
-        const nextPoster = nextProgram?.poster_url || channelDetails?.image_url || undefined;
+        const nextPoster = nextProgram?.poster_url || (channelDetails as any)?.image_url || undefined;
         if (stablePosterRef.current !== nextPoster) stablePosterRef.current = nextPoster;
 
         const nextTitle = nextProgram?.title;
@@ -190,7 +190,7 @@ export default function WatchPage() {
         const fallback = getStandbyMp4Program(numericChannelId, now);
         setCurrentProgram(fallback);
         stableSrcRef.current = getVideoUrlForProgram(fallback);
-        stablePosterRef.current = fallback.poster_url || channelDetails?.image_url || undefined;
+        stablePosterRef.current = fallback.poster_url || (channelDetails as any)?.image_url || undefined;
         stableTitleRef.current = fallback.title;
       } finally {
         if (firstLoad) setIsLoading(false);
@@ -296,7 +296,7 @@ export default function WatchPage() {
         <button onClick={() => router.back()} className="p-2 rounded-full hover:bg-gray-700" aria-label="Go back">
           <ChevronLeft className="h-6 w-6" />
         </button>
-        <h1 className="text-xl font-semibold truncate px-2">{channelDetails?.name || `Channel ${channelIdString}`}</h1>
+        <h1 className="text-xl font-semibold truncate px-2">{(channelDetails as any)?.name || `Channel ${channelIdString}`}</h1>
         <div className="w-10 h-10" />
       </div>
       <div className="w-full aspect-video bg-black flex items-center justify-center">{content}</div>
@@ -304,7 +304,7 @@ export default function WatchPage() {
         {currentProgram && !isYouTubeLive && (
           <>
             <h2 className="text-2xl font-bold">{frozenTitle}</h2>
-            <p className="text-sm text-gray-400">Channel: {channelDetails?.name || `Channel ${channelIdString}`}</p>
+            <p className="text-sm text-gray-400">Channel: {(channelDetails as any)?.name || `Channel ${channelIdString}`}</p>
             {currentProgram.id !== STANDBY_PLACEHOLDER_ID && currentProgram.start_time && (
               <p className="text-sm text-gray-400">
                 Scheduled Start: {new Date(currentProgram.start_time).toLocaleString()}
