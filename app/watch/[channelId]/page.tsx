@@ -15,13 +15,9 @@ import { ChevronLeft, Loader2 } from "lucide-react";
 import YouTubeEmbed from "@/components/youtube-embed";
 
 const CH21_ID_NUMERIC = 21;
-/** Your 24/7 YouTube Channel ID for Channel 21 */
 const YT_CH21 = "UCMkW239dyAxDyOFDP0D6p2g";
-
-/** Channels that are *always* live on YouTube (skip schedule fetch) */
 const ALWAYS_LIVE_CHANNEL_IDS = new Set<number>([CH21_ID_NUMERIC]);
 
-/** Normalize to ignore rotating query params */
 function baseUrl(u?: string | null) {
   return (u ?? "").split("?")[0];
 }
@@ -32,8 +28,6 @@ export default function WatchPage() {
   const router = useRouter();
 
   const channelIdString = params.channelId as string;
-
-  // Optional: enable schedule polling for non-live channels with ?poll=1
   const pollOn = (searchParams?.get("poll") ?? "0") === "1";
 
   const [validatedNumericChannelId, setValidatedNumericChannelId] = useState<number | null>(null);
@@ -44,10 +38,7 @@ export default function WatchPage() {
   const [error, setError] = useState<string | null>(null);
   const [videoPlayerKey, setVideoPlayerKey] = useState(Date.now());
 
-  // Prevent overlapping fetches
   const isFetchingRef = useRef(false);
-
-  // Freeze values passed to the HTML player
   const stableSrcRef = useRef<string | undefined>(undefined);
   const stablePosterRef = useRef<string | undefined>(undefined);
   const stableTitleRef = useRef<string | undefined>(undefined);
@@ -60,14 +51,13 @@ export default function WatchPage() {
   }, [searchParams]);
   const [userId, setUserId] = useState<string | null>(null);
 
-  // tiny helper to grab the actual <video> element rendered by VideoPlayer
   const getVideoEl = useCallback((): HTMLVideoElement | null => {
     return typeof document !== "undefined"
       ? (document.querySelector("video") as HTMLVideoElement | null)
       : null;
   }, []);
 
-  // ---------- INIT (with robust fallback) ----------
+  // ---------- INIT (Numeric-first: never block playback) ----------
   useEffect(() => {
     let cancelled = false;
 
@@ -81,64 +71,28 @@ export default function WatchPage() {
       setIsLoading(true);
       setError(null);
 
-      let details: Channel | null = null;
-      try {
-        details = await fetchChannelDetails(channelIdString);
-      } catch (e) {
-        // soft log; don’t break the page
-        console.warn("fetchChannelDetails failed:", e);
-      }
-      if (cancelled) return;
+      // 1) If URL is numeric, use it immediately (NO network call, NO RLS risk)
+      const numericId = Number.parseInt(channelIdString, 10);
+      if (!Number.isNaN(numericId)) {
+        if (cancelled) return;
 
-      if (details) {
-        setChannelDetails(details);
-        const numericId = Number.parseInt(String((details as any).id), 10);
-        if (Number.isNaN(numericId)) {
-          setError("Channel misconfigured: missing numeric id.");
-          setIsLoading(false);
-          return;
-        }
         setValidatedNumericChannelId(numericId);
+        setChannelDetails(
+          {
+            // minimal placeholder so UI has a name/poster space
+            // @ts-expect-error minimal shape for your Channel type
+            id: numericId,
+            name: `Channel ${numericId}`,
+            image_url: null,
+            description: null,
+            created_at: null,
+            updated_at: null,
+            slug: null,
+          } as Channel
+        );
 
-        // Always-live short-circuit
+        // YouTube live short-circuit
         if (ALWAYS_LIVE_CHANNEL_IDS.has(numericId)) {
-          const liveProgram: Program = {
-            id: "live-ch21-youtube",
-            title: "Live Broadcast (Channel 21)",
-            description: "24/7 broadcasting via YouTube.",
-            channel_id: CH21_ID_NUMERIC,
-            mp4_url: `youtube_channel:${YT_CH21}`,
-            duration: 86400 * 365,
-            start_time: new Date(Date.now() - 3600000).toISOString(),
-            poster_url: details?.image_url || null,
-          };
-          setCurrentProgram(liveProgram);
-          stableTitleRef.current = liveProgram.title;
-          setIsLoading(false);
-          return;
-        }
-
-        setIsLoading(false);
-        return;
-      }
-
-      // ---- Fallback if details couldn’t load (keeps the page working)
-      const numericIdFallback = Number.parseInt(channelIdString, 10);
-      if (!Number.isNaN(numericIdFallback)) {
-        setValidatedNumericChannelId(numericIdFallback);
-        // Minimal Channel placeholder to avoid UI nulls
-        setChannelDetails({
-          // @ts-expect-error: allow minimal shape to satisfy UI
-          id: numericIdFallback,
-          name: `Channel ${numericIdFallback}`,
-          image_url: null,
-          description: null,
-          created_at: null,
-          updated_at: null,
-          slug: null,
-        } as any);
-
-        if (ALWAYS_LIVE_CHANNEL_IDS.has(numericIdFallback)) {
           const liveProgram: Program = {
             id: "live-ch21-youtube",
             title: "Live Broadcast (Channel 21)",
@@ -159,13 +113,66 @@ export default function WatchPage() {
         return;
       }
 
-      // If we get here, neither details nor numeric fallback worked
-      setError("Could not load channel details.");
-      setIsLoading(false);
+      // 2) If URL is a slug, try to fetch details — but never fail the page
+      try {
+        const details = await fetchChannelDetails(channelIdString);
+        if (!details) throw new Error("no details");
+
+        if (cancelled) return;
+
+        setChannelDetails(details);
+        const gotId = Number.parseInt(String((details as any).id), 10);
+        if (Number.isNaN(gotId)) {
+          // Even if misconfigured, keep page running with a neutral fallback
+          setValidatedNumericChannelId(0);
+          setIsLoading(false);
+          return;
+        }
+        setValidatedNumericChannelId(gotId);
+
+        if (ALWAYS_LIVE_CHANNEL_IDS.has(gotId)) {
+          const liveProgram: Program = {
+            id: "live-ch21-youtube",
+            title: "Live Broadcast (Channel 21)",
+            description: "24/7 broadcasting via YouTube.",
+            channel_id: CH21_ID_NUMERIC,
+            mp4_url: `youtube_channel:${YT_CH21}`,
+            duration: 86400 * 365,
+            start_time: new Date(Date.now() - 3600000).toISOString(),
+            poster_url: details?.image_url || null,
+          };
+          setCurrentProgram(liveProgram);
+          stableTitleRef.current = liveProgram.title;
+          setIsLoading(false);
+          return;
+        }
+
+        setIsLoading(false);
+      } catch (e) {
+        console.warn("fetchChannelDetails failed; using placeholder.", e);
+        if (cancelled) return;
+        // Slug failed — still render with placeholder; no error banner
+        setValidatedNumericChannelId(0);
+        setChannelDetails(
+          {
+            // @ts-expect-error minimal placeholder
+            id: 0,
+            name: `Channel`,
+            image_url: null,
+            description: null,
+            created_at: null,
+            updated_at: null,
+            slug: channelIdString,
+          } as Channel
+        );
+        setIsLoading(false);
+      }
     }
 
     init();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [channelIdString]);
 
   const getStandbyMp4Program = useCallback(
@@ -188,7 +195,7 @@ export default function WatchPage() {
   // Regular schedule fetch for non-always-live channels
   const fetchCurrentProgram = useCallback(
     async (numericChannelId: number) => {
-      if (ALWAYS_LIVE_CHANNEL_IDS.has(numericChannelId)) return; // never fetch schedule for 24/7 live
+      if (ALWAYS_LIVE_CHANNEL_IDS.has(numericChannelId)) return;
       if (isFetchingRef.current) return;
       isFetchingRef.current = true;
 
@@ -217,7 +224,6 @@ export default function WatchPage() {
           ? { ...activeProgram, channel_id: numericChannelId }
           : getStandbyMp4Program(numericChannelId, now);
 
-        // Only change if program id OR base media URL actually changed
         setCurrentProgram((prev) => {
           if (prev) {
             const prevSrc = baseUrl(prev.mp4_url);
@@ -229,7 +235,6 @@ export default function WatchPage() {
           return nextProgram;
         });
 
-        // Freeze props so the player doesn’t reload on harmless updates
         const fullSrc = getVideoUrlForProgram(nextProgram);
         const nextSrcBase = baseUrl(fullSrc);
         const prevSrcBase = baseUrl(stableSrcRef.current);
@@ -242,7 +247,7 @@ export default function WatchPage() {
         const nextTitle = nextProgram?.title;
         if (stableTitleRef.current !== nextTitle) stableTitleRef.current = nextTitle;
       } catch (e: any) {
-        setError(e.message);
+        setError(null); // don’t show blocking error; fall back gracefully
         const fallback = getStandbyMp4Program(numericChannelId, now);
         setCurrentProgram(fallback);
         stableSrcRef.current = getVideoUrlForProgram(fallback);
@@ -257,10 +262,10 @@ export default function WatchPage() {
   );
 
   const fetchUpcomingPrograms = useCallback(async (numericChannelId: number) => {
-    if (ALWAYS_LIVE_CHANNEL_IDS.has(numericChannelId)) return; // no upcoming list for 24/7 live
+    if (ALWAYS_LIVE_CHANNEL_IDS.has(numericChannelId)) return;
     try {
       const now = new Date().toISOString();
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from("programs")
         .select("*")
         .eq("channel_id", numericChannelId)
@@ -268,23 +273,20 @@ export default function WatchPage() {
         .order("start_time", { ascending: true })
         .limit(6);
 
-      if (!error && data) setUpcomingPrograms(data as Program[]);
+      if (data) setUpcomingPrograms(data as Program[]);
     } catch {
-      // ignore
+      // ignore silently
     }
   }, []);
 
   useEffect(() => {
     if (validatedNumericChannelId === null) return;
-
-    // For always-live channels, nothing else to do.
     if (ALWAYS_LIVE_CHANNEL_IDS.has(validatedNumericChannelId)) return;
 
-    // Initial fetch (non-live channels only)
     fetchCurrentProgram(validatedNumericChannelId);
     fetchUpcomingPrograms(validatedNumericChannelId);
 
-    if (!pollOn) return; // optional polling for non-live channels
+    if (!pollOn) return;
     const interval = setInterval(() => {
       if (document.visibilityState === "visible") {
         fetchCurrentProgram(validatedNumericChannelId);
@@ -302,7 +304,6 @@ export default function WatchPage() {
 
   const handlePrimaryLiveStreamError = useCallback(() => {}, []);
 
-  // Use frozen values for the player
   const frozenSrc = stableSrcRef.current;
   const frozenPoster = stablePosterRef.current;
   const frozenTitle = stableTitleRef.current;
@@ -325,14 +326,14 @@ export default function WatchPage() {
     if (!resumeSeconds) return;
 
     let tries = 0;
-    const maxTries = 40; // ~4s
+    const maxTries = 40;
     const attempt = () => {
       const v = getVideoEl();
       if (v && !Number.isNaN(v.duration)) {
         const seekTo = Math.min(resumeSeconds, Math.floor(v.duration || resumeSeconds));
         const seek = () => { try { v.currentTime = seekTo; } catch {} };
         if (v.readyState >= 1) seek(); else v.addEventListener("loadedmetadata", seek, { once: true });
-        return; // done
+        return;
       }
       if (tries++ < maxTries) setTimeout(attempt, 100);
     };
@@ -366,13 +367,13 @@ export default function WatchPage() {
           updated_at: new Date().toISOString(),
         });
       } catch {
-        // fail soft
+        // soft-fail
       }
     };
 
     const onTime = () => {
       const now = Date.now();
-      if (now - lastWrite < 10_000) return; // debounce ~10s
+      if (now - lastWrite < 10_000) return;
       lastWrite = now;
       void upsert(false);
     };
@@ -381,7 +382,6 @@ export default function WatchPage() {
     v.addEventListener("timeupdate", onTime);
     v.addEventListener("ended", onEnded);
 
-    // quickly create/refresh a record so /continue has metadata
     void upsert(false);
 
     return () => {
@@ -398,9 +398,7 @@ export default function WatchPage() {
   ]);
 
   let content: ReactNode;
-  if (error) {
-    content = <p className="text-red-400 p-4 text-center">Error: {error}</p>;
-  } else if (isLoading && !currentProgram) {
+  if (isLoading && !currentProgram) {
     content = (
       <div className="flex flex-col items-center justify-center h-full">
         <Loader2 className="h-10 w-10 animate-spin text-red-500 mb-2" />
@@ -408,13 +406,7 @@ export default function WatchPage() {
       </div>
     );
   } else if (isYouTubeLive) {
-    content = (
-      <YouTubeEmbed
-        channelId={YT_CH21}
-        title={frozenTitle || "Channel 21 Live"}
-        muted={true}
-      />
-    );
+    content = <YouTubeEmbed channelId={YT_CH21} title={frozenTitle || "Channel 21 Live"} muted={true} />;
   } else if (currentProgram && frozenSrc) {
     content = (
       <VideoPlayer
@@ -429,6 +421,9 @@ export default function WatchPage() {
         showNoLiveNotice={false}
       />
     );
+  } else if (error) {
+    // we keep this branch last so numeric fallback wins
+    content = <p className="text-red-400 p-4 text-center">Error: {error}</p>;
   } else {
     content = <p className="text-gray-400 p-4 text-center">Initializing channel...</p>;
   }
