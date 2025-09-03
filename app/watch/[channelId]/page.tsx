@@ -13,6 +13,7 @@ import {
 import type { Program, Channel } from "@/types";
 import { ChevronLeft, Loader2 } from "lucide-react";
 import YouTubeEmbed from "@/components/youtube-embed";
+import { loadProgress, saveProgress, clearProgress } from "@/lib/resume"; // ← NEW
 
 const CH21_ID_NUMERIC = 21;
 /** Your 24/7 YouTube Channel ID for Channel 21 */
@@ -51,6 +52,10 @@ export default function WatchPage() {
   const stableSrcRef = useRef<string | undefined>(undefined);
   const stablePosterRef = useRef<string | undefined>(undefined);
   const stableTitleRef = useRef<string | undefined>(undefined);
+
+  // Host for querying the inner <video> element
+  const playerHostRef = useRef<HTMLDivElement | null>(null); // ← NEW
+  const saveTickRef = useRef<number>(0); // ← NEW
 
   // Accept numeric id OR slug like "freedom_school"
   useEffect(() => {
@@ -254,6 +259,70 @@ export default function WatchPage() {
   const isYouTubeLive = currentProgram?.id === "live-ch21-youtube";
   const shouldLoopInPlayer = currentProgram?.id === STANDBY_PLACEHOLDER_ID;
 
+  // ========= NEW: continue-watching (resume) wiring =========
+  useEffect(() => {
+    if (!currentProgram || !frozenSrc) return;
+    if (currentProgram.id === "live-ch21-youtube") return; // skip YT Live
+
+    const host = playerHostRef.current;
+    if (!host) return;
+
+    const video: HTMLVideoElement | null = host.querySelector("video");
+    if (!video) return;
+
+    let cancelled = false;
+
+    const tryResume = () => {
+      const prog = loadProgress(frozenSrc);
+      if (!prog) return;
+      const resumeAt = Math.max(0, prog.t || 0);
+
+      // only resume if meaningful (>10s) and not near the end
+      if (resumeAt > 10 && (!video.duration || resumeAt < (video.duration - 15))) {
+        try {
+          video.currentTime = resumeAt;
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+
+    const onLoaded = () => {
+      if (cancelled) return;
+      tryResume();
+    };
+
+    const onTime = () => {
+      if (cancelled) return;
+      const now = Date.now();
+      // throttle saves (~every 10s)
+      if (now - (saveTickRef.current || 0) >= 10000) {
+        saveTickRef.current = now;
+        saveProgress(frozenSrc, video.currentTime, video.duration || undefined);
+      }
+    };
+
+    const onEnded = () => {
+      clearProgress(frozenSrc);
+    };
+
+    video.addEventListener("loadedmetadata", onLoaded);
+    video.addEventListener("timeupdate", onTime);
+    video.addEventListener("ended", onEnded);
+
+    if (video.readyState >= 1) {
+      tryResume();
+    }
+
+    return () => {
+      cancelled = true;
+      video.removeEventListener("loadedmetadata", onLoaded);
+      video.removeEventListener("timeupdate", onTime);
+      video.removeEventListener("ended", onEnded);
+    };
+  }, [currentProgram, frozenSrc]);
+  // ========= end NEW code =========
+
   let content: ReactNode;
   if (error) {
     content = <p className="text-red-400 p-4 text-center">Error: {error}</p>;
@@ -299,7 +368,12 @@ export default function WatchPage() {
         <h1 className="text-xl font-semibold truncate px-2">{(channelDetails as any)?.name || `Channel ${channelIdString}`}</h1>
         <div className="w-10 h-10" />
       </div>
-      <div className="w-full aspect-video bg-black flex items-center justify-center">{content}</div>
+
+      {/* ← add ref here so we can find the inner <video> */}
+      <div ref={playerHostRef} className="w-full aspect-video bg-black flex items-center justify-center">
+        {content}
+      </div>
+
       <div className="p-4 flex-grow">
         {currentProgram && !isYouTubeLive && (
           <>
