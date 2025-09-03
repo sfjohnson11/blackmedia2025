@@ -52,6 +52,21 @@ export default function WatchPage() {
   const stablePosterRef = useRef<string | undefined>(undefined);
   const stableTitleRef = useRef<string | undefined>(undefined);
 
+  // --- NEW: resume from ?t= (seconds) and track user id for progress
+  const resumeSeconds = useMemo(() => {
+    const t = searchParams?.get("t");
+    const n = t ? parseInt(t, 10) : 0;
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  }, [searchParams]);
+  const [userId, setUserId] = useState<string | null>(null);
+
+  // --- NEW: tiny helper to grab the actual <video> element rendered by VideoPlayer
+  const getVideoEl = useCallback((): HTMLVideoElement | null => {
+    return typeof document !== "undefined"
+      ? (document.querySelector("video") as HTMLVideoElement | null)
+      : null;
+  }, []);
+
   // Accept numeric id OR slug like "freedom_school"
   useEffect(() => {
     let cancelled = false;
@@ -253,6 +268,93 @@ export default function WatchPage() {
 
   const isYouTubeLive = currentProgram?.id === "live-ch21-youtube";
   const shouldLoopInPlayer = currentProgram?.id === STANDBY_PLACEHOLDER_ID;
+
+  // --- NEW: get the current user once (for progress attribution)
+  useEffect(() => {
+    let canceled = false;
+    (async () => {
+      const { data } = await supabase.auth.getUser();
+      if (!canceled) setUserId(data.user?.id ?? null);
+    })();
+    return () => { canceled = true; };
+  }, []);
+
+  // --- NEW: seek to ?t= when the video is ready
+  useEffect(() => {
+    if (!resumeSeconds) return;
+
+    let tries = 0;
+    const maxTries = 40; // ~4s
+    const attempt = () => {
+      const v = getVideoEl();
+      if (v && !Number.isNaN(v.duration)) {
+        const seekTo = Math.min(resumeSeconds, Math.floor(v.duration || resumeSeconds));
+        const seek = () => { try { v.currentTime = seekTo; } catch {} };
+        if (v.readyState >= 1) seek(); else v.addEventListener("loadedmetadata", seek, { once: true });
+        return; // done
+      }
+      if (tries++ < maxTries) setTimeout(attempt, 100);
+    };
+    attempt();
+  }, [resumeSeconds, getVideoEl, frozenSrc]);
+
+  // --- NEW: save progress every ~10s and on ended
+  useEffect(() => {
+    if (!userId || !currentProgram) return;
+
+    const assetId = currentProgram.id; // or baseUrl(frozenSrc) if you prefer URL identity
+    const assetTitle = currentProgram.title ?? null;
+    const channelId = currentProgram.channel_id ?? validatedNumericChannelId ?? null;
+
+    const v = getVideoEl();
+    if (!v) return;
+
+    let lastWrite = 0;
+    const upsert = async (completed: boolean) => {
+      const pos = Math.floor(v.currentTime || 0);
+      const dur = Math.floor(v.duration || 0);
+      try {
+        await supabase.from("watch_progress").upsert({
+          user_id: userId,
+          asset_id: assetId,
+          asset_title: assetTitle,
+          channel_id: channelId,
+          last_position_seconds: pos,
+          duration_seconds: dur,
+          completed,
+          updated_at: new Date().toISOString(),
+        });
+      } catch {
+        // fail soft
+      }
+    };
+
+    const onTime = () => {
+      const now = Date.now();
+      if (now - lastWrite < 10_000) return; // debounce ~10s
+      lastWrite = now;
+      void upsert(false);
+    };
+    const onEnded = () => void upsert(true);
+
+    v.addEventListener("timeupdate", onTime);
+    v.addEventListener("ended", onEnded);
+
+    // quickly create/refresh a record so /continue has metadata
+    void upsert(false);
+
+    return () => {
+      v.removeEventListener("timeupdate", onTime);
+      v.removeEventListener("ended", onEnded);
+    };
+  }, [
+    userId,
+    currentProgram?.id,
+    currentProgram?.title,
+    currentProgram?.channel_id,
+    validatedNumericChannelId,
+    getVideoEl,
+  ]);
 
   let content: ReactNode;
   if (error) {
