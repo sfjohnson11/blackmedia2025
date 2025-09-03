@@ -17,7 +17,9 @@ export function saveProgress(src: string, t: number, dur?: number) {
   }
 }
 
-export function loadProgress(src: string): { t: number; dur?: number | null } | null {
+export function loadProgress(
+  src: string
+): { t: number; dur?: number | null } | null {
   try {
     const raw = localStorage.getItem(keyFor(src));
     if (!raw) return null;
