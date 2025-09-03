@@ -1,4 +1,4 @@
-// app/watch/[channelId]/page.tsx — Channel 21 is ALWAYS YouTube Live (24/7) + stable player
+// app/watch/[channelId]/page.tsx
 "use client";
 
 import { type ReactNode, useEffect, useState, useCallback, useRef } from "react";
@@ -13,7 +13,6 @@ import {
 import type { Program, Channel } from "@/types";
 import { ChevronLeft, Loader2 } from "lucide-react";
 import YouTubeEmbed from "@/components/youtube-embed";
-import { loadProgress, saveProgress, clearProgress } from "@/lib/resume"; // ← NEW
 
 const CH21_ID_NUMERIC = 21;
 /** Your 24/7 YouTube Channel ID for Channel 21 */
@@ -33,7 +32,6 @@ export default function WatchPage() {
   const router = useRouter();
 
   const channelIdString = params.channelId as string;
-
   // Optional: enable schedule polling for non-live channels with ?poll=1
   const pollOn = (searchParams?.get("poll") ?? "0") === "1";
 
@@ -53,9 +51,8 @@ export default function WatchPage() {
   const stablePosterRef = useRef<string | undefined>(undefined);
   const stableTitleRef = useRef<string | undefined>(undefined);
 
-  // Host for querying the inner <video> element
-  const playerHostRef = useRef<HTMLDivElement | null>(null); // ← NEW
-  const saveTickRef = useRef<number>(0); // ← NEW
+  // Host ref so we can find the underlying <video> element for resume logic
+  const playerHostRef = useRef<HTMLDivElement | null>(null);
 
   // Accept numeric id OR slug like "freedom_school"
   useEffect(() => {
@@ -101,7 +98,7 @@ export default function WatchPage() {
           mp4_url: `youtube_channel:${YT_CH21}`, // marker for render branch
           duration: 86400 * 365, // long fake duration
           start_time: new Date(Date.now() - 3600000).toISOString(),
-          poster_url: (details as any)?.image_url || null,
+          poster_url: null, // no DB dependency
         };
         setCurrentProgram(liveProgram);
         stableTitleRef.current = liveProgram.title;
@@ -185,7 +182,7 @@ export default function WatchPage() {
         if (!stableSrcRef.current || prevSrcBase !== nextSrcBase) {
           stableSrcRef.current = fullSrc;
         }
-        const nextPoster = nextProgram?.poster_url || (channelDetails as any)?.image_url || undefined;
+        const nextPoster = nextProgram?.poster_url || undefined; // no image_url dependency
         if (stablePosterRef.current !== nextPoster) stablePosterRef.current = nextPoster;
 
         const nextTitle = nextProgram?.title;
@@ -195,14 +192,14 @@ export default function WatchPage() {
         const fallback = getStandbyMp4Program(numericChannelId, now);
         setCurrentProgram(fallback);
         stableSrcRef.current = getVideoUrlForProgram(fallback);
-        stablePosterRef.current = fallback.poster_url || (channelDetails as any)?.image_url || undefined;
+        stablePosterRef.current = fallback.poster_url || undefined;
         stableTitleRef.current = fallback.title;
       } finally {
         if (firstLoad) setIsLoading(false);
         isFetchingRef.current = false;
       }
     },
-    [channelDetails, currentProgram, getStandbyMp4Program]
+    [currentProgram, getStandbyMp4Program]
   );
 
   const fetchUpcomingPrograms = useCallback(async (numericChannelId: number) => {
@@ -259,69 +256,84 @@ export default function WatchPage() {
   const isYouTubeLive = currentProgram?.id === "live-ch21-youtube";
   const shouldLoopInPlayer = currentProgram?.id === STANDBY_PLACEHOLDER_ID;
 
-  // ========= NEW: continue-watching (resume) wiring =========
+  /**
+   * === CONTINUE WATCHING (save & restore) ===
+   * We don’t modify VideoPlayer. Instead, we find the underlying <video> element
+   * inside our player host and attach listeners.
+   */
   useEffect(() => {
-    if (!currentProgram || !frozenSrc) return;
-    if (currentProgram.id === "live-ch21-youtube") return; // skip YT Live
+    if (!frozenSrc || isYouTubeLive) return; // don’t save for YouTube live
+    if (!playerHostRef.current) return;
 
     const host = playerHostRef.current;
-    if (!host) return;
-
     const video: HTMLVideoElement | null = host.querySelector("video");
     if (!video) return;
 
-    let cancelled = false;
+    const base = baseUrl(frozenSrc);
+    const resumeKey = `btv:resume:${base}`;
+    const metaKey = `btv:resume-meta:${base}`;
+    let lastSaved = 0;
 
-    const tryResume = () => {
-      const prog = loadProgress(frozenSrc);
-      if (!prog) return;
-      const resumeAt = Math.max(0, prog.t || 0);
-
-      // only resume if meaningful (>10s) and not near the end
-      if (resumeAt > 10 && (!video.duration || resumeAt < (video.duration - 15))) {
-        try {
-          video.currentTime = resumeAt;
-        } catch {
-          /* ignore */
-        }
-      }
+    const saveMeta = () => {
+      try {
+        localStorage.setItem(
+          metaKey,
+          JSON.stringify({
+            title: frozenTitle ?? null,
+            channel_id: validatedNumericChannelId ?? null,
+          })
+        );
+      } catch {}
     };
 
     const onLoaded = () => {
-      if (cancelled) return;
-      tryResume();
+      // Restore position once
+      try {
+        const raw = localStorage.getItem(resumeKey);
+        const t = raw ? parseFloat(raw) : 0;
+        if (!Number.isNaN(t) && t > 5 && video.duration && t < video.duration - 3) {
+          video.currentTime = t;
+        }
+      } catch {}
+      saveMeta();
+    };
+
+    const saveNow = () => {
+      try {
+        const t = Math.floor(video.currentTime || 0);
+        localStorage.setItem(resumeKey, String(t));
+      } catch {}
     };
 
     const onTime = () => {
-      if (cancelled) return;
-      const now = Date.now();
-      // throttle saves (~every 10s)
-      if (now - (saveTickRef.current || 0) >= 10000) {
-        saveTickRef.current = now;
-        saveProgress(frozenSrc, video.currentTime, video.duration || undefined);
+      const t = Math.floor(video.currentTime || 0);
+      if (t - lastSaved >= 10) {
+        lastSaved = t;
+        saveNow();
       }
     };
 
+    const onPause = () => saveNow();
+
     const onEnded = () => {
-      clearProgress(frozenSrc);
+      // Clear resume when finished
+      try {
+        localStorage.removeItem(resumeKey);
+      } catch {}
     };
 
     video.addEventListener("loadedmetadata", onLoaded);
     video.addEventListener("timeupdate", onTime);
+    video.addEventListener("pause", onPause);
     video.addEventListener("ended", onEnded);
 
-    if (video.readyState >= 1) {
-      tryResume();
-    }
-
     return () => {
-      cancelled = true;
       video.removeEventListener("loadedmetadata", onLoaded);
       video.removeEventListener("timeupdate", onTime);
+      video.removeEventListener("pause", onPause);
       video.removeEventListener("ended", onEnded);
     };
-  }, [currentProgram, frozenSrc]);
-  // ========= end NEW code =========
+  }, [frozenSrc, frozenTitle, validatedNumericChannelId, isYouTubeLive]);
 
   let content: ReactNode;
   if (error) {
@@ -365,17 +377,19 @@ export default function WatchPage() {
         <button onClick={() => router.back()} className="p-2 rounded-full hover:bg-gray-700" aria-label="Go back">
           <ChevronLeft className="h-6 w-6" />
         </button>
-        <h1 className="text-xl font-semibold truncate px-2">{(channelDetails as any)?.name || `Channel ${channelIdString}`}</h1>
+        <h1 className="text-xl font-semibold truncate px-2">
+          {(channelDetails as any)?.name || `Channel ${channelIdString}`}
+        </h1>
         <div className="w-10 h-10" />
       </div>
 
-      {/* ← add ref here so we can find the inner <video> */}
+      {/* Host ref lets us grab the underlying <video> for resume logic */}
       <div ref={playerHostRef} className="w-full aspect-video bg-black flex items-center justify-center">
         {content}
       </div>
 
       <div className="p-4 flex-grow">
-        {currentProgram && !isYouTubeLive && (
+        {currentProgram && currentProgram.id !== "live-ch21-youtube" && (
           <>
             <h2 className="text-2xl font-bold">{frozenTitle}</h2>
             <p className="text-sm text-gray-400">Channel: {(channelDetails as any)?.name || `Channel ${channelIdString}`}</p>
