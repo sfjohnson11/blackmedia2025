@@ -1,6 +1,8 @@
 // app/watch/[channelId]/page.tsx
-// PUBLIC buckets only — MP4 player + YouTube (ch21), UTC schedule, channel-bucket resolver,
-// stable overlay, simple recovery to standby, and a small debug panel (?debug=1).
+// PUBLIC buckets only — MP4 + YouTube (ch21), UTC schedule (+grace), stable player,
+// resolves from channel buckets (channel1..channel29 or slug like freedom_school),
+// no flicker: only remounts when the src actually changes, gentle recovery (no thrash),
+// small debug panel (?debug=1) to reveal the resolved URL.
 
 "use client";
 
@@ -14,7 +16,7 @@ import {
   STANDBY_PLACEHOLDER_ID,
 } from "@/lib/supabase";
 
-/* ---------- Inline minimal types ---------- */
+/* ---------- Minimal inline types ---------- */
 type Program = {
   id: string;
   channel_id: number;
@@ -35,7 +37,7 @@ type Channel = {
   is_active?: boolean | null;
 };
 
-/* ---------- Tiny inline TopNav (no external imports) ---------- */
+/* ---------- Simple inline TopNav ---------- */
 function TopNav({ title }: { title?: string }) {
   const router = useRouter();
   return (
@@ -57,36 +59,34 @@ function TopNav({ title }: { title?: string }) {
   );
 }
 
-/* ---------- Brand/logo from 'brand' bucket (public) ---------- */
+/* ---------- Brand/logo from 'brand' (PUBLIC) ---------- */
 const BRAND_BUCKET = "brand";
 const BRAND_LOGO_OBJECT = process.env.NEXT_PUBLIC_BRAND_LOGO_OBJECT || "blacktruth1.jpeg";
-const PUBLIC_LOGO_FALLBACK = "/brand/blacktruth-logo.png"; // optional public/ fallback
+const PUBLIC_LOGO_FALLBACK = "/brand/blacktruth-logo.png";
 
-/* ---------- Buckets: channel1..channel29 or slug like 'freedom_school' ---------- */
+/* ---------- Channel bucket names ---------- */
 function bucketNameFor(details: Channel | null): string | null {
   if (!details) return null;
   const slug = (details as any)?.slug?.toString().trim();
-  if (slug) return slug;                          // e.g. "freedom_school"
+  if (slug) return slug; // e.g. "freedom_school"
   const n = Number((details as any)?.id);
   if (Number.isFinite(n) && n > 0) return `channel${n}`; // e.g. "channel7"
   return null;
 }
 
-/* ---------- Scheduling constants ---------- */
+/* ---------- Scheduling ---------- */
 const CH21 = 21;
 const YT_CH21 = "UCMkW239dyAxDyOFDP0D6p2g";
-const ALWAYS_LIVE = new Set<number>([CH21]);
 
 const START_EARLY_GRACE_MS = 30_000;
 const END_LATE_GRACE_MS = 15_000;
-const POLL_MS = 12_000;
+const POLL_MS = 15_000; // not too aggressive
 
 /* ---------- Player constants ---------- */
-const STABLE_PLAY_MS = 700;
-const CANPLAY_TIMEOUT_MS = 8000;
-const STALL_RECOVERY_MS = 3500;
-const PROGRESS_STALL_MS = 4000;
-const MAX_ATTEMPTS_PER_SRC = 2;
+const OVERLAY_HIDE_DELAY_MS = 600;
+const CANPLAY_TIMEOUT_MS = 9000;
+const LONG_BUFFER_MS = 6000; // show "Buffering…" if waiting this long
+const MAX_RECOVERIES = 1;    // one gentle reload attempt only
 
 /* ---------- Helpers ---------- */
 function toUtcDate(val?: string | Date | null): Date | null {
@@ -100,7 +100,6 @@ function toUtcDate(val?: string | Date | null): Date | null {
 }
 const baseUrl = (u?: string | null) => (u ?? "").split("?")[0];
 
-/** Build a public URL from Supabase Storage (PUBLIC buckets only) */
 function publicUrl(bucket: string, objectPath: string): string | undefined {
   const clean = objectPath.replace(/^\.?\//, "");
   try {
@@ -111,7 +110,6 @@ function publicUrl(bucket: string, objectPath: string): string | undefined {
   }
 }
 
-/** Try common standby names inside the same channel bucket */
 function resolveStandbyPublic(bucket: string) {
   const candidates = [
     "standby_blacktruthtv.mp4",
@@ -162,7 +160,7 @@ async function resolvePlayableUrl(program: Program, channelBucket: string | null
   }
 }
 
-/* ---------- Very small inline YouTube live embed (ch21) ---------- */
+/* ---------- Simple YouTube live (CH21) ---------- */
 function YouTubeLive({ channelId, title }: { channelId: string; title?: string }) {
   const src = `https://www.youtube.com/embed/live_stream?channel=${encodeURIComponent(
     channelId
@@ -178,7 +176,7 @@ function YouTubeLive({ channelId, title }: { channelId: string; title?: string }
   );
 }
 
-/* ---------- SmartVideo: overlay + simple recovery to standby ---------- */
+/* ---------- SmartVideo (steady, no thrash) ---------- */
 function SmartVideo({
   src,
   logo,
@@ -195,99 +193,87 @@ function SmartVideo({
   onHardFail: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const [showOverlay, setShowOverlay] = useState(true);
-  const [overlayText, setOverlayText] = useState("Starting stream…");
+  const [overlay, setOverlay] = useState<{ visible: boolean; text: string }>({
+    visible: true,
+    text: "Starting stream…",
+  });
 
-  const attemptsRef = useRef(0);
-  const canplayTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const stablePlayTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const stallTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const progressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastProgressT = useRef<number>(0);
-  const attachModeRef = useRef<"direct" | "source">("direct");
+  const recoveryCount = useRef(0);
+  const canplayTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hideOverlayTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longBufferTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearTimers = () => {
-    if (canplayTimer.current) clearTimeout(canplayTimer.current);
-    if (stablePlayTimer.current) clearTimeout(stablePlayTimer.current);
-    if (stallTimer.current) clearTimeout(stallTimer.current);
-    if (progressTimer.current) clearTimeout(progressTimer.current);
+    if (canplayTimeout.current) clearTimeout(canplayTimeout.current);
+    if (hideOverlayTimer.current) clearTimeout(hideOverlayTimer.current);
+    if (longBufferTimer.current) clearTimeout(longBufferTimer.current);
   };
-  const detach = (v: HTMLVideoElement) => {
-    try { v.pause(); v.removeAttribute("src"); while (v.firstChild) v.removeChild(v.firstChild); v.load(); } catch {}
-  };
-  const attachAndPlay = (mode: "direct" | "source") => {
+
+  const attachAndPlay = () => {
     const v = videoRef.current!;
-    detach(v);
+    try {
+      v.pause();
+      v.removeAttribute("src");
+      while (v.firstChild) v.removeChild(v.firstChild);
+      v.load();
+    } catch {}
+
     v.crossOrigin = "anonymous";
     v.preload = "auto";
     v.muted = true;
     v.playsInline = true;
-
-    if (mode === "direct") v.src = src;
-    else { const s = document.createElement("source"); s.src = src; s.type = "video/mp4"; v.appendChild(s); }
+    v.src = src;
 
     setTimeout(() => {
       try { v.currentTime = 0; v.load(); } catch {}
       v.play().catch(() => {});
     }, 0);
 
-    canplayTimer.current = setTimeout(() => tryRecoverOrFail(), CANPLAY_TIMEOUT_MS);
+    // fail if we never reach canplay
+    canplayTimeout.current = setTimeout(() => {
+      handleHardFailure();
+    }, CANPLAY_TIMEOUT_MS);
+  };
+
+  const handleHardFailure = () => {
+    // Only one gentle recovery attempt; then give up to standby
+    if (recoveryCount.current < MAX_RECOVERIES) {
+      recoveryCount.current += 1;
+      setOverlay({ visible: true, text: "Recovering stream…" });
+      attachAndPlay();
+    } else {
+      if (!isStandby) {
+        setOverlay({ visible: true, text: "Switching to standby…" });
+        onHardFail();
+      } else {
+        setOverlay({ visible: true, text: "Video unavailable" });
+      }
+    }
   };
 
   useEffect(() => {
-    attemptsRef.current = 0;
-    setShowOverlay(true);
-    setOverlayText("Starting stream…");
-    lastProgressT.current = 0;
+    recoveryCount.current = 0;
+    setOverlay({ visible: true, text: "Starting stream…" });
     clearTimers();
-    if (videoRef.current) attachAndPlay("direct");
-    return () => { clearTimers(); if (videoRef.current) detach(videoRef.current); };
+    if (videoRef.current) attachAndPlay();
+
+    return () => {
+      clearTimers();
+      const v = videoRef.current;
+      if (v) {
+        try {
+          v.pause();
+          v.removeAttribute("src");
+          v.load();
+        } catch {}
+      }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [src]);
 
-  const armProgressWatch = () => {
-    if (progressTimer.current) clearTimeout(progressTimer.current);
-    progressTimer.current = setTimeout(() => {
-      const v = videoRef.current; if (!v) return;
-      const t = v.currentTime || 0;
-      if (t <= lastProgressT.current + 0.01) tryRecoverOrFail();
-    }, PROGRESS_STALL_MS);
-  };
-
-  const tryRecoverOrFail = () => {
-    const v = videoRef.current; if (!v) return;
-
-    const mediaErr = v.error?.code ?? null; // 3 decode, 4 src unsupported
-    if (mediaErr === 3 || mediaErr === 4) {
-      if (!isStandby) {
-        setOverlayText("Switching to standby…");
-        onHardFail();
-      } else {
-        setOverlayText("Video unavailable");
-        setShowOverlay(true);
-      }
-      return;
-    }
-
-    if (attemptsRef.current < MAX_ATTEMPTS_PER_SRC) {
-      attemptsRef.current += 1;
-      setOverlayText("Recovering stream…");
-      clearTimers();
-      attachAndPlay(attachModeRef.current === "direct" ? "source" : "direct");
-    } else {
-      if (!isStandby) {
-        setOverlayText("Switching to standby…");
-        onHardFail();
-      } else {
-        setOverlayText("Video unavailable");
-        setShowOverlay(true);
-      }
-    }
-  };
-
   return (
     <div className="relative w-full h-full">
-      {showOverlay && (
+      {overlay.visible && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-black z-10">
           {logo ? (
             // eslint-disable-next-line @next/next/no-img-element
@@ -295,12 +281,12 @@ function SmartVideo({
               src={logo}
               alt="Brand"
               className="max-h-[60%] max-w-[80%] object-contain drop-shadow-[0_8px_28px_rgba(0,0,0,0.45)]"
-              onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+              onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
             />
           ) : null}
           <div className="flex items-center gap-2 mt-4 text-gray-300">
-            {!/unavailable/i.test(overlayText) && <Loader2 className="h-5 w-5 animate-spin" />}
-            <span>{overlayText}</span>
+            {!/unavailable/i.test(overlay.text) && <Loader2 className="h-5 w-5 animate-spin" />}
+            <span>{overlay.text}</span>
           </div>
         </div>
       )}
@@ -316,23 +302,36 @@ function SmartVideo({
         disablePictureInPicture
         crossOrigin="anonymous"
         className="w-full h-full"
-        onLoadedMetadata={() => { lastProgressT.current = 0; }}
-        onCanPlay={() => { if (canplayTimer.current) clearTimeout(canplayTimer.current); }}
+        onCanPlay={() => {
+          if (canplayTimeout.current) clearTimeout(canplayTimeout.current);
+        }}
         onPlaying={() => {
-          if (stablePlayTimer.current) clearTimeout(stablePlayTimer.current);
-          stablePlayTimer.current = setTimeout(() => {
-            setOverlayText("");
-            setShowOverlay(false);
-          }, STABLE_PLAY_MS);
-          armProgressWatch();
+          if (hideOverlayTimer.current) clearTimeout(hideOverlayTimer.current);
+          setOverlay((o) => (o.visible ? { ...o, text: "Starting…" } : o));
+          hideOverlayTimer.current = setTimeout(() => {
+            setOverlay({ visible: false, text: "" });
+          }, OVERLAY_HIDE_DELAY_MS);
         }}
-        onTimeUpdate={() => { lastProgressT.current = videoRef.current?.currentTime || 0; armProgressWatch(); }}
         onWaiting={() => {
-          if (stallTimer.current) clearTimeout(stallTimer.current);
-          stallTimer.current = setTimeout(() => tryRecoverOrFail(), STALL_RECOVERY_MS);
+          // Only show buffering after a while; do not restart source here.
+          if (longBufferTimer.current) clearTimeout(longBufferTimer.current);
+          longBufferTimer.current = setTimeout(() => {
+            setOverlay({ visible: true, text: "Buffering…" });
+          }, LONG_BUFFER_MS);
         }}
-        onStalled={() => tryRecoverOrFail()}
-        onError={() => tryRecoverOrFail()}
+        onTimeUpdate={() => {
+          // If we see progress, hide any buffering overlay.
+          if (longBufferTimer.current) clearTimeout(longBufferTimer.current);
+          if (overlay.visible && overlay.text === "Buffering…") {
+            setOverlay({ visible: false, text: "" });
+          }
+        }}
+        onStalled={() => {
+          // Let it try on its own; hard-fail only if canplay timer triggers or media error below.
+        }}
+        onError={() => {
+          handleHardFailure();
+        }}
         onEnded={onEnded}
       />
     </div>
@@ -345,7 +344,6 @@ export default function WatchPage() {
   const searchParams = useSearchParams();
 
   const channelIdString = params.channelId as string;
-  const pollOn = (searchParams?.get("poll") ?? "0") === "1";
   const debugOn = (searchParams?.get("debug") ?? "0") === "1";
 
   const [validatedNumericChannelId, setValidatedNumericChannelId] = useState<number | null>(null);
@@ -371,6 +369,7 @@ export default function WatchPage() {
   const isFetchingRef = useRef(false);
   const stableTitleRef = useRef<string | undefined>(undefined);
   const channelBucketRef = useRef<string | null>(null);
+  const playingSrcRef = useRef<string | null>(null); // to avoid re-mount while same src is playing
 
   // Init channel
   useEffect(() => {
@@ -450,14 +449,15 @@ export default function WatchPage() {
         if (dbError) throw new Error(`Database error: ${dbError.message}`);
         const programs = (programsData ?? []) as Program[];
 
-        // choose active program with grace
+        // active with grace
         let active = programs.find((p) => {
           if (!p.start_time || typeof p.duration !== "number" || p.duration <= 0) return false;
           const start = toUtcDate(p.start_time);
           return !!start && isActiveWindow(start, p.duration, now);
         });
+
         if (!active) {
-          // near-start window
+          // near-start window to avoid “missed tick”
           active = programs.find((p) => {
             if (!p.start_time || typeof p.duration !== "number" || p.duration <= 0) return false;
             const start = toUtcDate(p.start_time);
@@ -471,7 +471,7 @@ export default function WatchPage() {
         const bucket = channelBucketRef.current || `channel${numericChannelId}`;
 
         let finalProgram = chosen;
-        let finalSrc: string | undefined = await resolvePlayableUrl(chosen, bucket);
+        let finalSrc = await resolvePlayableUrl(chosen, bucket);
 
         if (!finalSrc) {
           // fallback to standby in same bucket
@@ -482,17 +482,18 @@ export default function WatchPage() {
             resolveStandbyPublic(bucket)?.url;
         }
 
+        // Only update if program or URL actually changed
         setCurrentProgram((prev) => {
           if (prev) {
-            const prevSrc = baseUrl(prev.mp4_url);
-            const nextSrc = baseUrl(finalProgram.mp4_url);
-            if (prev.id === finalProgram.id && prevSrc === nextSrc) return prev;
+            const sameProgram = prev.id === finalProgram.id && baseUrl(prev.mp4_url) === baseUrl(finalProgram.mp4_url);
+            if (sameProgram) return prev;
           }
           return finalProgram;
         });
 
         setResolvedSrc((prev) => {
           if (finalSrc && prev !== finalSrc) {
+            playingSrcRef.current = finalSrc;
             setVideoKey((k) => k + 1);
             return finalSrc;
           }
@@ -508,23 +509,27 @@ export default function WatchPage() {
           (await resolvePlayableUrl(standby, bucket)) ||
           resolveStandbyPublic(bucket)?.url;
         setCurrentProgram(standby);
-        if (fallback) setResolvedSrc(fallback);
+        if (fallback && resolvedSrc !== fallback) {
+          playingSrcRef.current = fallback;
+          setResolvedSrc(fallback);
+          setVideoKey((k) => k + 1);
+        }
       } finally {
         if (firstLoad) setIsLoading(false);
         isFetchingRef.current = false;
       }
     },
-    [currentProgram, getStandbyProgram]
+    [currentProgram, getStandbyProgram, resolvedSrc]
   );
 
   const fetchUpcomingPrograms = useCallback(async (numericChannelId: number) => {
     try {
-      const nowIso = new Date().toISOString();
+      const nowIso = new Date().toISOString(); // DB times are UTC
       const { data } = await supabase
         .from("programs")
         .select("id, channel_id, title, mp4_url, start_time, duration")
         .eq("channel_id", numericChannelId)
-        .gt("start_time", nowIso) // DB times are UTC
+        .gt("start_time", nowIso)
         .order("start_time", { ascending: true })
         .limit(8);
       if (data) setUpcomingPrograms(data as Program[]);
@@ -533,10 +538,10 @@ export default function WatchPage() {
     }
   }, []);
 
-  // polling
+  // polling that DOES NOT re-mount if src is unchanged
   useEffect(() => {
     if (validatedNumericChannelId === null) return;
-    if (validatedNumericChannelId === CH21) return; // YouTube branch handles itself
+    if (validatedNumericChannelId === CH21) return;
 
     fetchCurrentProgram(validatedNumericChannelId);
     fetchUpcomingPrograms(validatedNumericChannelId);
@@ -564,8 +569,12 @@ export default function WatchPage() {
     const u =
       (await resolvePlayableUrl(standby, bucket)) ||
       resolveStandbyPublic(bucket)?.url;
-    if (u) setResolvedSrc(u);
-  }, [validatedNumericChannelId, getStandbyProgram]);
+    if (u && resolvedSrc !== u) {
+      playingSrcRef.current = u;
+      setResolvedSrc(u);
+      setVideoKey((k) => k + 1);
+    }
+  }, [validatedNumericChannelId, getStandbyProgram, resolvedSrc]);
 
   // render
   const frozenTitle = useRef<string | undefined>(undefined);
@@ -642,7 +651,7 @@ export default function WatchPage() {
                 </ul>
               </div>
             )}
-            {debugOn && (
+            {(searchParams?.get("debug") ?? "0") === "1" && (
               <div className="mt-4 text-xs bg-gray-900/70 border border-gray-700 rounded p-3">
                 <div><b>Bucket:</b> {channelBucketRef.current || "—"}</div>
                 <div><b>DB mp4_url:</b> {String((currentProgram as any)?.mp4_url || "")}</div>
@@ -650,14 +659,17 @@ export default function WatchPage() {
                 {resolvedSrc ? (
                   <div className="mt-1 flex items-center gap-3">
                     <a href={resolvedSrc} target="_blank" className="underline text-amber-300">Open resolved URL</a>
-                    <button className="px-2 py-0.5 rounded bg-gray-800 border border-gray-700" onClick={() => navigator.clipboard.writeText(resolvedSrc!)}>
+                    <button
+                      className="px-2 py-0.5 rounded bg-gray-800 border border-gray-700"
+                      onClick={() => navigator.clipboard.writeText(resolvedSrc!)}
+                    >
                       Copy URL
                     </button>
                   </div>
                 ) : null}
+                {error && <div className="text-red-400 mt-2">{error}</div>}
               </div>
             )}
-            {error && <p className="text-xs text-red-400 mt-4">{error}</p>}
           </>
         )}
       </section>
