@@ -26,7 +26,7 @@ function baseUrl(u?: string | null) {
   return (u ?? "").split("?")[0];
 }
 
-/** PATCH: Safely handle string or Promise-returning getVideoUrlForProgram */
+/** Safely handle string or Promise-returning getVideoUrlForProgram */
 async function resolvePlayableUrl(program: Program): Promise<string | undefined> {
   try {
     const maybe = getVideoUrlForProgram(program) as unknown;
@@ -62,7 +62,6 @@ export default function WatchPage() {
 
   // Freeze values passed to the HTML player
   const stableSrcRef = useRef<string | undefined>(undefined);
-  const stablePosterRef = useRef<string | undefined>(undefined);
   const stableTitleRef = useRef<string | undefined>(undefined);
 
   // Accept numeric id OR slug like "freedom_school"
@@ -111,7 +110,7 @@ export default function WatchPage() {
         } as any;
         setCurrentProgram(liveProgram);
         stableTitleRef.current = liveProgram.title || undefined;
-        // No need to set src/poster for YouTube embed branch
+        // No need to set src for YouTube embed branch
         setIsLoading(false);
         return; // skip schedule fetch entirely
       }
@@ -181,7 +180,7 @@ export default function WatchPage() {
           return nextProgram;
         });
 
-        // PATCH: Await signed/async URLs safely
+        // Await signed/async URLs safely
         const fullSrc = await resolvePlayableUrl(nextProgram);
         if (fullSrc) {
           const nextSrcBase = baseUrl(fullSrc);
@@ -195,10 +194,6 @@ export default function WatchPage() {
           if (fallbackSrc) stableSrcRef.current = fallbackSrc;
         }
 
-        // Poster: use channel artwork (programs table has no poster)
-        const nextPoster = (channelDetails as any)?.logo_url || undefined; // PATCH: logo_url
-        if (stablePosterRef.current !== nextPoster) stablePosterRef.current = nextPoster;
-
         const nextTitle = nextProgram?.title || undefined;
         if (stableTitleRef.current !== nextTitle) stableTitleRef.current = nextTitle;
       } catch (e: any) {
@@ -206,19 +201,17 @@ export default function WatchPage() {
         const fallback = getStandbyMp4Program(numericChannelId, now);
         setCurrentProgram(fallback);
 
-        // PATCH: also await signer in error path
+        // also await signer in error path
         const signed = await resolvePlayableUrl(fallback);
         stableSrcRef.current = signed || fallback.mp4_url;
 
-        // PATCH: logo_url (not image_url)
-        stablePosterRef.current = (channelDetails as any)?.logo_url || undefined;
         stableTitleRef.current = fallback.title || undefined;
       } finally {
         if (firstLoad) setIsLoading(false);
         isFetchingRef.current = false;
       }
     },
-    [channelDetails, currentProgram, getStandbyMp4Program]
+    [currentProgram, getStandbyMp4Program]
   );
 
   const fetchUpcomingPrograms = useCallback(async (numericChannelId: number) => {
@@ -269,11 +262,15 @@ export default function WatchPage() {
 
   // Use frozen values for the player
   const frozenSrc = stableSrcRef.current;
-  const frozenPoster = stablePosterRef.current;
   const frozenTitle = stableTitleRef.current;
 
   const isYouTubeLive = currentProgram?.id === "live-ch21-youtube";
   const shouldLoopInPlayer = currentProgram?.id === STANDBY_PLACEHOLDER_ID;
+
+  // Only show a poster on the standby placeholder (keeps “instant start” for real programs)
+  const posterForThisProgram = shouldLoopInPlayer
+    ? (channelDetails as any)?.logo_url || undefined
+    : undefined;
 
   let content: ReactNode;
   if (error) {
@@ -298,13 +295,19 @@ export default function WatchPage() {
       <VideoPlayer
         key={videoPlayerKey}
         src={frozenSrc}
-        poster={frozenPoster}
+        // poster only for standby (prevents long “loading on photo” for real programs)
+        poster={posterForThisProgram}
         isStandby={shouldLoopInPlayer}
         programTitle={frozenTitle}
         onVideoEnded={handleProgramEnded}
         isPrimaryLiveStream={false}
         onPrimaryLiveStreamError={handlePrimaryLiveStreamError}
         showNoLiveNotice={false}
+        // Hints that most players forward to <video>
+        autoPlay={true}
+        muted={true}
+        playsInline={true}
+        preload="auto"
       />
     );
   } else {
