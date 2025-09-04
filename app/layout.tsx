@@ -1,15 +1,19 @@
 // app/layout.tsx
-import "./globals.css";
+import "./globals.css"; // keep if you have Tailwind or global styles
 
 export const metadata = {
   title: "Black Truth TV",
-  description: "Live and on-demand programming",
+  description: "24/7 streaming",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <html lang="en">
-      <body className="bg-black text-white antialiased">
+      <body className="bg-black text-white min-h-screen antialiased">
         {children}
       </body>
     </html>
