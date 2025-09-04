@@ -9,10 +9,10 @@ type Props = {
   programTitle?: string;
   isStandby?: boolean;
   onVideoEnded?: () => void;
-  autoPlay?: boolean;
-  muted?: boolean;
-  playsInline?: boolean;
-  preload?: "auto" | "metadata" | "none";
+  autoPlay?: boolean;                   // default false (so you see controls + big play)
+  muted?: boolean;                      // default false
+  playsInline?: boolean;                // default true
+  preload?: "auto" | "metadata" | "none"; // default "metadata"
 };
 
 export default function VideoPlayer({
@@ -21,10 +21,10 @@ export default function VideoPlayer({
   programTitle,
   isStandby,
   onVideoEnded,
-  autoPlay = true,
-  muted = true,
+  autoPlay = false,
+  muted = false,
   playsInline = true,
-  preload = "auto",
+  preload = "metadata",
 }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
@@ -32,55 +32,54 @@ export default function VideoPlayer({
     const video = videoRef.current;
     if (!video || !src) return;
 
-    const isHls = /\.m3u8($|\?)/i.test(src);
-    let hls: any;
+    // ensure attributes before source attach
+    video.controls = true;
+    video.muted = muted;
+    (video as any).playsInline = playsInline;
+    (video as any).webkitPlaysInline = playsInline;
+
+    let cleanupHls: (() => void) | null = null;
 
     async function setup() {
+      const isHls = /\.m3u8($|\?)/i.test(src);
+
       if (isHls && (video as any).canPlayType("application/vnd.apple.mpegurl") === "") {
-        // Dynamically import hls.js only if needed
         const { default: Hls } = await import("hls.js");
         if (Hls.isSupported()) {
-          hls = new Hls({ enableWorker: true });
+          const hls = new Hls({ enableWorker: true });
           hls.loadSource(src);
           hls.attachMedia(video);
-          hls.on(Hls.Events.ERROR, (_ev: any, data: any) => {
-            // Soft error handling—keep the player from crashing
-            // console.warn("HLS error", data);
-          });
+          cleanupHls = () => hls.destroy();
         } else {
-          // Fallback: set native src anyway
-          video.src = src;
+          video.src = src; // fallback
         }
       } else {
         video.src = src;
       }
 
-      try {
-        if (autoPlay) {
-          await video.play().catch(() => {
-            // Autoplay might be blocked; keep muted attribute true so user click will start it.
-          });
+      // Reload metadata so the big play button & timeline show up correctly
+      video.load();
+
+      if (autoPlay) {
+        try {
+          await video.play();
+        } catch {
+          // If autoplay is blocked, user can click big play; controls are visible.
         }
-      } catch {
-        // ignore
       }
     }
 
     setup();
 
     return () => {
-      if (hls) {
-        try {
-          hls.destroy();
-        } catch {}
-      }
-      if (video) {
+      if (cleanupHls) cleanupHls();
+      try {
         video.pause();
         video.removeAttribute("src");
         video.load();
-      }
+      } catch {}
     };
-  }, [src, autoPlay]);
+  }, [src, autoPlay, muted, playsInline]);
 
   return (
     <div className="w-full h-full bg-black flex items-center justify-center">
@@ -93,6 +92,8 @@ export default function VideoPlayer({
         playsInline={playsInline}
         preload={preload}
         onEnded={onVideoEnded}
+        // show standard controls (no download button hint)
+        controlsList="nodownload"
         aria-label={programTitle || (isStandby ? "Standby" : "Video")}
       />
     </div>
