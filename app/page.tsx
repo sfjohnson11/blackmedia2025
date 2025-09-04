@@ -6,24 +6,31 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 type Channel = {
-  id: string;
+  id: string;                         // numeric id as string for URL
   name: string | null;
+  slug?: string | null;
   description?: string | null;
-  logo_url?: string | null;      // <-- use logo_url (not image_url)
-  channel_number?: number | null;
+  logo_url?: string | null;
+  image_url?: string | null;          // fallback art
+  youtube_channel_id?: string | null;
+  youtube_is_live?: boolean | null;
+  is_active?: boolean | null;
 };
 
 function ChannelCard({ ch }: { ch: Channel }) {
+  const art = ch.logo_url || ch.image_url || null;
+
   return (
     <Link
-      href={`/watch/${ch.id}`}
+      href={`/watch/${ch.id}`} // your watch page already accepts numeric id or slug; using id is safest
       className="group rounded-xl overflow-hidden border border-gray-800 hover:border-gray-600 transition-colors bg-gray-900"
     >
       <div className="aspect-video bg-black overflow-hidden">
-        {ch.logo_url ? (
-          // keep <img> to avoid Next/Image domain config
+        {art ? (
+          // using <img> avoids Next/Image domain config
+          // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={ch.logo_url}
+            src={art}
             alt={ch.name ?? `Channel ${ch.id}`}
             className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-300"
             loading="lazy"
@@ -34,12 +41,18 @@ function ChannelCard({ ch }: { ch: Channel }) {
           </div>
         )}
       </div>
+
       <div className="p-3">
         <div className="text-base font-semibold truncate">
           {ch.name ?? `Channel ${ch.id}`}
         </div>
         {ch.description ? (
           <div className="text-xs text-gray-400 line-clamp-2 mt-1">{ch.description}</div>
+        ) : null}
+        {ch.youtube_is_live ? (
+          <div className="mt-2 inline-flex items-center rounded bg-red-600/20 text-red-300 px-2 py-0.5 text-[11px]">
+            LIVE on YouTube
+          </div>
         ) : null}
       </div>
     </Link>
@@ -65,12 +78,15 @@ export default async function HomePage() {
 
   const supabase = createClient(url, anon);
 
-  // SAFE: only columns you have; no sort_order, no image_url
+  // EXACT CHANNEL SCHEMA — filter active only; sort by id then name
   const { data, error } = await supabase
     .from("channels")
-    .select("id, name, description, logo_url, channel_number")
-    .order("channel_number", { ascending: true }) // if null, we’ll sort by id next
-    .order("id", { ascending: true });
+    .select(
+      "id, name, slug, description, logo_url, image_url, youtube_channel_id, youtube_is_live, is_active"
+    )
+    .eq("is_active", true)
+    .order("id", { ascending: true })
+    .order("name", { ascending: true });
 
   if (error) {
     return (
@@ -86,9 +102,13 @@ export default async function HomePage() {
   const channels: Channel[] = (data ?? []).map((r: any) => ({
     id: String(r.id),
     name: r.name ?? null,
+    slug: r.slug ?? null,
     description: r.description ?? null,
     logo_url: r.logo_url ?? null,
-    channel_number: r.channel_number ?? null,
+    image_url: r.image_url ?? null,
+    youtube_channel_id: r.youtube_channel_id ?? null,
+    youtube_is_live: r.youtube_is_live ?? null,
+    is_active: r.is_active ?? null,
   }));
 
   return (
