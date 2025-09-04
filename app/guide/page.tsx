@@ -2,7 +2,7 @@
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-import TVGuideGrid from "../../components/TVGuideGrid"; // ← change this line
+import TVGuideGrid from "@/components/TVGuideGrid";
 
 export default function GuidePage() {
   return (
