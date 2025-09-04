@@ -6,12 +6,12 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 type Channel = {
-  id: string;                         // numeric id as string for URL
+  id: string;
   name: string | null;
   slug?: string | null;
   description?: string | null;
   logo_url?: string | null;
-  image_url?: string | null;          // fallback art
+  image_url?: string | null;
   youtube_channel_id?: string | null;
   youtube_is_live?: boolean | null;
   is_active?: boolean | null;
@@ -22,12 +22,11 @@ function ChannelCard({ ch }: { ch: Channel }) {
 
   return (
     <Link
-      href={`/watch/${ch.id}`} // your watch page already accepts numeric id or slug; using id is safest
+      href={`/watch/${ch.id}`}
       className="group rounded-xl overflow-hidden border border-gray-800 hover:border-gray-600 transition-colors bg-gray-900"
     >
       <div className="aspect-video bg-black overflow-hidden">
         {art ? (
-          // using <img> avoids Next/Image domain config
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={art}
@@ -41,7 +40,6 @@ function ChannelCard({ ch }: { ch: Channel }) {
           </div>
         )}
       </div>
-
       <div className="p-3">
         <div className="text-base font-semibold truncate">
           {ch.name ?? `Channel ${ch.id}`}
@@ -78,15 +76,13 @@ export default async function HomePage() {
 
   const supabase = createClient(url, anon);
 
-  // EXACT CHANNEL SCHEMA — filter active only; sort by id then name
+  // Exact schema, active only, ordered by name then id
   const { data, error } = await supabase
     .from("channels")
-    .select(
-      "id, name, slug, description, logo_url, image_url, youtube_channel_id, youtube_is_live, is_active"
-    )
+    .select("id, name, slug, description, logo_url, image_url, youtube_channel_id, youtube_is_live, is_active")
     .eq("is_active", true)
-    .order("id", { ascending: true })
-    .order("name", { ascending: true });
+    .order("name", { ascending: true })
+    .order("id", { ascending: true });
 
   if (error) {
     return (
@@ -99,17 +95,24 @@ export default async function HomePage() {
     );
   }
 
-  const channels: Channel[] = (data ?? []).map((r: any) => ({
-    id: String(r.id),
-    name: r.name ?? null,
-    slug: r.slug ?? null,
-    description: r.description ?? null,
-    logo_url: r.logo_url ?? null,
-    image_url: r.image_url ?? null,
-    youtube_channel_id: r.youtube_channel_id ?? null,
-    youtube_is_live: r.youtube_is_live ?? null,
-    is_active: r.is_active ?? null,
-  }));
+  const channels: Channel[] = (data ?? [])
+    .map((r: any) => ({
+      id: String(r.id),
+      name: r.name ?? null,
+      slug: r.slug ?? null,
+      description: r.description ?? null,
+      logo_url: r.logo_url ?? null,
+      image_url: r.image_url ?? null,
+      youtube_channel_id: r.youtube_channel_id ?? null,
+      youtube_is_live: r.youtube_is_live ?? null,
+      is_active: r.is_active ?? null,
+    }))
+    // enforce sort again client-side (belt & suspenders)
+    .sort((a, b) => {
+      const an = (a.name || "").localeCompare(b.name || "");
+      if (an !== 0) return an;
+      return Number(a.id) - Number(b.id);
+    });
 
   return (
     <div className="pt-14 min-h-screen">
@@ -121,12 +124,12 @@ export default async function HomePage() {
         </p>
       </section>
 
-      {/* Channels grid */}
+      {/* Grid */}
       <section className="px-4 md:px-10 py-6">
         {channels.length === 0 ? (
           <div className="text-gray-400">No channels available.</div>
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+          <div className="grid grid-flow-row gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
             {channels.map((ch) => (
               <ChannelCard key={ch.id} ch={ch} />
             ))}
