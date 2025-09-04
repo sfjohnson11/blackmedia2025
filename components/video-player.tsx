@@ -9,9 +9,10 @@ type Props = {
   programTitle?: string;
   isStandby?: boolean;
   onVideoEnded?: () => void;
-  autoPlay?: boolean;                   // default false (so you see controls + big play)
-  muted?: boolean;                      // default false
-  playsInline?: boolean;                // default true
+  onError?: () => void;                  // 👈 added
+  autoPlay?: boolean;                    // default false
+  muted?: boolean;                       // default false
+  playsInline?: boolean;                 // default true
   preload?: "auto" | "metadata" | "none"; // default "metadata"
 };
 
@@ -21,6 +22,7 @@ export default function VideoPlayer({
   programTitle,
   isStandby,
   onVideoEnded,
+  onError,                                // 👈 added
   autoPlay = false,
   muted = false,
   playsInline = true,
@@ -32,7 +34,7 @@ export default function VideoPlayer({
     const video = videoRef.current;
     if (!video || !src) return;
 
-    // ensure attributes before source attach
+    // Ensure attributes before source attach
     video.controls = true;
     video.muted = muted;
     (video as any).playsInline = playsInline;
@@ -44,17 +46,21 @@ export default function VideoPlayer({
       const isHls = /\.m3u8($|\?)/i.test(src);
 
       if (isHls && (video as any).canPlayType("application/vnd.apple.mpegurl") === "") {
-        const { default: Hls } = await import("hls.js");
+        const { default: Hls, Events } = await import("hls.js");
         if (Hls.isSupported()) {
           const hls = new Hls({ enableWorker: true });
           hls.loadSource(src);
           hls.attachMedia(video);
+          // Forward fatal HLS errors to the onError handler so the page can swap to standby
+          hls.on(Events.ERROR, (_ev: any, data: any) => {
+            if (data?.fatal && typeof onError === "function") onError();
+          });
           cleanupHls = () => hls.destroy();
         } else {
           video.src = src; // fallback
         }
       } else {
-        video.src = src;
+        video.src = src; // MP4 or native HLS
       }
 
       // Reload metadata so the big play button & timeline show up correctly
@@ -79,7 +85,7 @@ export default function VideoPlayer({
         video.load();
       } catch {}
     };
-  }, [src, autoPlay, muted, playsInline]);
+  }, [src, autoPlay, muted, playsInline, onError]); // 👈 include onError for correctness
 
   return (
     <div className="w-full h-full bg-black flex items-center justify-center">
@@ -92,7 +98,7 @@ export default function VideoPlayer({
         playsInline={playsInline}
         preload={preload}
         onEnded={onVideoEnded}
-        // show standard controls (no download button hint)
+        onError={onError}                 // 👈 wire native <video> errors too
         controlsList="nodownload"
         aria-label={programTitle || (isStandby ? "Standby" : "Video")}
       />
