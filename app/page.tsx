@@ -62,7 +62,7 @@ export default async function HomePage() {
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
   if (!url || !anon) {
     return (
-      <div className="pt-14 min-h-screen px-4 md:px-10 flex items-center justify-center">
+      <div className="min-h-screen px-4 md:px-10 flex items-center justify-center">
         <div className="max-w-xl w-full bg-gray-900 border border-gray-800 rounded-lg p-6 text-center">
           <h1 className="text-2xl font-bold mb-2">Configuration error</h1>
           <p className="text-gray-300">
@@ -76,7 +76,6 @@ export default async function HomePage() {
 
   const supabase = createClient(url, anon);
 
-  // Exact schema, active only, ordered by name then id
   const { data, error } = await supabase
     .from("channels")
     .select("id, name, slug, description, logo_url, image_url, youtube_channel_id, youtube_is_live, is_active")
@@ -86,7 +85,7 @@ export default async function HomePage() {
 
   if (error) {
     return (
-      <div className="pt-14 min-h-screen px-4 md:px-10 flex items-center justify-center">
+      <div className="min-h-screen px-4 md:px-10 flex items-center justify-center">
         <div className="max-w-xl w-full bg-gray-900 border border-gray-800 rounded-lg p-6 text-center">
           <h1 className="text-2xl font-bold mb-2">Couldn’t load channels</h1>
           <p className="text-gray-300">{error.message}</p>
@@ -107,7 +106,6 @@ export default async function HomePage() {
       youtube_is_live: r.youtube_is_live ?? null,
       is_active: r.is_active ?? null,
     }))
-    // enforce sort again client-side (belt & suspenders)
     .sort((a, b) => {
       const an = (a.name || "").localeCompare(b.name || "");
       if (an !== 0) return an;
@@ -115,7 +113,7 @@ export default async function HomePage() {
     });
 
   return (
-    <div className="pt-14 min-h-screen">
+    <div className="min-h-screen">
       {/* Hero */}
       <section className="px-4 md:px-10 py-8 md:py-10 border-b border-gray-800 bg-[radial-gradient(ellipse_at_top,rgba(239,68,68,0.15),rgba(0,0,0,0))]">
         <h1 className="text-3xl md:text-4xl font-extrabold">Black Truth TV</h1>
