@@ -1,11 +1,8 @@
 // app/api/now/route.ts
 import { NextResponse } from "next/server";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
-  // Server-side epoch ms + ISO string.
-  const now = Date.now();
-  return NextResponse.json({
-    epochMs: now,
-    iso: new Date(now).toISOString(),
-  });
+  return NextResponse.json({ epochMs: Date.now() });
 }
