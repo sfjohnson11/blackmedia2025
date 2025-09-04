@@ -1,11 +1,11 @@
 // app/watch/[channelId]/page.tsx
-// MP4-only + YouTube, UTC-safe, channel-bucket aware ("channel1..channel29" and "freedom_school"),
-// brand logo from "brand" bucket, anti-thrash standby.
+// MP4-only + YouTube (ch21), UTC schedule, server-time sync, channel-bucket resolver,
+// anti-thrash standby, brand logo from 'brand' bucket.
 
 "use client";
 
 import { useEffect, useState, useCallback, useRef, type ReactNode } from "react";
-import Link from "next/link";
+import TopNav from "@/components/top-nav";
 import { useParams, useSearchParams } from "next/navigation";
 import {
   getVideoUrlForProgram,
@@ -17,73 +17,37 @@ import type { Program, Channel } from "@/types";
 import { Loader2 } from "lucide-react";
 import YouTubeEmbed from "@/components/youtube-embed";
 
-/* ------------------------------ BRAND / NAV ------------------------------ */
+/* ------------------------------ BRAND / BUCKETS ------------------------------ */
 
-const BRAND_NAME = "Black Truth TV";
 const BRAND_BUCKET = "brand";
 const BRAND_LOGO_OBJECT = process.env.NEXT_PUBLIC_BRAND_LOGO_OBJECT || "blacktruth1.jpeg";
 const PUBLIC_LOGO_FALLBACK = "/brand/blacktruth-logo.png"; // optional fallback in /public
 
-function TopNav({
-  channelName,
-  logoSrc,
-}: {
-  channelName?: string;
-  logoSrc?: string;
-}) {
-  return (
-    <header className="sticky top-0 z-20 bg-gradient-to-b from-black/80 to-black/40 backdrop-blur supports-[backdrop-filter]:bg-black/60 border-b border-white/10">
-      <div className="mx-auto max-w-7xl px-3 sm:px-4">
-        <div className="h-14 sm:h-16 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2">
-            <div className="h-9 w-9 sm:h-10 sm:w-10 rounded-md overflow-hidden ring-1 ring-white/10 bg-black/30 flex items-center justify-center">
-              <img
-                src={logoSrc || PUBLIC_LOGO_FALLBACK}
-                alt="Black Truth TV Logo"
-                className="h-full w-full object-contain"
-                onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
-              />
-            </div>
-            <div className="leading-tight">
-              <div className="text-white font-extrabold tracking-tight text-sm sm:text-base">
-                {BRAND_NAME}
-              </div>
-              {channelName ? (
-                <div className="text-[10px] sm:text-xs text-white/70">{channelName}</div>
-              ) : null}
-            </div>
-          </Link>
-
-          <nav className="hidden md:flex items-center gap-6 text-sm">
-            <Link href="/" className="hover:text-white/90 text-white/70">Home</Link>
-            <Link href="/guide" className="hover:text-white/90 text-white/70">Guide</Link>
-            <Link href="/channels" className="hover:text-white/90 text-white/70">Channels</Link>
-            <Link href="/about" className="hover:text-white/90 text-white/70">About</Link>
-            <Link href="/contact" className="hover:text-white/90 text-white/70">Contact</Link>
-            <Link href="/donate" className="hover:text-black bg-amber-300 text-black px-3 py-1 rounded-full font-semibold">
-              Donate
-            </Link>
-          </nav>
-        </div>
-      </div>
-    </header>
-  );
+/** Bucket naming:
+ * - Use channels.slug when present (e.g. "freedom_school")
+ * - Otherwise "channel" + numeric id (e.g. channel7)
+ */
+function bucketNameFor(details: Channel | null): string | null {
+  if (!details) return null;
+  const slug = (details as any)?.slug?.toString().trim();
+  if (slug) return slug;
+  const n = Number((details as any)?.id);
+  if (Number.isFinite(n) && n > 0) return `channel${n}`;
+  return null;
 }
 
-/* --------------------------- PLAYER / SCHEDULING -------------------------- */
+/* --------------------------- SCHEDULING / CONSTANTS --------------------------- */
 
 const CH21_ID_NUMERIC = 21;
 const YT_CH21 = "UCMkW239dyAxDyOFDP0D6p2g";
 const ALWAYS_LIVE_CHANNEL_IDS = new Set<number>([CH21_ID_NUMERIC]);
 
-// player timings
 const STABLE_PLAY_MS = 700;
 const CANPLAY_TIMEOUT_MS = 8000;
 const STALL_RECOVERY_MS = 3500;
 const PROGRESS_STALL_MS = 4000;
 const MAX_ATTEMPTS_PER_SRC = 2;
 
-// schedule grace windows
 const START_EARLY_GRACE_MS = 30_000;
 const END_LATE_GRACE_MS = 15_000;
 
@@ -100,33 +64,26 @@ function toUtcDate(val?: string | Date | null): Date | null {
 }
 const baseUrl = (u?: string | null) => (u ?? "").split("?")[0];
 
-/** Map a channel to its storage bucket:
- * - if the Channel has a slug (e.g. "freedom_school") → use that
- * - else use "channel" + numeric id (e.g. channel7)
- */
-function bucketNameFor(details: Channel | null): string | null {
-  if (!details) return null;
-  const slug = (details as any)?.slug?.toString().trim();
-  if (slug) return slug;
-  const n = Number((details as any)?.id);
-  if (Number.isFinite(n) && n > 0) return `channel${n}`;
-  return null;
-}
-
-/** Public URL for object in a specific bucket */
+/** Public URL for object in a bucket */
 function publicUrl(bucket: string, objectPath: string) {
   const { data } = supabase.storage.from(bucket).getPublicUrl(objectPath);
   return data.publicUrl || undefined;
 }
 
-/** Resolve a playable URL according to your storage rules. */
+/** Resolve playable URL following your storage rules:
+ * - Full https://…mp4 → use as-is
+ * - Leading "/" → use as-is
+ * - "bucket:path" or "storage://bucket/path" → that bucket
+ * - Plain "file.mp4"/"folder/file.mp4" → in THIS channel’s bucket
+ * - Also strips duplicated leading "channelX/" inside the same bucket.
+ */
 async function resolvePlayableUrl(
   program: Program,
   channelBucket: string | null
 ): Promise<string | undefined> {
   try {
     const maybe = getVideoUrlForProgram(program) as unknown;
-    const raw =
+    let raw =
       (maybe && typeof (maybe as any).then === "function"
         ? await (maybe as Promise<string>)
         : (maybe as string | undefined)) || (program as any)?.mp4_url || "";
@@ -134,41 +91,52 @@ async function resolvePlayableUrl(
     if (!raw) return undefined;
     if (raw.startsWith("youtube_channel:")) return undefined;
 
-    // absolute http(s)
+    // absolute
     if (/^https?:\/\//i.test(raw)) return raw;
 
-    // site-relative path
+    // site-relative
     if (raw.startsWith("/")) return raw;
 
-    // explicit "bucket:path" or "storage://bucket/path"
+    // explicit bucket override
     const m =
       /^([a-z0-9_\-]+):(.+)$/i.exec(raw) ||
       /^storage:\/\/([^/]+)\/(.+)$/i.exec(raw);
     if (m) {
       const b = m[1];
-      const p = m[2];
+      const p = m[2].replace(/^\.?\//, "");
       return publicUrl(b, p);
     }
 
-    // otherwise: it's an object path inside *this channel's* bucket
+    // otherwise: object path inside this channel's bucket
     if (!channelBucket) return undefined;
+
+    raw = raw.replace(/^\.?\//, "");
+
+    // strip duplicated bucket prefix
+    const bucketPrefix = `${channelBucket.replace(/\/+$/,"")}/`;
+    if (raw.toLowerCase().startsWith(bucketPrefix.toLowerCase())) {
+      raw = raw.slice(bucketPrefix.length);
+    }
+
     return publicUrl(channelBucket, raw);
   } catch {
     return undefined;
   }
 }
 
-/* --------------------------- SmartVideo (stable) --------------------------- */
+/* ------------------------------ SmartVideo player ------------------------------ */
 
 function SmartVideo({
   src,
   logo,
+  isStandby,
   onReady,
   onEnded,
   onHardFail,
 }: {
   src: string;
   logo: string;
+  isStandby: boolean;
   onReady: () => void;
   onEnded: () => void;
   onHardFail: () => void;
@@ -176,7 +144,9 @@ function SmartVideo({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [showOverlay, setShowOverlay] = useState(true);
   const [overlayText, setOverlayText] = useState("Starting stream…");
+
   const attemptsRef = useRef(0);
+  const gaveUpRef = useRef(false);
   const canplayTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stablePlayTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stallTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -191,12 +161,7 @@ function SmartVideo({
     if (progressTimer.current) clearTimeout(progressTimer.current);
   };
   const detach = (v: HTMLVideoElement) => {
-    try {
-      v.pause();
-      v.removeAttribute("src");
-      while (v.firstChild) v.removeChild(v.firstChild);
-      v.load();
-    } catch {}
+    try { v.pause(); v.removeAttribute("src"); while (v.firstChild) v.removeChild(v.firstChild); v.load(); } catch {}
   };
   const attachAndPlay = (mode: "direct" | "source") => {
     const v = videoRef.current!;
@@ -205,26 +170,21 @@ function SmartVideo({
     v.preload = "auto";
     v.muted = true;
     v.playsInline = true;
+
     if (mode === "direct") v.src = src;
-    else {
-      const s = document.createElement("source");
-      s.src = src;
-      s.type = "video/mp4";
-      v.appendChild(s);
-    }
+    else { const s = document.createElement("source"); s.src = src; s.type = "video/mp4"; v.appendChild(s); }
+
     setTimeout(() => {
-      try {
-        v.currentTime = 0;
-        v.load();
-      } catch {}
+      try { v.currentTime = 0; v.load(); } catch {}
       v.play().catch(() => {});
     }, 0);
 
-    canplayTimer.current = setTimeout(() => tryRecoverOrFail("no-canplay"), CANPLAY_TIMEOUT_MS);
+    canplayTimer.current = setTimeout(() => tryRecoverOrFail(), CANPLAY_TIMEOUT_MS);
   };
 
   useEffect(() => {
     attemptsRef.current = 0;
+    gaveUpRef.current = false;
     attachModeRef.current = "direct";
     setShowOverlay(true);
     setOverlayText("Starting stream…");
@@ -241,30 +201,45 @@ function SmartVideo({
   const armProgressWatch = () => {
     if (progressTimer.current) clearTimeout(progressTimer.current);
     progressTimer.current = setTimeout(() => {
-      const v = videoRef.current;
-      if (!v) return;
+      const v = videoRef.current; if (!v) return;
       const t = v.currentTime || 0;
-      if (t <= lastProgressT.current + 0.01) tryRecoverOrFail("progress-stall");
+      if (t <= lastProgressT.current + 0.01) tryRecoverOrFail();
     }, PROGRESS_STALL_MS);
   };
 
-  const tryRecoverOrFail = (_why: string) => {
-    const v = videoRef.current;
-    if (!v) return;
+  const tryRecoverOrFail = () => {
+    if (gaveUpRef.current) return;
+    const v = videoRef.current; if (!v) return;
+
     const mediaErr = v.error?.code ?? null; // 3 decode, 4 src unsupported
     if (mediaErr === 3 || mediaErr === 4) {
+      if (isStandby) {
+        gaveUpRef.current = true;
+        clearTimers();
+        setOverlayText("Video unavailable");
+        setShowOverlay(true);
+        return;
+      }
       setOverlayText("Switching to standby…");
       onHardFail();
       return;
     }
+
     if (attemptsRef.current < MAX_ATTEMPTS_PER_SRC) {
       attemptsRef.current += 1;
       setOverlayText("Recovering stream…");
       clearTimers();
       attachAndPlay(attachModeRef.current === "direct" ? "source" : "direct");
     } else {
-      setOverlayText("Switching to standby…");
-      onHardFail();
+      if (isStandby) {
+        gaveUpRef.current = true;
+        clearTimers();
+        setOverlayText("Video unavailable");
+        setShowOverlay(true);
+      } else {
+        setOverlayText("Switching to standby…");
+        onHardFail();
+      }
     }
   };
 
@@ -279,7 +254,7 @@ function SmartVideo({
             onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
           />
           <div className="flex items-center gap-2 mt-4 text-gray-300">
-            <Loader2 className="h-5 w-5 animate-spin" />
+            {!/unavailable/i.test(overlayText) && <Loader2 className="h-5 w-5 animate-spin" />}
             <span>{overlayText}</span>
           </div>
         </div>
@@ -306,10 +281,10 @@ function SmartVideo({
         onTimeUpdate={() => { lastProgressT.current = videoRef.current?.currentTime || 0; armProgressWatch(); }}
         onWaiting={() => {
           if (stallTimer.current) clearTimeout(stallTimer.current);
-          stallTimer.current = setTimeout(() => tryRecoverOrFail("waiting"), STALL_RECOVERY_MS);
+          stallTimer.current = setTimeout(() => tryRecoverOrFail(), STALL_RECOVERY_MS);
         }}
-        onStalled={() => tryRecoverOrFail("stalled")}
-        onError={() => tryRecoverOrFail("error")}
+        onStalled={() => tryRecoverOrFail()}
+        onError={() => tryRecoverOrFail()}
         onEnded={onEnded}
       />
     </div>
@@ -347,7 +322,7 @@ export default function WatchPage() {
     }
   }, []);
 
-  // server-time skew (best-effort; falls back to client time)
+  // server-time skew (for schedule decisions)
   const skewMsRef = useRef<number>(0);
   useEffect(() => {
     (async () => {
@@ -369,10 +344,10 @@ export default function WatchPage() {
   const isFetchingRef = useRef(false);
   const stableTitleRef = useRef<string | undefined>(undefined);
 
-  // track current channel bucket
+  // track bucket for current channel
   const channelBucketRef = useRef<string | null>(null);
 
-  // Init channel + CH21 handling
+  // Init channel + CH21 special case
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -395,8 +370,6 @@ export default function WatchPage() {
       if (cancelled) return;
 
       setChannelDetails(details);
-
-      // bucket name
       channelBucketRef.current = bucketNameFor(details);
 
       const numericId = Number.parseInt(String((details as any).id), 10);
@@ -423,7 +396,6 @@ export default function WatchPage() {
     return () => { cancelled = true; };
   }, [channelIdString]);
 
-  // standby program uses object in the same channel bucket; if that fails, overlay remains
   const getStandbyProgram = useCallback(
     (channelNum: number, now: Date): Program =>
       ({
@@ -441,9 +413,9 @@ export default function WatchPage() {
     const startMs = start.getTime();
     const endMs = startMs + durationSec * 1000;
     return nowMillis >= (startMs - START_EARLY_GRACE_MS) && nowMillis < (endMs + END_LATE_GRACE_MS);
-  };
+    };
 
-  // anti-thrash: if a src fails, quarantine for 60s
+  // anti-thrash: quarantine last failing src for 60s
   const quarantineRef = useRef<{ src: string; until: number } | null>(null);
 
   const fetchCurrentProgram = useCallback(
@@ -487,16 +459,15 @@ export default function WatchPage() {
           ? { ...active, channel_id: numericChannelId }
           : getStandbyProgram(numericChannelId, new Date(now));
 
-        // resolve with channel bucket
         const bucket = channelBucketRef.current || `channel${numericChannelId}`;
         const fullSrc = await resolvePlayableUrl(chosen, bucket);
         const effectiveSrc = fullSrc ?? chosen.mp4_url;
 
-        // anti-thrash quarantine
+        // quarantine check
         const q = quarantineRef.current;
-        const inQuarantine = q && baseUrl(effectiveSrc) === baseUrl(q.src) && now < q.until;
-        const finalProgram = inQuarantine ? getStandbyProgram(numericChannelId, new Date(now)) : chosen;
-        const finalSrc = inQuarantine
+        const inQ = q && baseUrl(effectiveSrc) === baseUrl(q.src) && now < q.until;
+        const finalProgram = inQ ? getStandbyProgram(numericChannelId, new Date(now)) : chosen;
+        const finalSrc = inQ
           ? (await resolvePlayableUrl(finalProgram, bucket)) ?? finalProgram.mp4_url
           : effectiveSrc;
 
@@ -551,7 +522,7 @@ export default function WatchPage() {
     }
   }, []);
 
-  // minute-aligned refresh or 12s polling if ?poll=1
+  // aligned refresh (or 12s polling if ?poll=1)
   const minuteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const startMinuteAlignedRefresh = useCallback((numericChannelId: number) => {
     if (minuteTimerRef.current) clearTimeout(minuteTimerRef.current);
@@ -598,7 +569,6 @@ export default function WatchPage() {
 
   const handleHardFail = useCallback(async () => {
     if (validatedNumericChannelId == null) return;
-    // quarantine the last src for 60s to avoid thrash
     if (resolvedSrc) quarantineRef.current = { src: resolvedSrc, until: Date.now() + 60_000 };
     const standby = getStandbyProgram(validatedNumericChannelId, new Date(nowMs()));
     const bucket = channelBucketRef.current || `channel${validatedNumericChannelId}`;
@@ -630,6 +600,7 @@ export default function WatchPage() {
         key={videoKey}
         src={resolvedSrc}
         logo={brandLogo}
+        isStandby={isStandby}
         onReady={() => {}}
         onEnded={handleProgramEnded}
         onHardFail={handleHardFail}
@@ -641,7 +612,10 @@ export default function WatchPage() {
 
   return (
     <div className="bg-black min-h-screen flex flex-col text-white">
-      <TopNav channelName={(channelDetails as any)?.name || `Channel ${channelIdString}`} logoSrc={brandLogo} />
+      <TopNav
+        channelName={(channelDetails as any)?.name || `Channel ${channelIdString}`}
+        logoSrc={brandLogo}
+      />
 
       <main className="w-full aspect-video bg-black flex items-center justify-center">
         {content}
