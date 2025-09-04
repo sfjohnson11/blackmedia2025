@@ -1,3 +1,4 @@
+// components/TVGuideGrid.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -31,19 +32,18 @@ const ROW_HEIGHT = 64;
 const CHANNEL_COL_WIDTH = 220;
 const NOW_LINE_COLOR = "rgba(255,99,99,0.9)";
 
-const startOfToday = () => { const d = new Date(); d.setHours(0,0,0,0); return d; };
-const addHours = (d: Date, h: number) => new Date(d.getTime() + h * 3600_000);
+const hoursFromNow = (h: number) => new Date(Date.now() + h * 3600_000);
 const fmtHM = (d: Date) => d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 const nameOf = (ch: ChannelRow) => ch.name || `Channel ${ch.id}`;
-const artOf = (ch: ChannelRow) => ch.logo_url || ch.image_url || null;
+const artOf  = (ch: ChannelRow) => ch.logo_url || ch.image_url || null;
 
-function computeBlockStyle(p: ProgramRow, dayStart: Date, dayEnd: Date) {
+function computeBlockStyle(p: ProgramRow, winStart: Date, winEnd: Date) {
   const start = new Date(p.start_time).getTime();
-  const end = start + Math.max(1, p.duration) * 1000;
-  const ws = dayStart.getTime(), we = dayEnd.getTime();
+  const end   = start + Math.max(1, p.duration) * 1000;
+  const ws = winStart.getTime(), we = winEnd.getTime();
   const cs = Math.max(start, ws), ce = Math.min(end, we);
   if (ce <= ws || cs >= we) return null;
-  const left = ((cs - ws) / 60000) * PX_PER_MINUTE;
+  const left  = ((cs - ws) / 60000) * PX_PER_MINUTE;
   const width = Math.max(0.5, ((ce - cs) / 60000) * PX_PER_MINUTE);
   return { left, width };
 }
@@ -54,16 +54,18 @@ export default function TVGuideGrid() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
-  const dayStart = useMemo(() => startOfToday(), []);
-  const dayEnd = useMemo(() => addHours(dayStart, 24), [dayStart]);
+  // Rolling window: 6h back → 72h ahead
+  const windowStart = useMemo(() => hoursFromNow(-6), []);
+  const windowEnd   = useMemo(() => hoursFromNow(+72), []);
 
-  const ticks = useMemo(
-    () => Array.from({ length: 25 }, (_, h) => ({
+  // Hour ticks across the rolling window
+  const ticks = useMemo(() => {
+    const hours = Math.ceil((windowEnd.getTime() - windowStart.getTime()) / 3600_000);
+    return Array.from({ length: hours + 1 }, (_, h) => ({
       left: (h * 60) * PX_PER_MINUTE,
-      label: addHours(dayStart, h).toLocaleTimeString([], { hour: "2-digit" }),
-    })),
-    [dayStart]
-  );
+      label: new Date(windowStart.getTime() + h * 3600_000).toLocaleTimeString([], { hour: "2-digit" }),
+    }));
+  }, [windowStart, windowEnd]);
 
   useEffect(() => {
     let cancelled = false;
@@ -71,29 +73,32 @@ export default function TVGuideGrid() {
       try {
         setLoading(true); setErr(null);
 
-        // Channels: EXACT schema, active only
+        // Channels: exact schema, active only
         const { data: chRows, error: chErr } = await supabase
           .from("channels")
           .select("id, name, slug, description, logo_url, image_url, youtube_channel_id, youtube_is_live, is_active")
           .eq("is_active", true);
         if (chErr) throw new Error(chErr.message);
 
-        // Programs for today (UTC; duration seconds)
+        // Programs within rolling window
         const { data: progRows, error: prErr } = await supabase
           .from("programs")
           .select("id, channel_id, title, mp4_url, start_time, duration")
-          .gte("start_time", dayStart.toISOString())
-          .lt("start_time", dayEnd.toISOString())
+          .gte("start_time", windowStart.toISOString())
+          .lt("start_time", windowEnd.toISOString())
           .order("start_time", { ascending: true });
         if (prErr) throw new Error(prErr.message);
 
         if (cancelled) return;
 
-        // Order channels by id then name (no channel_number/sort_order)
-        const ordered = (chRows ?? []).slice().sort((a: any, b: any) => {
-          if (a.id !== b.id) return a.id - b.id;
-          return (a.name || "").localeCompare(b.name || "");
-        });
+        // Stable order: Name A→Z, then ID
+        const ordered = (chRows ?? [])
+          .slice()
+          .sort((a: any, b: any) => {
+            const an = (a.name || "").localeCompare(b.name || "");
+            if (an !== 0) return an;
+            return a.id - b.id;
+          });
 
         setChannels(ordered as ChannelRow[]);
         setPrograms((progRows ?? []) as ProgramRow[]);
@@ -104,9 +109,9 @@ export default function TVGuideGrid() {
       }
     })();
     return () => { cancelled = true; };
-  }, [dayStart, dayEnd]);
+  }, [windowStart, windowEnd]);
 
-  // group by integer channel_id
+  // group by channel
   const byChannel = useMemo(() => {
     const map = new Map<number, ProgramRow[]>();
     for (const p of programs) {
@@ -116,26 +121,31 @@ export default function TVGuideGrid() {
     return map;
   }, [programs]);
 
-  // auto-scroll to now
+  // auto-scroll to "now" (6 hours into the window)
   const scrollRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!scrollRef.current) return;
-    const ws = dayStart.getTime();
-    const x = Math.max(0, (((Date.now() - ws) / 60000) * PX_PER_MINUTE) - 200);
+    const x = Math.max(0, (6 * 60) * PX_PER_MINUTE - 200);
     scrollRef.current.scrollLeft = x;
-  }, [loading, dayStart]);
+  }, [loading]);
 
-  const totalWidth = 24 * 60 * PX_PER_MINUTE;
+  const totalWidth = useMemo(
+    () => Math.ceil((windowEnd.getTime() - windowStart.getTime()) / 60000) * PX_PER_MINUTE,
+    [windowStart, windowEnd]
+  );
   const nowLeft = useMemo(() => {
-    const ws = dayStart.getTime();
-    return Math.max(0, Math.min(totalWidth, ((Date.now() - ws) / 60000) * PX_PER_MINUTE));
-  }, [dayStart, totalWidth]);
+    const ms = Date.now() - windowStart.getTime();
+    return Math.max(0, Math.min(totalWidth, (ms / 60000) * PX_PER_MINUTE));
+  }, [windowStart, totalWidth]);
 
   return (
     <section className="space-y-3">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-white">📺 Today’s Guide</h1>
-        <div className="text-xs text-slate-400">{fmtHM(dayStart)} – {fmtHM(dayEnd)}</div>
+        <h1 className="text-xl font-semibold text-white">📺 Schedule (Last 6h → Next 72h)</h1>
+        <div className="text-xs text-slate-400">
+          Window: {windowStart.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} –{" "}
+          {windowEnd.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+        </div>
       </div>
 
       {loading ? (
@@ -214,7 +224,7 @@ export default function TVGuideGrid() {
                       <div key={i} className="absolute top-0 h-full border-l border-slate-800/40" style={{ left: t.left }} />
                     ))}
                     {progs.map((p) => {
-                      const pos = computeBlockStyle(p, dayStart, dayEnd);
+                      const pos = computeBlockStyle(p, windowStart, windowEnd);
                       if (!pos) return null;
                       const endMs = new Date(p.start_time).getTime() + Math.max(1, p.duration) * 1000;
                       return (
