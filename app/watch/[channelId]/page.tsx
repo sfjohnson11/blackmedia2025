@@ -1,7 +1,7 @@
 // app/watch/[channelId]/page.tsx
 "use client";
 
-import { type ReactNode, useEffect, useState, useCallback, useRef } from "react";
+import { type ReactNode, useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import VideoPlayer from "@/components/video-player";
 import {
@@ -14,19 +14,30 @@ import type { Program, Channel } from "@/types";
 import { ChevronLeft, Loader2 } from "lucide-react";
 import YouTubeEmbed from "@/components/youtube-embed";
 
-const CH21_ID_NUMERIC = 21; // always-live channel (YouTube)
+// === constants / config ===
+const CH21_ID_NUMERIC = 21;                             // always-live channel (YouTube)
 const YT_CH21 = "UCMkW239dyAxDyOFDP0D6p2g";
 const ALWAYS_LIVE_CHANNEL_IDS = new Set<number>([CH21_ID_NUMERIC]);
 
-// ---- helpers ----
+const DEFAULT_SECONDS = 1800;   // default 30m if duration missing/invalid
+const DRIFT_SECS = 60;          // small drift tolerance
+
+// === helpers ===
 function baseUrl(u?: string | null) {
   return (u ?? "").split("?")[0];
 }
+function safeDurSeconds(v: unknown) {
+  const n = typeof v === "number" ? v : Number(v);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_SECONDS;
+  // guard against minutes accidentally stored as huge seconds
+  return n > 24 * 3600 ? DEFAULT_SECONDS : n;
+}
 function isLiveSecondsUTC(p: { start_time: string; duration: number }, nowMs: number) {
   const start = new Date(p.start_time).getTime();
-  const durMs = Math.max(1, p.duration || 0) * 1000; // duration is SECONDS
+  const durMs = safeDurSeconds(p.duration) * 1000;
   const end = start + durMs;
-  return nowMs >= start && nowMs < end;
+  const drift = DRIFT_SECS * 1000;
+  return nowMs + drift >= start && nowMs < end + drift;
 }
 
 export default function WatchPage() {
@@ -127,7 +138,7 @@ export default function WatchPage() {
     []
   );
 
-  // fetch CURRENT (UTC) program for integer channel_id
+  // pick current program: live > next upcoming > most recent past; prefer items that have mp4_url
   const fetchCurrentProgram = useCallback(
     async (numericChannelId: number) => {
       if (ALWAYS_LIVE_CHANNEL_IDS.has(numericChannelId)) return;
@@ -139,37 +150,52 @@ export default function WatchPage() {
 
       try {
         const nowIso = new Date().toISOString();
+        const nowMs = Date.now();
 
         // last few started
         const { data: startedRows, error: e1 } = await supabase
           .from("programs")
-          .select("id, title, mp4_url, start_time, duration")
-          .eq("channel_id", numericChannelId) // integer filter (matches your table)
+          .select("id, title, description, mp4_url, start_time, duration")
+          .eq("channel_id", numericChannelId)
           .lte("start_time", nowIso)
           .order("start_time", { ascending: false })
           .limit(12);
         if (e1) throw new Error(e1.message);
 
-        // first upcoming (for sidebar)
+        // first upcoming
         const { data: upcomingRows, error: e2 } = await supabase
           .from("programs")
-          .select("id, title, mp4_url, start_time, duration")
+          .select("id, title, description, mp4_url, start_time, duration")
           .eq("channel_id", numericChannelId)
           .gt("start_time", nowIso)
           .order("start_time", { ascending: true })
           .limit(6);
         if (e2) throw new Error(e2.message);
 
-        const started = startedRows ?? [];
-        const upcoming = upcomingRows ?? [];
+        const started = (startedRows ?? []).map(p => ({ ...p, duration: safeDurSeconds(p.duration) }));
+        const upcoming = (upcomingRows ?? []).map(p => ({ ...p, duration: safeDurSeconds(p.duration) }));
         setUpcomingPrograms(upcoming as Program[]);
 
-        const nowMs = Date.now();
-        const active = started.find((p) => isLiveSecondsUTC(p as any, nowMs)) as Program | undefined;
+        // 1) If something is live, play it
+        let candidate = started.find(p => isLiveSecondsUTC(p as any, nowMs)) as Program | undefined;
 
-        const chosen = active ?? getStandbyMp4Program(numericChannelId, new Date());
+        // 2) Otherwise play the next upcoming immediately
+        if (!candidate && upcoming.length) candidate = upcoming[0] as Program;
 
-        setCurrentProgram((prev) => {
+        // 3) Otherwise play the most recent past item
+        if (!candidate && started.length) candidate = started[0] as Program;
+
+        // 4) If chosen has empty mp4_url, try nearest item that has one
+        if (candidate && (!candidate.mp4_url || candidate.mp4_url.trim() === "")) {
+          const withMp4 =
+            started.find(p => p.mp4_url && p.mp4_url.trim() !== "") ||
+            upcoming.find(p => p.mp4_url && p.mp4_url.trim() !== "");
+          candidate = (withMp4 as any) || candidate;
+        }
+
+        const chosen = candidate ?? getStandbyMp4Program(numericChannelId, new Date());
+
+        setCurrentProgram(prev => {
           if (prev) {
             const prevSrc = baseUrl(prev.mp4_url);
             const nextSrc = baseUrl(chosen.mp4_url);
@@ -187,10 +213,9 @@ export default function WatchPage() {
         if (!stableSrcRef.current || prevSrcBase !== nextSrcBase) {
           stableSrcRef.current = fullSrc;
         }
-        const nextPoster = chosen?.poster_url || undefined;
+        const nextPoster = (chosen as any)?.poster_url || undefined;
         if (stablePosterRef.current !== nextPoster) stablePosterRef.current = nextPoster;
-
-        const nextTitle = chosen?.title;
+        const nextTitle = (chosen as any)?.title;
         if (stableTitleRef.current !== nextTitle) stableTitleRef.current = nextTitle;
       } catch (e: any) {
         setError(`Failed to load program: ${e.message}`);
