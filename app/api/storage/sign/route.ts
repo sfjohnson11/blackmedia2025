@@ -1,10 +1,6 @@
-// app/api/storage/sign/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-// Server env required:
-// - NEXT_PUBLIC_SUPABASE_URL
-// - SUPABASE_SERVICE_ROLE_KEY  (Server Only!)
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
@@ -13,11 +9,10 @@ export async function GET(req: NextRequest) {
   if (!url || !serviceRole) {
     return NextResponse.json({ error: "Missing SUPABASE env vars" }, { status: 500 });
   }
-
   const { searchParams } = new URL(req.url);
   const bucket = searchParams.get("bucket");
   const object = searchParams.get("object");
-  const expires = Number(searchParams.get("expires") || 6 * 60 * 60); // seconds
+  const expires = Number(searchParams.get("expires") || 6 * 60 * 60);
 
   if (!bucket || !object) {
     return NextResponse.json({ error: "bucket and object are required" }, { status: 400 });
