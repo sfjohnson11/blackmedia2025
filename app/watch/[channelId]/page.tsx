@@ -1,425 +1,368 @@
 // app/watch/[channelId]/page.tsx
-// Channel 21 = always YouTube Live (uses channels.youtube_channel_id).
-// programs: id, channel_id, title, mp4_url, start_time, duration (UTC)
-// channels: id, name, slug, description, logo_url, youtube_channel_id, youtube_is_live, is_active
-// Resolves MP4 from PUBLIC buckets: slug → bucket, else channel{id}
+// Schedule rules:
+//  - Play ACTIVE program when start_time <= now < start_time + duration (UTC)
+//  - If NO program is active, play STANDBY until the next program starts
+//  - If an ACTIVE program fails to resolve/play, fallback to STANDBY
+//  - CH 21 = YouTube Live via channels.youtube_channel_id
+// Schema used:
+//   channels: id, name, slug, description, logo_url, youtube_channel_id, youtube_is_live, is_active
+//   programs: id, channel_id, title, mp4_url, start_time (UTC), duration (seconds)
 
 "use client";
 
-import { type ReactNode, useEffect, useState, useCallback, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import VideoPlayer from "@/components/video-player";
-import {
-  getVideoUrlForProgram,
-  fetchChannelDetails,
-  supabase,
-  STANDBY_PLACEHOLDER_ID,
-} from "@/lib/supabase";
-import type { Program, Channel } from "@/types";
 import { ChevronLeft, Loader2 } from "lucide-react";
 import YouTubeEmbed from "@/components/youtube-embed";
+import VideoPlayer from "@/components/video-player";
+import { supabase, fetchChannelDetails, getVideoUrlForProgram } from "@/lib/supabase";
 
-/* ───────── constants ───────── */
+type Channel = {
+  id: number;
+  name: string | null;
+  slug: string | null;
+  description: string | null;
+  logo_url: string | null;
+  youtube_channel_id: string | null;
+  youtube_is_live: boolean | null;
+  is_active: boolean | null;
+};
 
-const CH21_ID_NUMERIC = 21;
-const ALWAYS_LIVE_CHANNEL_IDS = new Set<number>([CH21_ID_NUMERIC]);
+type Program = {
+  id: string | number;
+  channel_id: number;
+  title: string | null;
+  mp4_url: string | null;
+  start_time: string; // ISO UTC
+  duration: number;   // seconds
+};
 
-const ENV_YT_CH21 = process.env.NEXT_PUBLIC_YT_CH21 || "";
-const HARDCODED_FALLBACK_YT = "UCMkW239dyAxDyOFDP0D6p2g";
+const CH21_ID = 21;
+const YT_FALLBACK_CH21 = "UCMkW239dyAxDyOFDP0D6p2g";
+const STANDBY_OBJECT = "standby_blacktruthtv.mp4"; // your standby filename inside channel bucket
 
-const START_EARLY_GRACE_MS = 30_000;
-const END_LATE_GRACE_MS = 15_000;
+/* ----------------- helpers ----------------- */
 
-/* ───────── helpers ───────── */
+const baseNoQuery = (u?: string) => (u || "").split("?")[0];
+const cleanPath = (p: string) => p.replace(/^\.?\//, "");
+const isVideoUrl = (u?: string) => !!u && /\.(mp4|m3u8)$/i.test(baseNoQuery(u));
 
-const baseUrl = (u?: string | null) => (u ?? "").split("?")[0];
+function toDate(val: string | Date) { return val instanceof Date ? val : new Date(val); }
+function addSeconds(d: Date, secs: number) { return new Date(d.getTime() + secs * 1000); }
 
-function toUtcDate(val?: string | Date | null): Date | null {
-  if (!val) return null;
-  if (val instanceof Date) return Number.isNaN(val.getTime()) ? null : val;
-  let s = String(val).trim();
-  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?$/.test(s)) s = s.replace(" ", "T") + "Z";
-  else if (!/[zZ]|[+\-]\d{2}:\d{2}$/.test(s)) s = s + "Z";
-  const d = new Date(s);
-  return Number.isNaN(d.getTime()) ? null : d;
-}
-
-function bucketNameFor(details: Channel | null): string | null {
-  if (!details) return null;
-  const slug = (details as any)?.slug?.toString().trim();
-  if (slug) return slug;
-  const n = Number((details as any)?.id);
-  if (Number.isFinite(n) && n > 0) return `channel${n}`;
+function bucketForChannel(ch: Channel | null): string | null {
+  if (!ch) return null;
+  if (ch.slug && ch.slug.trim()) return ch.slug.trim();
+  if (Number.isFinite(ch.id) && ch.id > 0) return `channel${ch.id}`;
   return null;
 }
 
 function publicUrl(bucket: string, objectPath: string): string | undefined {
-  const clean = objectPath.replace(/^\.?\//, "");
   try {
-    const { data } = supabase.storage.from(bucket).getPublicUrl(clean);
+    const { data } = supabase.storage.from(bucket).getPublicUrl(cleanPath(objectPath));
     return data?.publicUrl || undefined;
-  } catch {
-    return undefined;
-  }
+  } catch { return undefined; }
 }
 
 async function resolvePlayableUrl(program: Program, channelBucket: string | null) {
-  try {
-    const maybe = getVideoUrlForProgram(program) as unknown;
-    let raw =
-      (maybe && typeof (maybe as any).then === "function"
-        ? await (maybe as Promise<string>)
-        : (maybe as string | undefined)) || (program as any)?.mp4_url || "";
+  let raw = (getVideoUrlForProgram(program) || "").trim();
+  if (!raw) return undefined;
 
-    if (!raw) return undefined;
-    if (/^https?:\/\//i.test(raw) || raw.startsWith("/")) return raw;
+  if (/^https?:\/\//i.test(raw) || raw.startsWith("/")) return raw;
 
-    // explicit bucket override: bucket:path or storage://bucket/path
-    const m =
-      /^([a-z0-9_\-]+):(.+)$/i.exec(raw) ||
-      /^storage:\/\/([^/]+)\/(.+)$/i.exec(raw);
-    if (m) {
-      const b = m[1];
-      const p = m[2].replace(/^\.?\//, "");
-      return publicUrl(b, p);
-    }
-
-    if (!channelBucket) return undefined;
-    raw = raw.replace(/^\.?\//, "");
-    const prefix = `${channelBucket.replace(/\/+$/, "")}/`.toLowerCase();
-    if (raw.toLowerCase().startsWith(prefix)) raw = raw.slice(prefix.length);
-    return publicUrl(channelBucket, raw);
-  } catch {
-    return undefined;
+  const m =
+    /^([a-z0-9_\-]+):(.+)$/i.exec(raw) ||
+    /^storage:\/\/([^/]+)\/(.+)$/i.exec(raw);
+  if (m) {
+    const b = m[1];
+    const p = m[2];
+    return publicUrl(b, p);
   }
+
+  if (!channelBucket) return undefined;
+  raw = cleanPath(raw);
+  const prefix = `${channelBucket.replace(/\/+$/, "")}/`.toLowerCase();
+  if (raw.toLowerCase().startsWith(prefix)) raw = raw.slice(prefix.length);
+  return publicUrl(channelBucket, raw);
 }
 
-function pickYouTubeChannelId(details: Channel | null): string | null {
-  const dbId = (details as any)?.youtube_channel_id?.toString().trim();
-  if (dbId) return dbId;
-  if (ENV_YT_CH21) return ENV_YT_CH21;
-  if (HARDCODED_FALLBACK_YT) return HARDCODED_FALLBACK_YT;
-  return null;
+function resolveStandbyUrl(channelBucket: string | null) {
+  if (!channelBucket) return undefined;
+  return publicUrl(channelBucket, STANDBY_OBJECT);
 }
 
-/* ───────── page ───────── */
+/* ----------------- page ----------------- */
 
 export default function WatchPage() {
-  const params = useParams();
-  const searchParams = useSearchParams();
+  const { channelId } = useParams<{ channelId: string }>();
   const router = useRouter();
+  const search = useSearchParams();
 
-  const channelIdString = params.channelId as string;
-  const pollOn = (searchParams?.get("poll") ?? "0") === "1";
+  const channelIdNum = useMemo(() => Number(channelId), [channelId]);
+  const debugOn = (search?.get("debug") ?? "0") === "1";
 
-  const [validatedNumericChannelId, setValidatedNumericChannelId] = useState<number | null>(null);
-  const [currentProgram, setCurrentProgram] = useState<Program | null>(null);
-  const [upcomingPrograms, setUpcomingPrograms] = useState<Program[]>([]);
-  const [channelDetails, setChannelDetails] = useState<Channel | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [videoPlayerKey, setVideoPlayerKey] = useState(1);
+  const [channel, setChannel] = useState<Channel | null>(null);
+  const [activeProgram, setActiveProgram] = useState<Program | null>(null);
+  const [nextProgram, setNextProgram] = useState<Program | null>(null);
+  const [playingSrc, setPlayingSrc] = useState<string | undefined>(undefined);
+  const [usingStandby, setUsingStandby] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
 
-  const isFetchingRef = useRef(false);
-  const stableSrcRef = useRef<string | undefined>(undefined);
-  const stablePosterRef = useRef<string | undefined>(undefined);
-  const stableTitleRef = useRef<string | undefined>(undefined);
-  const channelBucketRef = useRef<string | null>(null);
+  const poster = channel?.logo_url || undefined;
+  const bucketRef = useRef<string | null>(null);
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const playerKeyRef = useRef(0);
 
+  // Load channel
   useEffect(() => {
     let cancelled = false;
+    (async () => {
+      setLoading(true);
+      setErr(null);
 
-    (async function init() {
-      if (!channelIdString) {
-        setError("Channel ID is missing in URL.");
-        setIsLoading(false);
-        return;
-      }
-
-      setIsLoading(true);
-      setError(null);
-
-      const details = await fetchChannelDetails(channelIdString);
-      if (!details) {
-        if (!cancelled) {
-          setError("Could not load channel details.");
-          setIsLoading(false);
-        }
-        return;
-      }
+      const ch = await fetchChannelDetails(channelId!);
       if (cancelled) return;
 
-      setChannelDetails(details);
-      channelBucketRef.current = bucketNameFor(details);
-
-      const numericId = Number.parseInt(String((details as any).id), 10);
-      if (Number.isNaN(numericId)) {
-        setError("Channel misconfigured: missing numeric id.");
-        setIsLoading(false);
+      if (!ch) {
+        setErr("Channel not found.");
+        setLoading(false);
         return;
       }
-      setValidatedNumericChannelId(numericId);
-
-      if (ALWAYS_LIVE_CHANNEL_IDS.has(numericId)) {
-        const ytChannelId = pickYouTubeChannelId(details);
-        if (!ytChannelId) {
-          setError("Channel 21 is set to YouTube Live but youtube_channel_id is missing.");
-          setIsLoading(false);
-          return;
-        }
-        const liveProgram: Program = {
-          id: "live-youtube",
-          title: (details as any)?.name ? `${(details as any).name} Live` : "Live Broadcast (Channel 21)",
-          channel_id: CH21_ID_NUMERIC,
-          mp4_url: `youtube_channel:${ytChannelId}`, // marker
-          duration: 86400 * 365,
-          start_time: new Date(Date.now() - 3600000).toISOString(),
-        } as any;
-        setCurrentProgram(liveProgram);
-        stableTitleRef.current = (liveProgram as any).title || undefined;
-        setIsLoading(false);
-        return;
-      }
-
-      setIsLoading(false);
+      setChannel(ch as any);
+      bucketRef.current = bucketForChannel(ch as any);
+      setLoading(false);
     })();
 
-    return () => { cancelled = true; };
-  }, [channelIdString]);
+    return () => {
+      cancelled = true;
+      if (refreshTimer.current) {
+        clearTimeout(refreshTimer.current);
+        refreshTimer.current = null;
+      }
+    };
+  }, [channelId]);
 
-  const getStandbyMp4Program = useCallback(
-    (channelNum: number, now: Date): Program =>
-      ({
-        id: STANDBY_PLACEHOLDER_ID,
-        title: "Standby Programming",
-        channel_id: channelNum,
-        mp4_url: "standby_blacktruthtv.mp4", // expected inside this channel's bucket
-        duration: 300,
-        start_time: now.toISOString(),
-      }) as any,
-    []
-  );
-
-  const isActiveWindow = (start: Date, durationSec: number, nowMs: number) => {
-    const startMs = start.getTime();
-    const endMs = startMs + durationSec * 1000;
-    return nowMs >= (startMs - START_EARLY_GRACE_MS) && nowMs < (endMs + END_LATE_GRACE_MS);
+  const scheduleRefreshAt = (when: Date | null) => {
+    if (refreshTimer.current) {
+      clearTimeout(refreshTimer.current);
+      refreshTimer.current = null;
+    }
+    if (!when) return;
+    const delay = Math.max(0, when.getTime() - Date.now() + 1000); // +1s safety
+    refreshTimer.current = setTimeout(() => {
+      void pickAndResolve();
+    }, delay);
   };
 
-  const fetchCurrentProgram = useCallback(
-    async (numericChannelId: number) => {
-      if (ALWAYS_LIVE_CHANNEL_IDS.has(numericChannelId)) return;
-      if (isFetchingRef.current) return;
-      isFetchingRef.current = true;
+  // Pick active, next; play active or standby; schedule next refresh boundary
+  const pickAndResolve = useCallback(async () => {
+    if (!channel) return;
 
-      const firstLoad = !currentProgram;
-      if (firstLoad) setIsLoading(true);
+    // CH 21 = YouTube Live
+    if (channel.id === CH21_ID) {
+      setActiveProgram({
+        id: "youtube-live",
+        channel_id: CH21_ID,
+        title: channel.name ? `${channel.name} Live` : "Live",
+        mp4_url: `youtube_channel:${channel.youtube_channel_id || YT_FALLBACK_CH21}`,
+        start_time: new Date(Date.now() - 3600000).toISOString(),
+        duration: 31536000,
+      } as any);
+      setNextProgram(null);
+      setPlayingSrc(undefined);
+      setUsingStandby(false);
+      scheduleRefreshAt(null);
+      return;
+    }
 
-      const nowMs = Date.now();
-      try {
-        const { data: programsData, error: dbError } = await supabase
-          .from("programs")
-          .select("id, channel_id, title, mp4_url, start_time, duration")
-          .eq("channel_id", numericChannelId)
-          .order("start_time", { ascending: true });
+    setLoading(true);
+    setErr(null);
 
-        if (dbError) throw new Error(`Database error: ${dbError.message}`);
-
-        const programs = (programsData ?? []) as Program[];
-
-        const activeProgram = programs.find((p: any) => {
-          if (!p.start_time || typeof p.duration !== "number" || p.duration <= 0) return false;
-          const start = toUtcDate(p.start_time as any);
-          if (!start) return false;
-          return isActiveWindow(start, p.duration as any, nowMs);
-        });
-
-        const chosen = (activeProgram
-          ? { ...(activeProgram as any), channel_id: numericChannelId }
-          : getStandbyMp4Program(numericChannelId, new Date(nowMs))) as Program;
-
-        const bucket = channelBucketRef.current || `channel${numericChannelId}`;
-        const resolved = await resolvePlayableUrl(chosen as any, bucket);
-
-        // Update current program only if identity/base URL changes (prevents player thrash)
-        setCurrentProgram((prev: any) => {
-          if (prev) {
-            const prevSrc = baseUrl((prev as any).mp4_url);
-            const nextSrc = baseUrl((chosen as any).mp4_url);
-            const same = (prev as any).id === (chosen as any).id && prevSrc === nextSrc;
-            if (same) return prev;
-            setVideoPlayerKey((k) => k + 1);
-          }
-          return chosen;
-        });
-
-        // Freeze player props
-        const nextSrcBase = baseUrl(resolved);
-        const prevSrcBase = baseUrl(stableSrcRef.current);
-        if (!stableSrcRef.current || prevSrcBase !== nextSrcBase) {
-          stableSrcRef.current = resolved;
-        }
-        const poster = (channelDetails as any)?.logo_url || undefined;
-        if (stablePosterRef.current !== poster) stablePosterRef.current = poster;
-        const nextTitle = (chosen as any)?.title || undefined;
-        if (stableTitleRef.current !== nextTitle) stableTitleRef.current = nextTitle;
-      } catch (e: any) {
-        setError(e.message);
-        const fallback = getStandbyMp4Program(numericChannelId, new Date(nowMs));
-        setCurrentProgram(fallback as any);
-        const bucket = channelBucketRef.current || `channel${numericChannelId}`;
-        const resolvedFallback = await resolvePlayableUrl(fallback as any, bucket);
-        stableSrcRef.current = resolvedFallback;
-        stablePosterRef.current = (channelDetails as any)?.logo_url || undefined;
-        stableTitleRef.current = (fallback as any).title || undefined;
-      } finally {
-        if (firstLoad) setIsLoading(false);
-        isFetchingRef.current = false;
-      }
-    },
-    [channelDetails, currentProgram, getStandbyMp4Program]
-  );
-
-  const fetchUpcomingPrograms = useCallback(async (numericChannelId: number) => {
-    if (ALWAYS_LIVE_CHANNEL_IDS.has(numericChannelId)) return;
     try {
-      const nowIso = new Date().toISOString();
-      const { data } = await supabase
+      const now = new Date();
+      const nowISO = now.toISOString();
+
+      // get most recent few started programs
+      const { data: started } = await supabase
         .from("programs")
         .select("id, channel_id, title, mp4_url, start_time, duration")
-        .eq("channel_id", numericChannelId)
-        .gt("start_time", nowIso)
-        .order("start_time", { ascending: true })
-        .limit(6);
-      if (data) setUpcomingPrograms(data as Program[]);
-    } catch {
-      // ignore
-    }
-  }, []);
+        .eq("channel_id", channel.id)
+        .lte("start_time", nowISO)
+        .order("start_time", { ascending: false })
+        .limit(5);
 
-  useEffect(() => {
-    if (validatedNumericChannelId === null) return;
-    if (ALWAYS_LIVE_CHANNEL_IDS.has(validatedNumericChannelId)) return;
-
-    fetchCurrentProgram(validatedNumericChannelId);
-    fetchUpcomingPrograms(validatedNumericChannelId);
-
-    if (!pollOn) return;
-    const id = setInterval(() => {
-      if (document.visibilityState === "visible") {
-        fetchCurrentProgram(validatedNumericChannelId);
-        fetchUpcomingPrograms(validatedNumericChannelId);
+      // find active window
+      let active: Program | null = null;
+      if (started && started.length) {
+        for (const p of started as Program[]) {
+          if (!p.start_time || typeof p.duration !== "number" || p.duration <= 0) continue;
+          const st = toDate(p.start_time);
+          const en = addSeconds(st, p.duration);
+          if (now >= st && now < en) { active = p; break; }
+        }
       }
-    }, 60_000);
-    return () => clearInterval(id);
-  }, [validatedNumericChannelId, fetchCurrentProgram, fetchUpcomingPrograms, pollOn]);
 
-  const frozenSrc = stableSrcRef.current;
-  const frozenPoster = stablePosterRef.current;
-  const frozenTitle = stableTitleRef.current;
+      // next up strictly after now
+      const { data: up } = await supabase
+        .from("programs")
+        .select("id, channel_id, title, mp4_url, start_time, duration")
+        .eq("channel_id", channel.id)
+        .gt("start_time", nowISO)
+        .order("start_time", { ascending: true })
+        .limit(1);
 
-  const isYouTubeLive = (currentProgram as any)?.mp4_url?.toString().startsWith("youtube_channel:");
-  const youtubeChannelId = isYouTubeLive
-    ? ((currentProgram as any).mp4_url as string).split(":")[1]
-    : null;
+      const next = (up && up[0] as Program) || null;
+      setNextProgram(next);
 
-  /* ───────── render ───────── */
+      const bucket = bucketRef.current;
 
-  let content: ReactNode;
-  if (error) {
-    content = <p className="text-red-400 p-4 text-center">Error: {error}</p>;
-  } else if (isLoading && !currentProgram) {
-    content = (
-      <div className="flex flex-col items-center justify-center h-full">
-        <Loader2 className="h-10 w-10 animate-spin text-red-500 mb-2" />
-        <p>Loading Channel...</p>
-      </div>
-    );
-  } else if (isYouTubeLive && youtubeChannelId) {
-    content = <YouTubeEmbed channelId={youtubeChannelId} title={frozenTitle || "Live"} muted={true} />;
-  } else if (currentProgram && frozenSrc) {
-    content = (
-      <VideoPlayer
-        key={videoPlayerKey}
-        src={frozenSrc}
-        poster={frozenPoster}
-        isStandby={(currentProgram as any).id === STANDBY_PLACEHOLDER_ID}
-        programTitle={frozenTitle}
-        onVideoEnded={() => {
-          if (validatedNumericChannelId !== null) fetchCurrentProgram(validatedNumericChannelId);
-        }}
-        autoPlay
-        muted
-        playsInline
-        preload="auto"
-      />
-    );
-  } else {
-    content = <p className="text-gray-400 p-4 text-center">Initializing channel...</p>;
-  }
+      if (active) {
+        // Active exists → resolve or fallback to standby
+        const resolved = await resolvePlayableUrl(active, bucket);
+        if (isVideoUrl(resolved)) {
+          setActiveProgram(active);
+          setPlayingSrc(resolved);
+          setUsingStandby(false);
+          playerKeyRef.current += 1;
+        } else {
+          const standby = resolveStandbyUrl(bucket);
+          setActiveProgram(active);
+          setPlayingSrc(isVideoUrl(standby) ? standby : undefined);
+          setUsingStandby(true);
+          playerKeyRef.current += 1;
+        }
+
+        // refresh at earliest boundary (end of active or next start, whichever is sooner)
+        const endAt = addSeconds(toDate(active.start_time), active.duration);
+        const nextStart = next ? toDate(next.start_time) : null;
+        const boundary = nextStart && nextStart < endAt ? nextStart : endAt;
+        scheduleRefreshAt(boundary);
+        setLoading(false);
+        return;
+      }
+
+      // No active → play standby until next start
+      const standby = resolveStandbyUrl(bucket);
+      setActiveProgram(null);
+      setPlayingSrc(isVideoUrl(standby) ? standby : undefined);
+      setUsingStandby(true);
+      playerKeyRef.current += 1;
+
+      // refresh exactly at next start (if any)
+      scheduleRefreshAt(next ? toDate(next.start_time) : null);
+      setLoading(false);
+    } catch (e: any) {
+      setErr(e.message || "Error loading schedule.");
+      setLoading(false);
+    }
+  }, [channel]);
+
+  // run and then re-run at boundaries
+  useEffect(() => {
+    if (!channel || !channelIdNum) return;
+    void pickAndResolve();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [channelIdNum, channel]);
+
+  /* ----------------- render ----------------- */
+
+  const isYouTube = !!activeProgram?.mp4_url?.toString().startsWith("youtube_channel:");
+  const ytId = isYouTube ? String(activeProgram!.mp4_url).split(":")[1] : null;
 
   return (
     <div className="bg-black min-h-screen flex flex-col text-white">
+      {/* Header */}
       <div className="p-4 flex items-center justify-between bg-gray-900/50 sticky top-0 z-10">
         <button onClick={() => router.back()} className="p-2 rounded-full hover:bg-gray-700" aria-label="Go back">
           <ChevronLeft className="h-6 w-6" />
         </button>
         <h1 className="text-xl font-semibold truncate px-2">
-          {(channelDetails as any)?.name || `Channel ${channelIdString}`}
+          {channel?.name || `Channel ${channelId}`}
         </h1>
         <div className="w-10 h-10" />
       </div>
 
+      {/* Player */}
       <div className="w-full aspect-video bg-black flex items-center justify-center">
-        {content}
+        {err ? (
+          <div className="text-red-400 p-4">Error: {err}</div>
+        ) : loading && !channel ? (
+          <div className="flex flex-col items-center justify-center h-full">
+            <Loader2 className="h-10 w-10 animate-spin text-red-500 mb-2" />
+            <p>Loading…</p>
+          </div>
+        ) : isYouTube && ytId ? (
+          <YouTubeEmbed channelId={ytId} title={activeProgram?.title || "Live"} muted={true} />
+        ) : playingSrc ? (
+          <VideoPlayer
+            key={playerKeyRef.current}
+            src={playingSrc}
+            poster={poster}
+            programTitle={
+              activeProgram
+                ? (usingStandby ? `${activeProgram.title || "Program"} (Standby playback)` : activeProgram.title || undefined)
+                : (usingStandby ? "Standby (Waiting for next program)" : undefined)
+            }
+            onVideoEnded={() => { void pickAndResolve(); }}
+            onError={() => {
+              // If video errors at runtime, switch to standby (if not already)
+              if (!usingStandby) {
+                const fallback = resolveStandbyUrl(bucketRef.current);
+                if (isVideoUrl(fallback)) {
+                  setPlayingSrc(fallback);
+                  setUsingStandby(true);
+                  playerKeyRef.current += 1;
+                }
+              }
+            }}
+            autoPlay={false}
+            muted={false}
+            playsInline
+            preload="metadata"
+          />
+        ) : (
+          <div className="text-gray-300 text-sm p-4">
+            {channelIdNum === CH21_ID
+              ? "Loading YouTube…"
+              : "Standby not available publicly. Waiting for next program…"}
+          </div>
+        )}
       </div>
 
-      <div className="p-4 flex-grow">
-        {currentProgram && !isYouTubeLive && (
+      {/* Details / Next up / Debug */}
+      <div className="p-4 space-y-4">
+        {activeProgram && channelIdNum !== CH21_ID && (
           <>
-            <h2 className="text-2xl font-bold">{frozenTitle}</h2>
+            <h2 className="text-2xl font-bold">{activeProgram.title || "Now Playing"}</h2>
             <p className="text-sm text-gray-400">
-              Channel: {(channelDetails as any)?.name || `Channel ${channelIdString}`}
+              Start: {new Date(activeProgram.start_time).toLocaleString()} • Duration: {activeProgram.duration}s
+              {usingStandby && <span className="text-yellow-400"> • Fallback: Standby asset</span>}
             </p>
-            {(currentProgram as any).id !== STANDBY_PLACEHOLDER_ID && (currentProgram as any).start_time && (
-              <p className="text-sm text-gray-400">
-                Scheduled Start: {(() => {
-                  const d = toUtcDate((currentProgram as any).start_time);
-                  return d ? d.toLocaleString() : "—";
-                })()}
-              </p>
-            )}
-
-            {upcomingPrograms.length > 0 && (
-              <div className="mt-6">
-                <h3 className="text-lg font-semibold text-white mb-2">Upcoming Programs</h3>
-                <ul className="text-sm text-gray-300 space-y-1">
-                  {upcomingPrograms.map((program: any) => {
-                    const d = toUtcDate(program.start_time);
-                    return (
-                      <li key={program.id}>
-                        <span className="font-medium">{program.title}</span>{" "}
-                        <span className="text-gray-400">
-                          —{" "}
-                          {d
-                            ? d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZoneName: "short" })
-                            : "—"}
-                        </span>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
-            )}
           </>
         )}
 
-        {(searchParams?.get("debug") ?? "0") === "1" && (
-          <div className="mt-4 text-xs bg-gray-900/70 border border-gray-700 rounded p-3">
-            <div><b>Bucket:</b> {channelBucketRef.current || "—"}</div>
-            <div><b>Program.mp4_url (raw):</b> {String((currentProgram as any)?.mp4_url || "")}</div>
-            <div className="truncate"><b>Resolved MP4 URL:</b> {stableSrcRef.current || "—"}</div>
-            <div><b>Poster:</b> {String(frozenPoster || "")}</div>
+        <div>
+          <h3 className="text-lg font-semibold text-white mb-2">Next Up</h3>
+          {nextProgram ? (
+            <div className="text-sm text-gray-300">
+              <span className="font-medium">{nextProgram.title || "Untitled"}</span>{" "}
+              <span className="text-gray-400">
+                — {new Date(nextProgram.start_time).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZoneName: "short" })}
+              </span>
+            </div>
+          ) : (
+            <div className="text-sm text-gray-400">Nothing scheduled after this.</div>
+          )}
+        </div>
+
+        {debugOn && (
+          <div className="mt-2 text-xs bg-gray-900/70 border border-gray-700 rounded p-3 space-y-1">
+            <div><b>Bucket:</b> {bucketRef.current || "—"}</div>
+            <div><b>Active Program:</b> {activeProgram ? `${String(activeProgram.id)} • ${activeProgram.title || "—"}` : "— (none)"}</div>
+            <div className="truncate"><b>Playing Src:</b> {playingSrc || "—"}</div>
+            <div><b>Using Standby:</b> {usingStandby ? "yes" : "no"}</div>
+            <div><b>Poster (logo_url):</b> {poster || "—"}</div>
           </div>
         )}
       </div>
