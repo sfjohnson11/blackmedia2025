@@ -1,4 +1,6 @@
-// app/watch/[channelId]/page.tsx — Channel 21 is ALWAYS YouTube Live (24/7) + stable player
+// app/watch/[channelId]/page.tsx — Channel 21 is ALWAYS YouTube Live (24/7) + stable player,
+// UTC schedule + public Supabase buckets for MP4s, YouTube channel pulled from DB (channels.youtube_channel_id)
+
 "use client";
 
 import { type ReactNode, useEffect, useState, useCallback, useRef } from "react";
@@ -10,36 +12,21 @@ import {
   supabase,
   STANDBY_PLACEHOLDER_ID,
 } from "@/lib/supabase";
-// If your project already exports Program/Channel from "@/types", feel free to use that instead.
-type Program = {
-  id: string;
-  channel_id: number;
-  title?: string | null;
-  description?: string | null;
-  mp4_url?: string | null;
-  start_time?: string | null; // UTC ISO
-  duration: number; // seconds
-  poster_url?: string | null;
-};
-type Channel = {
-  id: number | string;
-  name?: string | null;
-  slug?: string | null;
-  description?: string | null;
-  logo_url?: string | null;
-  image_url?: string | null;
-  youtube_channel_id?: string | null;
-  youtube_is_live?: boolean | null;
-  is_active?: boolean | null;
-};
+import type { Program, Channel } from "@/types";
 import { ChevronLeft, Loader2 } from "lucide-react";
 import YouTubeEmbed from "@/components/youtube-embed";
 
-/* ------------------------ CONSTANTS ------------------------ */
+/* ────────────────────────────────────────────────────────────────────────── */
+/* CONSTANTS                                                                 */
+/* ────────────────────────────────────────────────────────────────────────── */
 
 const CH21_ID_NUMERIC = 21;
-/** Your 24/7 YouTube Channel ID for Channel 21 */
-const YT_CH21 = "UCMkW239dyAxDyOFDP0D6p2g";
+
+// Optional env fallback for CH21 if DB youtube_channel_id is empty:
+const ENV_YT_CH21 = process.env.NEXT_PUBLIC_YT_CH21 || "";
+
+// Keep an ultimate last-resort fallback (prefer DB/env above)
+const HARDCODED_FALLBACK_YT = "UCMkW239dyAxDyOFDP0D6p2g";
 
 /** Channels that are *always* live on YouTube (skip schedule fetch) */
 const ALWAYS_LIVE_CHANNEL_IDS = new Set<number>([CH21_ID_NUMERIC]);
@@ -48,9 +35,10 @@ const ALWAYS_LIVE_CHANNEL_IDS = new Set<number>([CH21_ID_NUMERIC]);
 const START_EARLY_GRACE_MS = 30_000;
 const END_LATE_GRACE_MS = 15_000;
 
-/* ------------------------ HELPERS ------------------------ */
+/* ────────────────────────────────────────────────────────────────────────── */
+/* HELPERS                                                                   */
+/* ────────────────────────────────────────────────────────────────────────── */
 
-/** Normalize to ignore rotating query params */
 function baseUrl(u?: string | null) {
   return (u ?? "").split("?")[0];
 }
@@ -60,8 +48,11 @@ function toUtcDate(val?: string | Date | null): Date | null {
   if (!val) return null;
   if (val instanceof Date) return Number.isNaN(val.getTime()) ? null : val;
   let s = String(val).trim();
-  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?$/.test(s)) s = s.replace(" ", "T") + "Z";
-  else if (!/[zZ]|[+\-]\d{2}:\d{2}$/.test(s)) s = s + "Z";
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?$/.test(s)) {
+    s = s.replace(" ", "T") + "Z";
+  } else if (!/[zZ]|[+\-]\d{2}:\d{2}$/.test(s)) {
+    s = s + "Z";
+  }
   const d = new Date(s);
   return Number.isNaN(d.getTime()) ? null : d;
 }
@@ -70,13 +61,13 @@ function toUtcDate(val?: string | Date | null): Date | null {
 function bucketNameFor(details: Channel | null): string | null {
   if (!details) return null;
   const slug = (details as any)?.slug?.toString().trim();
-  if (slug) return slug;                    // e.g. "freedom_school"
+  if (slug) return slug; // e.g. "freedom_school"
   const n = Number((details as any)?.id);
   if (Number.isFinite(n) && n > 0) return `channel${n}`; // e.g. "channel7"
   return null;
 }
 
-/** Build a public Supabase Storage URL (all your buckets are PUBLIC) */
+/** PUBLIC Supabase Storage URL (all your buckets are PUBLIC) */
 function publicUrl(bucket: string, objectPath: string): string | undefined {
   const clean = objectPath.replace(/^\.?\//, "");
   try {
@@ -88,7 +79,10 @@ function publicUrl(bucket: string, objectPath: string): string | undefined {
 }
 
 /** Resolve to a *public* URL based on your rules (no auth, no signing) */
-async function resolvePlayableUrl(program: Program, channelBucket: string | null): Promise<string | undefined> {
+async function resolvePlayableUrl(
+  program: Program,
+  channelBucket: string | null
+): Promise<string | undefined> {
   try {
     const maybe = getVideoUrlForProgram(program) as unknown;
     let raw =
@@ -115,7 +109,6 @@ async function resolvePlayableUrl(program: Program, channelBucket: string | null
     // Otherwise path inside THIS channel's bucket
     if (!channelBucket) return undefined;
     raw = raw.replace(/^\.?\//, "");
-    // Allow mp4_url that already starts with "channelX/"
     const prefix = `${channelBucket.replace(/\/+$/, "")}/`.toLowerCase();
     if (raw.toLowerCase().startsWith(prefix)) raw = raw.slice(prefix.length);
     return publicUrl(channelBucket, raw);
@@ -124,7 +117,18 @@ async function resolvePlayableUrl(program: Program, channelBucket: string | null
   }
 }
 
-/* ------------------------ PAGE ------------------------ */
+/** Extract YouTube channel ID to use (DB → env → hardcoded fallback) */
+function pickYouTubeChannelId(details: Channel | null): string | null {
+  const dbId = (details as any)?.youtube_channel_id?.toString().trim();
+  if (dbId) return dbId;
+  if (ENV_YT_CH21) return ENV_YT_CH21;
+  if (HARDCODED_FALLBACK_YT) return HARDCODED_FALLBACK_YT;
+  return null;
+}
+
+/* ────────────────────────────────────────────────────────────────────────── */
+/* PAGE                                                                      */
+/* ────────────────────────────────────────────────────────────────────────── */
 
 export default function WatchPage() {
   const params = useParams();
@@ -132,8 +136,6 @@ export default function WatchPage() {
   const router = useRouter();
 
   const channelIdString = params.channelId as string;
-
-  // Optional: enable schedule polling for non-live channels with ?poll=1
   const pollOn = (searchParams?.get("poll") ?? "0") === "1";
 
   const [validatedNumericChannelId, setValidatedNumericChannelId] = useState<number | null>(null);
@@ -155,7 +157,7 @@ export default function WatchPage() {
   // Track this channel’s bucket
   const channelBucketRef = useRef<string | null>(null);
 
-  // Accept numeric id OR slug like "freedom_school"
+  /* ── Init: fetch channel details, wire CH21 to YouTube using actual DB value ── */
   useEffect(() => {
     let cancelled = false;
 
@@ -190,21 +192,26 @@ export default function WatchPage() {
       }
       setValidatedNumericChannelId(numericId);
 
-      // ⟵ ALWAYS-LIVE SHORT-CIRCUIT for CH 21
+      // CH21: Always YouTube Live — use real channel ID from DB (or env fallback)
       if (ALWAYS_LIVE_CHANNEL_IDS.has(numericId)) {
+        const ytChannelId = pickYouTubeChannelId(details);
+        if (!ytChannelId) {
+          setError("Channel 21 is configured as always-live on YouTube, but no youtube_channel_id is set.");
+          setIsLoading(false);
+          return;
+        }
         const liveProgram: Program = {
-          id: "live-ch21-youtube",
-          title: "Live Broadcast (Channel 21)",
+          id: "live-youtube",
+          title: (details as any)?.name ? `${(details as any).name} Live` : "Live Broadcast (Channel 21)",
           description: "24/7 broadcasting via YouTube.",
           channel_id: CH21_ID_NUMERIC,
-          mp4_url: `youtube_channel:${YT_CH21}`, // marker for render branch
-          duration: 86400 * 365, // long fake duration
+          mp4_url: `youtube_channel:${ytChannelId}`, // marker + storage for chosen channel ID
+          duration: 86400 * 365,
           start_time: new Date(Date.now() - 3600000).toISOString(),
-          poster_url: (details as any)?.image_url || null,
+          poster_url: (details as any)?.image_url || (details as any)?.logo_url || null,
         };
         setCurrentProgram(liveProgram);
         stableTitleRef.current = liveProgram.title || undefined;
-        // No need to set src/poster for YouTube embed branch
         setIsLoading(false);
         return; // skip schedule fetch entirely
       }
@@ -222,8 +229,7 @@ export default function WatchPage() {
       title: "Standby Programming",
       description: "Programming will resume shortly.",
       channel_id: channelNum,
-      // We will resolve this inside the current channel bucket
-      mp4_url: "standby_blacktruthtv.mp4",
+      mp4_url: "standby_blacktruthtv.mp4", // resolved inside this channel's bucket
       duration: 300,
       start_time: now.toISOString(),
       poster_url: null,
@@ -237,10 +243,9 @@ export default function WatchPage() {
     return nowMs >= (startMs - START_EARLY_GRACE_MS) && nowMs < (endMs + END_LATE_GRACE_MS);
   };
 
-  // Regular schedule fetch for non-always-live channels
   const fetchCurrentProgram = useCallback(
     async (numericChannelId: number) => {
-      if (ALWAYS_LIVE_CHANNEL_IDS.has(numericChannelId)) return; // never fetch schedule for 24/7 live
+      if (ALWAYS_LIVE_CHANNEL_IDS.has(numericChannelId)) return;
       if (isFetchingRef.current) return;
       isFetchingRef.current = true;
 
@@ -259,7 +264,6 @@ export default function WatchPage() {
 
         const programs = (programsData ?? []) as Program[];
 
-        // pick active program using UTC (+ grace)
         const activeProgram = programs.find((p) => {
           if (!p.start_time || typeof p.duration !== "number" || p.duration <= 0) return false;
           const start = toUtcDate(p.start_time);
@@ -271,11 +275,9 @@ export default function WatchPage() {
           ? { ...activeProgram, channel_id: numericChannelId }
           : getStandbyMp4Program(numericChannelId, new Date(nowMs));
 
-        // Resolve to a *public* URL inside this channel's bucket (or leave absolute)
         const bucket = channelBucketRef.current || `channel${numericChannelId}`;
         const resolved = await resolvePlayableUrl(nextProgram, bucket);
 
-        // Only change if program id OR base media URL actually changed
         setCurrentProgram((prev) => {
           if (prev) {
             const prevSrc = baseUrl(prev.mp4_url);
@@ -287,7 +289,6 @@ export default function WatchPage() {
           return nextProgram;
         });
 
-        // Freeze props so the player doesn’t reload on harmless updates
         const nextSrcBase = baseUrl(resolved);
         const prevSrcBase = baseUrl(stableSrcRef.current);
         if (!stableSrcRef.current || prevSrcBase !== nextSrcBase) {
@@ -321,9 +322,9 @@ export default function WatchPage() {
   );
 
   const fetchUpcomingPrograms = useCallback(async (numericChannelId: number) => {
-    if (ALWAYS_LIVE_CHANNEL_IDS.has(numericChannelId)) return; // no upcoming list for 24/7 live
+    if (ALWAYS_LIVE_CHANNEL_IDS.has(numericChannelId)) return;
     try {
-      const nowIso = new Date().toISOString(); // DB times are UTC
+      const nowIso = new Date().toISOString();
       const { data } = await supabase
         .from("programs")
         .select("id, channel_id, title, mp4_url, start_time, duration")
@@ -340,15 +341,12 @@ export default function WatchPage() {
 
   useEffect(() => {
     if (validatedNumericChannelId === null) return;
-
-    // For always-live channels, nothing else to do.
     if (ALWAYS_LIVE_CHANNEL_IDS.has(validatedNumericChannelId)) return;
 
-    // Initial fetch (non-live channels only)
     fetchCurrentProgram(validatedNumericChannelId);
     fetchUpcomingPrograms(validatedNumericChannelId);
 
-    if (!pollOn) return; // optional polling for non-live channels
+    if (!pollOn) return;
     const interval = setInterval(() => {
       if (document.visibilityState === "visible") {
         fetchCurrentProgram(validatedNumericChannelId);
@@ -366,13 +364,18 @@ export default function WatchPage() {
 
   const handlePrimaryLiveStreamError = useCallback(() => {}, []);
 
-  // Use frozen values for the player
+  // Frozen values for the player
   const frozenSrc = stableSrcRef.current;
   const frozenPoster = stablePosterRef.current;
   const frozenTitle = stableTitleRef.current;
 
-  const isYouTubeLive = currentProgram?.id === "live-ch21-youtube";
-  const shouldLoopInPlayer = currentProgram?.id === STANDBY_PLACEHOLDER_ID;
+  // Detect YouTube from program mp4_url marker
+  const isYouTubeLive = (currentProgram?.mp4_url || "").startsWith("youtube_channel:");
+  const youtubeChannelId = isYouTubeLive
+    ? (currentProgram!.mp4_url as string).split(":")[1]
+    : null;
+
+  /* ── Render ── */
 
   let content: ReactNode;
   if (error) {
@@ -384,11 +387,11 @@ export default function WatchPage() {
         <p>Loading Channel...</p>
       </div>
     );
-  } else if (isYouTubeLive) {
+  } else if (isYouTubeLive && youtubeChannelId) {
     content = (
       <YouTubeEmbed
-        channelId={YT_CH21}
-        title={frozenTitle || "Channel 21 Live"}
+        channelId={youtubeChannelId}
+        title={frozenTitle || "Live"}
         muted={true}
       />
     );
@@ -398,7 +401,7 @@ export default function WatchPage() {
         key={videoPlayerKey}
         src={frozenSrc}
         poster={frozenPoster}
-        isStandby={shouldLoopInPlayer}
+        isStandby={currentProgram.id === STANDBY_PLACEHOLDER_ID}
         programTitle={frozenTitle}
         onVideoEnded={handleProgramEnded}
         isPrimaryLiveStream={false}
@@ -421,7 +424,11 @@ export default function WatchPage() {
         </h1>
         <div className="w-10 h-10" />
       </div>
-      <div className="w-full aspect-video bg-black flex items-center justify-center">{content}</div>
+
+      <div className="w-full aspect-video bg-black flex items-center justify-center">
+        {content}
+      </div>
+
       <div className="p-4 flex-grow">
         {currentProgram && !isYouTubeLive && (
           <>
@@ -437,7 +444,6 @@ export default function WatchPage() {
                 })()}
               </p>
             )}
-            <p className="text-xs text-gray-300 mt-1">{currentProgram.description}</p>
 
             {upcomingPrograms.length > 0 && (
               <div className="mt-6">
@@ -465,6 +471,16 @@ export default function WatchPage() {
               </div>
             )}
           </>
+        )}
+
+        {(searchParams?.get("debug") ?? "0") === "1" && (
+          <div className="mt-4 text-xs bg-gray-900/70 border border-gray-700 rounded p-3">
+            <div><b>Bucket:</b> {channelBucketRef.current || "—"}</div>
+            <div><b>DB youtube_channel_id:</b> {String((channelDetails as any)?.youtube_channel_id || "")}</div>
+            <div><b>Chosen YouTube channel:</b> {youtubeChannelId || pickYouTubeChannelId(channelDetails) || "—"}</div>
+            <div><b>Program mp4_url:</b> {String((currentProgram as any)?.mp4_url || "")}</div>
+            <div className="truncate"><b>Resolved MP4 URL:</b> {stableSrcRef.current || "—"}</div>
+          </div>
         )}
       </div>
     </div>
