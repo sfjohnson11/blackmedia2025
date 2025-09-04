@@ -15,13 +15,9 @@ import { ChevronLeft, Loader2 } from "lucide-react";
 import YouTubeEmbed from "@/components/youtube-embed";
 
 const CH21_ID_NUMERIC = 21;
-/** Your 24/7 YouTube Channel ID for Channel 21 */
 const YT_CH21 = "UCMkW239dyAxDyOFDP0D6p2g";
-
-/** Channels that are *always* live on YouTube (skip schedule fetch) */
 const ALWAYS_LIVE_CHANNEL_IDS = new Set<number>([CH21_ID_NUMERIC]);
 
-/** Normalize to ignore rotating query params */
 function baseUrl(u?: string | null) {
   return (u ?? "").split("?")[0];
 }
@@ -45,7 +41,6 @@ export default function WatchPage() {
   const router = useRouter();
 
   const channelIdString = params.channelId as string;
-
   const pollOn = (searchParams?.get("poll") ?? "0") === "1";
 
   const [validatedNumericChannelId, setValidatedNumericChannelId] = useState<number | null>(null);
@@ -54,13 +49,16 @@ export default function WatchPage() {
   const [channelDetails, setChannelDetails] = useState<Channel | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // ✅ Use state for the resolved src so React re-renders the player when it changes
+  const [resolvedSrc, setResolvedSrc] = useState<string | undefined>(undefined);
   const [videoPlayerKey, setVideoPlayerKey] = useState(Date.now());
 
+  // Refs for race control + title cache
   const isFetchingRef = useRef(false);
-
-  const stableSrcRef = useRef<string | undefined>(undefined);
   const stableTitleRef = useRef<string | undefined>(undefined);
 
+  // Init: load channel details and handle always-live CH21
   useEffect(() => {
     let cancelled = false;
 
@@ -106,6 +104,7 @@ export default function WatchPage() {
         } as any;
         setCurrentProgram(liveProgram);
         stableTitleRef.current = liveProgram.title || undefined;
+        setResolvedSrc(undefined); // handled by YouTubeEmbed branch
         setIsLoading(false);
         return;
       }
@@ -164,29 +163,28 @@ export default function WatchPage() {
           ? { ...activeProgram, channel_id: numericChannelId }
           : getStandbyMp4Program(numericChannelId, now);
 
+        // Update current program state
         setCurrentProgram((prev) => {
           if (prev) {
             const prevSrc = baseUrl(prev.mp4_url);
             const nextSrc = baseUrl(nextProgram.mp4_url);
             const same = prev.id === nextProgram.id && prevSrc === nextSrc;
             if (same) return prev;
-            setVideoPlayerKey(Date.now());
           }
           return nextProgram;
         });
 
-        // ✅ Always resolve the playable URL
+        // Resolve playable URL -> set STATE (not ref) and bump key if it changed
         const fullSrc = await resolvePlayableUrl(nextProgram);
-        if (fullSrc) {
-          const nextSrcBase = baseUrl(fullSrc);
-          const prevSrcBase = baseUrl(stableSrcRef.current);
-          if (!stableSrcRef.current || prevSrcBase !== nextSrcBase) {
-            stableSrcRef.current = fullSrc;
+        setResolvedSrc((prev) => {
+          if (prev !== fullSrc) {
+            setVideoPlayerKey(Date.now());
+            return fullSrc;
           }
-        } else {
-          stableSrcRef.current = nextProgram?.mp4_url;
-        }
+          return prev;
+        });
 
+        // Title cache
         stableTitleRef.current = nextProgram?.title || undefined;
       } catch (e: any) {
         setError(e.message);
@@ -194,7 +192,14 @@ export default function WatchPage() {
         setCurrentProgram(fallback);
 
         const signed = await resolvePlayableUrl(fallback);
-        stableSrcRef.current = signed || fallback.mp4_url;
+        setResolvedSrc((prev) => {
+          if (prev !== (signed || fallback.mp4_url)) {
+            setVideoPlayerKey(Date.now());
+            return signed || fallback.mp4_url;
+          }
+          return prev;
+        });
+
         stableTitleRef.current = fallback.title || undefined;
       } finally {
         if (firstLoad) setIsLoading(false);
@@ -247,9 +252,7 @@ export default function WatchPage() {
 
   const handlePrimaryLiveStreamError = useCallback(() => {}, []);
 
-  const frozenSrc = stableSrcRef.current;
   const frozenTitle = stableTitleRef.current;
-
   const isYouTubeLive = currentProgram?.id === "live-ch21-youtube";
   const shouldLoopInPlayer = currentProgram?.id === STANDBY_PLACEHOLDER_ID;
 
@@ -269,17 +272,13 @@ export default function WatchPage() {
     );
   } else if (isYouTubeLive) {
     content = (
-      <YouTubeEmbed
-        channelId={YT_CH21}
-        title={frozenTitle || "Channel 21 Live"}
-        muted={true}
-      />
+      <YouTubeEmbed channelId={YT_CH21} title={frozenTitle || "Channel 21 Live"} muted={true} />
     );
-  } else if (currentProgram && frozenSrc) {
+  } else if (currentProgram && resolvedSrc) {
     content = (
       <VideoPlayer
         key={videoPlayerKey}
-        src={frozenSrc}
+        src={resolvedSrc}
         poster={posterForThisProgram}
         isStandby={shouldLoopInPlayer}
         programTitle={frozenTitle}
