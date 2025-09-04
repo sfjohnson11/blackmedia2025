@@ -1,4 +1,3 @@
-watch page 09-03-25
 // app/watch/[channelId]/page.tsx — Channel 21 is ALWAYS YouTube Live (24/7) + stable player
 "use client";
 
@@ -92,15 +91,13 @@ export default function WatchPage() {
         const liveProgram: Program = {
           id: "live-ch21-youtube",
           title: "Live Broadcast (Channel 21)",
-          description: "24/7 broadcasting via YouTube.",
           channel_id: CH21_ID_NUMERIC,
           mp4_url: `youtube_channel:${YT_CH21}`, // marker for render branch
           duration: 86400 * 365, // long fake duration
           start_time: new Date(Date.now() - 3600000).toISOString(),
-          poster_url: (details as any)?.image_url || null,
-        };
+        } as any;
         setCurrentProgram(liveProgram);
-        stableTitleRef.current = liveProgram.title;
+        stableTitleRef.current = liveProgram.title || undefined;
         // No need to set src/poster for YouTube embed branch
         setIsLoading(false);
         return; // skip schedule fetch entirely
@@ -117,16 +114,11 @@ export default function WatchPage() {
     (channelNum: number, now: Date): Program => ({
       id: STANDBY_PLACEHOLDER_ID,
       title: channelNum === CH21_ID_NUMERIC ? "Channel 21 - Standby" : "Standby Programming",
-      description:
-        channelNum === CH21_ID_NUMERIC
-          ? "Live stream currently unavailable. Standby programming will play."
-          : "Programming will resume shortly.",
       channel_id: channelNum,
       mp4_url: `channel${channelNum}/standby_blacktruthtv.mp4`,
       duration: 300,
       start_time: now.toISOString(),
-      poster_url: null,
-    }),
+    }) as any,
     []
   );
 
@@ -144,14 +136,16 @@ export default function WatchPage() {
       try {
         const { data: programsData, error: dbError } = await supabase
           .from("programs")
-          .select("*, duration")
+          .select("id, channel_id, title, mp4_url, start_time, duration")
           .eq("channel_id", numericChannelId)
           .order("start_time", { ascending: true });
 
         if (dbError) throw new Error(`Database error: ${dbError.message}`);
 
-        const programs = programsData as Program[] | null;
-        const activeProgram = programs?.find((p) => {
+        const programs = (programsData ?? []) as Program[];
+
+        // pick the one that's live (UTC) or fallback to standby (kept your logic)
+        const activeProgram = programs.find((p) => {
           if (!p.start_time || typeof p.duration !== "number" || p.duration <= 0) return false;
           const start = new Date(p.start_time);
           const end = new Date(start.getTime() + p.duration * 1000);
@@ -181,18 +175,20 @@ export default function WatchPage() {
         if (!stableSrcRef.current || prevSrcBase !== nextSrcBase) {
           stableSrcRef.current = fullSrc;
         }
-        const nextPoster = nextProgram?.poster_url || (channelDetails as any)?.image_url || undefined;
+
+        // Poster: use channel artwork (programs table has no poster)
+        const nextPoster = (channelDetails as any)?.image_url || undefined;
         if (stablePosterRef.current !== nextPoster) stablePosterRef.current = nextPoster;
 
-        const nextTitle = nextProgram?.title;
+        const nextTitle = nextProgram?.title || undefined;
         if (stableTitleRef.current !== nextTitle) stableTitleRef.current = nextTitle;
       } catch (e: any) {
         setError(e.message);
         const fallback = getStandbyMp4Program(numericChannelId, now);
         setCurrentProgram(fallback);
         stableSrcRef.current = getVideoUrlForProgram(fallback);
-        stablePosterRef.current = fallback.poster_url || (channelDetails as any)?.image_url || undefined;
-        stableTitleRef.current = fallback.title;
+        stablePosterRef.current = (channelDetails as any)?.image_url || undefined;
+        stableTitleRef.current = fallback.title || undefined;
       } finally {
         if (firstLoad) setIsLoading(false);
         isFetchingRef.current = false;
@@ -207,7 +203,7 @@ export default function WatchPage() {
       const now = new Date().toISOString();
       const { data, error } = await supabase
         .from("programs")
-        .select("*")
+        .select("id, channel_id, title, mp4_url, start_time, duration")
         .eq("channel_id", numericChannelId)
         .gt("start_time", now)
         .order("start_time", { ascending: true })
@@ -311,8 +307,7 @@ export default function WatchPage() {
                 Scheduled Start: {new Date(currentProgram.start_time).toLocaleString()}
               </p>
             )}
-            <p className="text-xs text-gray-300 mt-1">{currentProgram.description}</p>
-
+            {/* programs table has no description; removed */}
             {upcomingPrograms.length > 0 && (
               <div className="mt-6">
                 <h3 className="text-lg font-semibold text-white mb-2">Upcoming Programs</h3>
