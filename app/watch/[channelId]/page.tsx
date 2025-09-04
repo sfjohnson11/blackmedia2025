@@ -1,4 +1,4 @@
-// app/watch/[channelId]/page.tsx — Channel 21 is ALWAYS YouTube Live (24/7) + stable player
+// app/watch/[channelId]/page.tsx — server-time synced, UTC-safe, stable overlay player
 "use client";
 
 import { type ReactNode, useEffect, useState, useCallback, useRef } from "react";
@@ -18,17 +18,14 @@ const CH21_ID_NUMERIC = 21;
 const YT_CH21 = "UCMkW239dyAxDyOFDP0D6p2g";
 const ALWAYS_LIVE_CHANNEL_IDS = new Set<number>([CH21_ID_NUMERIC]);
 
-// how long to wait for first stable playback before hiding overlay
-const STABLE_PLAY_MS = 1200;
-// how long to wait for canplay before triggering recovery
-const CANPLAY_TIMEOUT_MS = 8000;
-// on stall, wait a bit then attempt a soft reload
-const STALL_RECOVERY_MS = 4000;
-// recover tries per src before hard-fallback
+// SmartVideo timing
+const STABLE_PLAY_MS = 1000;
+const CANPLAY_TIMEOUT_MS = 7000;
+const STALL_RECOVERY_MS = 3000;
 const MAX_ATTEMPTS_PER_SRC = 2;
 
 // —————————————————— HELPERS
-/** Parse DB date/time as UTC (works for tz/ISO and "YYYY-MM-DD HH:mm:ss"). */
+/** Parse DB date/time as UTC (supports tz/ISO and "YYYY-MM-DD HH:mm:ss"). */
 function toUtcDate(val?: string | Date | null): Date | null {
   if (!val) return null;
   if (val instanceof Date) return Number.isNaN(val.getTime()) ? null : val;
@@ -47,7 +44,7 @@ function baseUrl(u?: string | null) {
   return (u ?? "").split("?")[0];
 }
 
-/** Safely handle string or Promise-returning getVideoUrlForProgram */
+/** string | Promise<string> | undefined */
 async function resolvePlayableUrl(program: Program): Promise<string | undefined> {
   try {
     const maybe = getVideoUrlForProgram(program) as unknown;
@@ -60,7 +57,7 @@ async function resolvePlayableUrl(program: Program): Promise<string | undefined>
   }
 }
 
-// —————————————————— SMART VIDEO (overlay + stability gate + recovery)
+// —————————————————— SMART VIDEO (overlay + stability + recovery)
 function SmartVideo({
   src,
   logo,
@@ -76,39 +73,52 @@ function SmartVideo({
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
-  // UI state
   const [showOverlay, setShowOverlay] = useState(true);
   const [overlayText, setOverlayText] = useState("Starting stream…");
+  const [dbg, setDbg] = useState<{ rs: number; ns: number; err?: number | null }>({
+    rs: 0,
+    ns: 0,
+    err: null,
+  });
 
-  // recovery bookkeeping
   const attemptsRef = useRef(0);
   const canplayTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stablePlayTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stallTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // reset when src changes
   useEffect(() => {
     attemptsRef.current = 0;
     setShowOverlay(true);
     setOverlayText("Starting stream…");
+    setDbg({ rs: 0, ns: 0, err: null });
 
-    // clear timers
     if (canplayTimer.current) clearTimeout(canplayTimer.current);
     if (stablePlayTimer.current) clearTimeout(stablePlayTimer.current);
     if (stallTimer.current) clearTimeout(stallTimer.current);
 
-    // kick playback
     const v = videoRef.current;
     if (v) {
-      // don’t set poster on <video> — we keep our own overlay to avoid flicker
-      v.muted = true; // ensure autoplay allowed
+      try {
+        v.pause();
+        v.removeAttribute("src");
+        while (v.firstChild) v.removeChild(v.firstChild);
+      } catch {}
+      const source = document.createElement("source");
+      source.src = src;
+      source.type = "video/mp4"; // If HLS, swap to hls.js instead of native
+      v.appendChild(source);
+
+      v.crossOrigin = "anonymous";
+      v.preload = "auto";
+      v.muted = true;
       v.playsInline = true;
-      v.autoplay = true;
-      // let browser prep, then try play
-      setTimeout(() => v.play().catch(() => {}), 0);
+
+      setTimeout(() => {
+        v.load();
+        v.play().catch(() => {});
+      }, 0);
     }
 
-    // watchdog for first canplay/playing
     canplayTimer.current = setTimeout(() => {
       tryRecoverOrFail("No canplay within timeout");
     }, CANPLAY_TIMEOUT_MS);
@@ -121,38 +131,56 @@ function SmartVideo({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [src]);
 
-  const tryRecoverOrFail = (why: string) => {
+  const updateDbg = () => {
     const v = videoRef.current;
     if (!v) return;
+    const err = (v.error && (v.error as any).code) || null;
+    setDbg({ rs: v.readyState, ns: v.networkState, err });
+  };
+
+  const tryRecoverOrFail = (_why: string) => {
+    const v = videoRef.current;
+    if (!v) return;
+
+    updateDbg();
+
+    const mediaErr = v.error?.code ?? null; // 3: decode, 4: not supported
+    if (mediaErr === 3 || mediaErr === 4) {
+      setOverlayText("Switching to standby…");
+      onHardFail();
+      return;
+    }
 
     if (attemptsRef.current < MAX_ATTEMPTS_PER_SRC) {
       attemptsRef.current += 1;
       setOverlayText("Recovering stream…");
+
       if (canplayTimer.current) clearTimeout(canplayTimer.current);
       if (stablePlayTimer.current) clearTimeout(stablePlayTimer.current);
       if (stallTimer.current) clearTimeout(stallTimer.current);
 
-      // soft reload
-      v.load();
+      try {
+        v.pause();
+        v.load();
+      } catch {}
       v.play().catch(() => {});
-      // start another canplay guard
+
       canplayTimer.current = setTimeout(() => {
         tryRecoverOrFail("Still no canplay after recovery");
       }, CANPLAY_TIMEOUT_MS);
     } else {
-      // hard fail → fallback to standby
       setOverlayText("Switching to standby…");
       onHardFail();
     }
   };
 
   const handleCanPlay = () => {
-    // don’t hide overlay yet; wait for PLAYING + stable window
     if (canplayTimer.current) clearTimeout(canplayTimer.current);
+    updateDbg();
   };
 
   const handlePlaying = () => {
-    // only hide after sustained playing (prevents flicker/pop)
+    updateDbg();
     if (stablePlayTimer.current) clearTimeout(stablePlayTimer.current);
     stablePlayTimer.current = setTimeout(() => {
       setShowOverlay(false);
@@ -162,7 +190,7 @@ function SmartVideo({
   };
 
   const handleWaiting = () => {
-    // playback stalled — give it a chance, then soft-recover
+    updateDbg();
     if (stallTimer.current) clearTimeout(stallTimer.current);
     stallTimer.current = setTimeout(() => {
       tryRecoverOrFail("Stalled (waiting) too long");
@@ -170,12 +198,12 @@ function SmartVideo({
   };
 
   const handleError = () => {
+    updateDbg();
     tryRecoverOrFail("Media error");
   };
 
   return (
     <div className="relative w-full h-full">
-      {/* Logo overlay stays until *stable* playback */}
       {showOverlay && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-black z-10">
           {logo ? (
@@ -189,24 +217,28 @@ function SmartVideo({
             <Loader2 className="h-5 w-5 animate-spin" />
             <span>{overlayText}</span>
           </div>
+          {process.env.NODE_ENV !== "production" && (
+            <div className="mt-3 text-[11px] text-gray-400">
+              rs:{dbg.rs} ns:{dbg.ns} err:{dbg.err ?? "–"}
+            </div>
+          )}
         </div>
       )}
 
       <video
         ref={videoRef}
         key={src}
-        src={src}
-        // no poster — overlay handles visuals to avoid flicker/pop
         autoPlay
         muted
         playsInline
         preload="auto"
         controls={false}
         disablePictureInPicture
+        crossOrigin="anonymous"
         className="w-full h-full"
         onCanPlay={handleCanPlay}
         onPlaying={handlePlaying}
-        onLoadedData={() => {}}
+        onLoadedData={updateDbg}
         onEnded={onEnded}
         onWaiting={handleWaiting}
         onError={handleError}
@@ -215,7 +247,7 @@ function SmartVideo({
   );
 }
 
-// —————————————————— PAGE
+// —————————————————— PAGE (server-time synced)
 export default function WatchPage() {
   const params = useParams();
   const searchParams = useSearchParams();
@@ -231,18 +263,38 @@ export default function WatchPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // resolved playable URL for the current program
   const [resolvedSrc, setResolvedSrc] = useState<string | undefined>(undefined);
   const [videoPlayerKey, setVideoPlayerKey] = useState(Date.now());
+
+  // time sync
+  const skewMsRef = useRef<number>(0); // serverNow - clientNow
 
   // race control + title cache
   const isFetchingRef = useRef(false);
   const stableTitleRef = useRef<string | undefined>(undefined);
 
-  // init: load channel details (and handle CH21)
+  // fetch server time once on mount
   useEffect(() => {
     let cancelled = false;
+    (async () => {
+      try {
+        const t0 = Date.now();
+        const res = await fetch("/api/now", { cache: "no-store" });
+        const json = await res.json();
+        const t1 = Date.now();
+        const rtt = (t1 - t0) / 2;
+        // Approximate server "now" when response hit the client:
+        const approxServerNowAtClient = json.epochMs + rtt;
+        skewMsRef.current = approxServerNowAtClient - t1; // serverNow - clientNow
+      } catch {
+        skewMsRef.current = 0; // fail open
+      }
+    })();
+  }, []);
 
+  // Init: load channel details and handle always-live CH21
+  useEffect(() => {
+    let cancelled = false;
     async function init() {
       if (!channelIdString) {
         setError("Channel ID is missing in URL.");
@@ -284,14 +336,13 @@ export default function WatchPage() {
         } as any;
         setCurrentProgram(liveProgram);
         stableTitleRef.current = liveProgram.title || undefined;
-        setResolvedSrc(undefined); // handled by YouTubeEmbed
+        setResolvedSrc(undefined); // handled by YouTubeEmbed branch
         setIsLoading(false);
         return;
       }
 
       setIsLoading(false);
     }
-
     init();
     return () => {
       cancelled = true;
@@ -311,6 +362,10 @@ export default function WatchPage() {
     []
   );
 
+  // Helper to get *server* now on client
+  const nowMs = () => Date.now() + skewMsRef.current;
+  const nowIso = () => new Date(nowMs()).toISOString();
+
   const fetchCurrentProgram = useCallback(
     async (numericChannelId: number) => {
       if (ALWAYS_LIVE_CHANNEL_IDS.has(numericChannelId)) return;
@@ -320,7 +375,7 @@ export default function WatchPage() {
       const firstLoad = !currentProgram;
       if (firstLoad) setIsLoading(true);
 
-      const nowUtcMs = Date.now();
+      const serverNow = nowMs();
       try {
         const { data: programsData, error: dbError } = await supabase
           .from("programs")
@@ -332,19 +387,20 @@ export default function WatchPage() {
 
         const programs = (programsData ?? []) as Program[];
 
+        // Active window using *server time*
         const activeProgram = programs.find((p) => {
           if (!p.start_time || typeof p.duration !== "number" || p.duration <= 0) return false;
           const start = toUtcDate(p.start_time);
           if (!start) return false;
-          const endMs = start.getTime() + p.duration * 1000;
-          return nowUtcMs >= start.getTime() && nowUtcMs < endMs;
+          const startMs = start.getTime();
+          const endMs = startMs + p.duration * 1000;
+          return serverNow >= startMs && serverNow < endMs;
         });
 
         const nextProgram = activeProgram
           ? { ...activeProgram, channel_id: numericChannelId }
-          : getStandbyMp4Program(numericChannelId, new Date(nowUtcMs));
+          : getStandbyMp4Program(numericChannelId, new Date(serverNow));
 
-        // Update current program (avoid useless re-renders)
         setCurrentProgram((prev) => {
           if (prev) {
             const prevSrc = baseUrl(prev.mp4_url);
@@ -355,7 +411,6 @@ export default function WatchPage() {
           return nextProgram;
         });
 
-        // Resolve src with fallback to raw URL
         const fullSrc = await resolvePlayableUrl(nextProgram);
         const effectiveSrc = fullSrc ?? nextProgram.mp4_url;
 
@@ -370,8 +425,9 @@ export default function WatchPage() {
         stableTitleRef.current = nextProgram?.title || undefined;
       } catch (e: any) {
         setError(e.message);
-        const now = new Date();
-        const fallback = getStandbyMp4Program(numericChannelId, now);
+
+        const serverNowDate = new Date(nowMs());
+        const fallback = getStandbyMp4Program(numericChannelId, serverNowDate);
         setCurrentProgram(fallback);
 
         const signed = await resolvePlayableUrl(fallback);
@@ -397,12 +453,12 @@ export default function WatchPage() {
   const fetchUpcomingPrograms = useCallback(async (numericChannelId: number) => {
     if (ALWAYS_LIVE_CHANNEL_IDS.has(numericChannelId)) return;
     try {
-      const nowUtcIso = new Date().toISOString();
+      // Use *server* now in filter
       const { data, error } = await supabase
         .from("programs")
         .select("id, channel_id, title, mp4_url, start_time, duration")
         .eq("channel_id", numericChannelId)
-        .gt("start_time", nowUtcIso)
+        .gt("start_time", nowIso())
         .order("start_time", { ascending: true })
         .limit(6);
 
@@ -425,7 +481,7 @@ export default function WatchPage() {
         fetchCurrentProgram(validatedNumericChannelId);
         fetchUpcomingPrograms(validatedNumericChannelId);
       }
-    }, 15000);
+    }, 12000); // quick enough for minute granularity
     return () => clearInterval(interval);
   }, [validatedNumericChannelId, fetchCurrentProgram, fetchUpcomingPrograms, pollOn]);
 
@@ -435,15 +491,14 @@ export default function WatchPage() {
     }
   }, [validatedNumericChannelId, fetchCurrentProgram]);
 
-  // — render
+  // render
   const frozenTitle = stableTitleRef.current;
   const isYouTubeLive = currentProgram?.id === "live-ch21-youtube";
-
   const channelLogo = (channelDetails as any)?.logo_url || undefined;
 
   const forceStandby = useCallback(async () => {
     if (validatedNumericChannelId == null) return;
-    const standby = getStandbyMp4Program(validatedNumericChannelId, new Date());
+    const standby = getStandbyMp4Program(validatedNumericChannelId, new Date(nowMs()));
     setCurrentProgram(standby);
     const signed = await resolvePlayableUrl(standby);
     const effective = signed ?? standby.mp4_url;
@@ -549,6 +604,25 @@ export default function WatchPage() {
                   })}
                 </ul>
               </div>
+            )}
+
+            {/* Dev-only: show clock sync */}
+            {process.env.NODE_ENV !== "production" && (
+              <pre className="text-xs text-gray-500 mt-4 whitespace-pre-wrap">
+                {JSON.stringify(
+                  {
+                    serverSkewMs: skewMsRef.current,
+                    serverNowISO: nowIso(),
+                    currentProgram: {
+                      id: currentProgram?.id,
+                      start: currentProgram?.start_time,
+                      duration: currentProgram?.duration,
+                    },
+                  },
+                  null,
+                  2
+                )}
+              </pre>
             )}
           </>
         )}
