@@ -1,19 +1,16 @@
 // app/layout.tsx
-import type { Metadata } from "next";
 import "./globals.css";
-import SiteNavbar from "@/components/site-navbar";
 
-export const metadata: Metadata = {
+export const metadata = {
   title: "Black Truth TV",
-  description: "Streaming live and on-demand.",
+  description: "Live and on-demand programming",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className="bg-black">
-      <body className="bg-black text-white">
-        <SiteNavbar />
-        <div className="min-h-screen">{children}</div>
+    <html lang="en">
+      <body className="bg-black text-white antialiased">
+        {children}
       </body>
     </html>
   );
