@@ -26,6 +26,19 @@ function baseUrl(u?: string | null) {
   return (u ?? "").split("?")[0];
 }
 
+/** PATCH: Safely handle string or Promise-returning getVideoUrlForProgram */
+async function resolvePlayableUrl(program: Program): Promise<string | undefined> {
+  try {
+    const maybe = getVideoUrlForProgram(program) as unknown;
+    if (maybe && typeof (maybe as any).then === "function") {
+      return await (maybe as Promise<string>);
+    }
+    return maybe as string | undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export default function WatchPage() {
   const params = useParams();
   const searchParams = useSearchParams();
@@ -168,16 +181,22 @@ export default function WatchPage() {
           return nextProgram;
         });
 
-        // Freeze props so the player doesn’t reload on harmless updates
-        const fullSrc = getVideoUrlForProgram(nextProgram);
-        const nextSrcBase = baseUrl(fullSrc);
-        const prevSrcBase = baseUrl(stableSrcRef.current);
-        if (!stableSrcRef.current || prevSrcBase !== nextSrcBase) {
-          stableSrcRef.current = fullSrc;
+        // PATCH: Await signed/async URLs safely
+        const fullSrc = await resolvePlayableUrl(nextProgram);
+        if (fullSrc) {
+          const nextSrcBase = baseUrl(fullSrc);
+          const prevSrcBase = baseUrl(stableSrcRef.current);
+          if (!stableSrcRef.current || prevSrcBase !== nextSrcBase) {
+            stableSrcRef.current = fullSrc;
+          }
+        } else {
+          // Fallback to raw mp4_url so playback still works if signer fails
+          const fallbackSrc = nextProgram?.mp4_url;
+          if (fallbackSrc) stableSrcRef.current = fallbackSrc;
         }
 
         // Poster: use channel artwork (programs table has no poster)
-        const nextPoster = (channelDetails as any)?.image_url || undefined;
+        const nextPoster = (channelDetails as any)?.logo_url || undefined; // PATCH: logo_url
         if (stablePosterRef.current !== nextPoster) stablePosterRef.current = nextPoster;
 
         const nextTitle = nextProgram?.title || undefined;
@@ -186,8 +205,13 @@ export default function WatchPage() {
         setError(e.message);
         const fallback = getStandbyMp4Program(numericChannelId, now);
         setCurrentProgram(fallback);
-        stableSrcRef.current = getVideoUrlForProgram(fallback);
-        stablePosterRef.current = (channelDetails as any)?.image_url || undefined;
+
+        // PATCH: also await signer in error path
+        const signed = await resolvePlayableUrl(fallback);
+        stableSrcRef.current = signed || fallback.mp4_url;
+
+        // PATCH: logo_url (not image_url)
+        stablePosterRef.current = (channelDetails as any)?.logo_url || undefined;
         stableTitleRef.current = fallback.title || undefined;
       } finally {
         if (firstLoad) setIsLoading(false);
