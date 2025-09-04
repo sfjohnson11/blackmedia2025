@@ -1,7 +1,8 @@
 // app/watch/[channelId]/page.tsx
-// CH21 is ALWAYS YouTube Live (24/7).
-// Programs table columns: id, channel_id, title, mp4_url, start_time, duration (UTC).
-// Resolves MP4s from public Supabase buckets per-channel (channelN or slug), UTC-safe schedule.
+// Channel 21 = always YouTube Live (uses channels.youtube_channel_id).
+// programs: id, channel_id, title, mp4_url, start_time, duration (UTC)
+// channels: id, name, slug, description, logo_url, image_url, youtube_channel_id, youtube_is_live, is_active
+// Resolves MP4 from PUBLIC buckets: slug → bucket, else channel{id}
 
 "use client";
 
@@ -18,54 +19,40 @@ import type { Program, Channel } from "@/types";
 import { ChevronLeft, Loader2 } from "lucide-react";
 import YouTubeEmbed from "@/components/youtube-embed";
 
-/* ─────────────── Constants ─────────────── */
+/* ───────── constants ───────── */
 
 const CH21_ID_NUMERIC = 21;
-
-// Optional env fallback for CH21 if DB youtube_channel_id is empty:
-const ENV_YT_CH21 = process.env.NEXT_PUBLIC_YT_CH21 || "";
-
-// Final safety fallback (prefer DB/env above)
-const HARDCODED_FALLBACK_YT = "UCMkW239dyAxDyOFDP0D6p2g";
-
-/** Channels that are *always* live on YouTube (skip schedule fetch) */
 const ALWAYS_LIVE_CHANNEL_IDS = new Set<number>([CH21_ID_NUMERIC]);
 
-/** Grace so minute-by-minute shows don’t “miss” a tick */
+const ENV_YT_CH21 = process.env.NEXT_PUBLIC_YT_CH21 || "";
+const HARDCODED_FALLBACK_YT = "UCMkW239dyAxDyOFDP0D6p2g";
+
 const START_EARLY_GRACE_MS = 30_000;
 const END_LATE_GRACE_MS = 15_000;
 
-/* ─────────────── Helpers ─────────────── */
+/* ───────── helpers ───────── */
 
-function baseUrl(u?: string | null) {
-  return (u ?? "").split("?")[0];
-}
+const baseUrl = (u?: string | null) => (u ?? "").split("?")[0];
 
-/** Parse DB times as UTC even if stored w/o Z (e.g. "YYYY-MM-DD HH:mm:ss") */
 function toUtcDate(val?: string | Date | null): Date | null {
   if (!val) return null;
   if (val instanceof Date) return Number.isNaN(val.getTime()) ? null : val;
   let s = String(val).trim();
-  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?$/.test(s)) {
-    s = s.replace(" ", "T") + "Z";
-  } else if (!/[zZ]|[+\-]\d{2}:\d{2}$/.test(s)) {
-    s = s + "Z";
-  }
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?$/.test(s)) s = s.replace(" ", "T") + "Z";
+  else if (!/[zZ]|[+\-]\d{2}:\d{2}$/.test(s)) s = s + "Z";
   const d = new Date(s);
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
-/** Choose channel bucket name from slug or numeric id */
 function bucketNameFor(details: Channel | null): string | null {
   if (!details) return null;
   const slug = (details as any)?.slug?.toString().trim();
-  if (slug) return slug; // e.g. "freedom_school"
+  if (slug) return slug;
   const n = Number((details as any)?.id);
-  if (Number.isFinite(n) && n > 0) return `channel${n}`; // e.g. "channel7"
+  if (Number.isFinite(n) && n > 0) return `channel${n}`;
   return null;
 }
 
-/** PUBLIC Supabase Storage URL (all your buckets are PUBLIC) */
 function publicUrl(bucket: string, objectPath: string): string | undefined {
   const clean = objectPath.replace(/^\.?\//, "");
   try {
@@ -76,11 +63,7 @@ function publicUrl(bucket: string, objectPath: string): string | undefined {
   }
 }
 
-/** Resolve to a *public* URL based on your rules (no auth, no signing) */
-async function resolvePlayableUrl(
-  program: Program,
-  channelBucket: string | null
-): Promise<string | undefined> {
+async function resolvePlayableUrl(program: Program, channelBucket: string | null) {
   try {
     const maybe = getVideoUrlForProgram(program) as unknown;
     let raw =
@@ -89,12 +72,9 @@ async function resolvePlayableUrl(
         : (maybe as string | undefined)) || (program as any)?.mp4_url || "";
 
     if (!raw) return undefined;
-    if (raw.startsWith("youtube_channel:")) return undefined;
-
-    // Absolute or site-relative
     if (/^https?:\/\//i.test(raw) || raw.startsWith("/")) return raw;
 
-    // Explicit bucket override: "bucket:path" or "storage://bucket/path"
+    // explicit bucket override: bucket:path or storage://bucket/path
     const m =
       /^([a-z0-9_\-]+):(.+)$/i.exec(raw) ||
       /^storage:\/\/([^/]+)\/(.+)$/i.exec(raw);
@@ -104,7 +84,6 @@ async function resolvePlayableUrl(
       return publicUrl(b, p);
     }
 
-    // Otherwise: treat as path inside THIS channel's bucket
     if (!channelBucket) return undefined;
     raw = raw.replace(/^\.?\//, "");
     const prefix = `${channelBucket.replace(/\/+$/, "")}/`.toLowerCase();
@@ -115,7 +94,6 @@ async function resolvePlayableUrl(
   }
 }
 
-/** Extract YouTube channel ID to use (DB → env → hardcoded fallback) */
 function pickYouTubeChannelId(details: Channel | null): string | null {
   const dbId = (details as any)?.youtube_channel_id?.toString().trim();
   if (dbId) return dbId;
@@ -124,7 +102,7 @@ function pickYouTubeChannelId(details: Channel | null): string | null {
   return null;
 }
 
-/* ─────────────── Page ─────────────── */
+/* ───────── page ───────── */
 
 export default function WatchPage() {
   const params = useParams();
@@ -142,22 +120,16 @@ export default function WatchPage() {
   const [error, setError] = useState<string | null>(null);
   const [videoPlayerKey, setVideoPlayerKey] = useState(1);
 
-  // Prevent overlapping fetches
   const isFetchingRef = useRef(false);
-
-  // Freeze values passed to the HTML player
   const stableSrcRef = useRef<string | undefined>(undefined);
   const stablePosterRef = useRef<string | undefined>(undefined);
   const stableTitleRef = useRef<string | undefined>(undefined);
-
-  // Track this channel’s bucket
   const channelBucketRef = useRef<string | null>(null);
 
-  /* Init channel details / CH21 YouTube */
   useEffect(() => {
     let cancelled = false;
 
-    async function init() {
+    (async function init() {
       if (!channelIdString) {
         setError("Channel ID is missing in URL.");
         setIsLoading(false);
@@ -188,11 +160,10 @@ export default function WatchPage() {
       }
       setValidatedNumericChannelId(numericId);
 
-      // CH21: Always YouTube Live — use real channel ID from DB (or env fallback)
       if (ALWAYS_LIVE_CHANNEL_IDS.has(numericId)) {
         const ytChannelId = pickYouTubeChannelId(details);
         if (!ytChannelId) {
-          setError("Channel 21 is configured as always-live on YouTube, but no youtube_channel_id is set.");
+          setError("Channel 21 is set to YouTube Live but youtube_channel_id is missing.");
           setIsLoading(false);
           return;
         }
@@ -200,33 +171,32 @@ export default function WatchPage() {
           id: "live-youtube",
           title: (details as any)?.name ? `${(details as any).name} Live` : "Live Broadcast (Channel 21)",
           channel_id: CH21_ID_NUMERIC,
-          // marker that carries the chosen YouTube channel id
-          mp4_url: `youtube_channel:${ytChannelId}`,
+          mp4_url: `youtube_channel:${ytChannelId}`, // marker
           duration: 86400 * 365,
           start_time: new Date(Date.now() - 3600000).toISOString(),
         } as any;
         setCurrentProgram(liveProgram);
         stableTitleRef.current = (liveProgram as any).title || undefined;
         setIsLoading(false);
-        return; // skip schedule fetch entirely
+        return;
       }
 
       setIsLoading(false);
-    }
+    })();
 
-    init();
     return () => { cancelled = true; };
   }, [channelIdString]);
 
   const getStandbyMp4Program = useCallback(
-    (channelNum: number, now: Date): Program => ({
-      id: STANDBY_PLACEHOLDER_ID,
-      title: "Standby Programming",
-      channel_id: channelNum,
-      mp4_url: "standby_blacktruthtv.mp4", // resolved inside this channel's bucket
-      duration: 300,
-      start_time: now.toISOString(),
-    }) as any,
+    (channelNum: number, now: Date): Program =>
+      ({
+        id: STANDBY_PLACEHOLDER_ID,
+        title: "Standby Programming",
+        channel_id: channelNum,
+        mp4_url: "standby_blacktruthtv.mp4", // expected inside this channel's bucket
+        duration: 300,
+        start_time: now.toISOString(),
+      }) as any,
     []
   );
 
@@ -236,10 +206,9 @@ export default function WatchPage() {
     return nowMs >= (startMs - START_EARLY_GRACE_MS) && nowMs < (endMs + END_LATE_GRACE_MS);
   };
 
-  /* Fetch active + upcoming for non-YouTube channels */
   const fetchCurrentProgram = useCallback(
     async (numericChannelId: number) => {
-      if (ALWAYS_LIVE_CHANNEL_IDS.has(numericChannelId)) return; // never fetch schedule for 24/7 live
+      if (ALWAYS_LIVE_CHANNEL_IDS.has(numericChannelId)) return;
       if (isFetchingRef.current) return;
       isFetchingRef.current = true;
 
@@ -258,7 +227,6 @@ export default function WatchPage() {
 
         const programs = (programsData ?? []) as Program[];
 
-        // pick active program using UTC (+ grace)
         const activeProgram = programs.find((p: any) => {
           if (!p.start_time || typeof p.duration !== "number" || p.duration <= 0) return false;
           const start = toUtcDate(p.start_time as any);
@@ -266,39 +234,37 @@ export default function WatchPage() {
           return isActiveWindow(start, p.duration as any, nowMs);
         });
 
-        const nextProgram = (activeProgram
+        const chosen = (activeProgram
           ? { ...(activeProgram as any), channel_id: numericChannelId }
           : getStandbyMp4Program(numericChannelId, new Date(nowMs))) as Program;
 
-        // Resolve to a *public* URL inside this channel's bucket (or leave absolute)
         const bucket = channelBucketRef.current || `channel${numericChannelId}`;
-        const resolved = await resolvePlayableUrl(nextProgram as any, bucket);
+        const resolved = await resolvePlayableUrl(chosen as any, bucket);
 
-        // Only change if program id OR base media URL actually changed
+        // Update current program only if identity/base URL changes (prevents player thrash)
         setCurrentProgram((prev: any) => {
           if (prev) {
             const prevSrc = baseUrl((prev as any).mp4_url);
-            const nextSrc = baseUrl((nextProgram as any).mp4_url);
-            const same = (prev as any).id === (nextProgram as any).id && prevSrc === nextSrc;
+            const nextSrc = baseUrl((chosen as any).mp4_url);
+            const same = (prev as any).id === (chosen as any).id && prevSrc === nextSrc;
             if (same) return prev;
             setVideoPlayerKey((k) => k + 1);
           }
-          return nextProgram;
+          return chosen;
         });
 
-        // Freeze props so the player doesn’t reload on harmless updates
+        // Freeze player props
         const nextSrcBase = baseUrl(resolved);
         const prevSrcBase = baseUrl(stableSrcRef.current);
         if (!stableSrcRef.current || prevSrcBase !== nextSrcBase) {
           stableSrcRef.current = resolved;
         }
-        const nextPoster =
-          (channelDetails as any)?.image_url ||
+        const poster =
           (channelDetails as any)?.logo_url ||
+          (channelDetails as any)?.image_url ||
           undefined;
-        if (stablePosterRef.current !== nextPoster) stablePosterRef.current = nextPoster;
-
-        const nextTitle = (nextProgram as any)?.title || undefined;
+        if (stablePosterRef.current !== poster) stablePosterRef.current = poster;
+        const nextTitle = (chosen as any)?.title || undefined;
         if (stableTitleRef.current !== nextTitle) stableTitleRef.current = nextTitle;
       } catch (e: any) {
         setError(e.message);
@@ -308,8 +274,8 @@ export default function WatchPage() {
         const resolvedFallback = await resolvePlayableUrl(fallback as any, bucket);
         stableSrcRef.current = resolvedFallback;
         stablePosterRef.current =
-          (channelDetails as any)?.image_url ||
           (channelDetails as any)?.logo_url ||
+          (channelDetails as any)?.image_url ||
           undefined;
         stableTitleRef.current = (fallback as any).title || undefined;
       } finally {
@@ -321,9 +287,9 @@ export default function WatchPage() {
   );
 
   const fetchUpcomingPrograms = useCallback(async (numericChannelId: number) => {
-    if (ALWAYS_LIVE_CHANNEL_IDS.has(numericChannelId)) return; // no upcoming list for 24/7 live
+    if (ALWAYS_LIVE_CHANNEL_IDS.has(numericChannelId)) return;
     try {
-      const nowIso = new Date().toISOString(); // DB times are UTC
+      const nowIso = new Date().toISOString();
       const { data } = await supabase
         .from("programs")
         .select("id, channel_id, title, mp4_url, start_time, duration")
@@ -331,7 +297,6 @@ export default function WatchPage() {
         .gt("start_time", nowIso)
         .order("start_time", { ascending: true })
         .limit(6);
-
       if (data) setUpcomingPrograms(data as Program[]);
     } catch {
       // ignore
@@ -340,44 +305,31 @@ export default function WatchPage() {
 
   useEffect(() => {
     if (validatedNumericChannelId === null) return;
-
-    // For always-live channels, nothing else to do.
     if (ALWAYS_LIVE_CHANNEL_IDS.has(validatedNumericChannelId)) return;
 
-    // Initial fetch (non-live channels only)
     fetchCurrentProgram(validatedNumericChannelId);
     fetchUpcomingPrograms(validatedNumericChannelId);
 
-    if (!pollOn) return; // optional polling for non-live channels
-    const interval = setInterval(() => {
+    if (!pollOn) return;
+    const id = setInterval(() => {
       if (document.visibilityState === "visible") {
         fetchCurrentProgram(validatedNumericChannelId);
         fetchUpcomingPrograms(validatedNumericChannelId);
       }
-    }, 60000);
-    return () => clearInterval(interval);
+    }, 60_000);
+    return () => clearInterval(id);
   }, [validatedNumericChannelId, fetchCurrentProgram, fetchUpcomingPrograms, pollOn]);
 
-  const handleProgramEnded = useCallback(() => {
-    if (validatedNumericChannelId !== null && !ALWAYS_LIVE_CHANNEL_IDS.has(validatedNumericChannelId)) {
-      fetchCurrentProgram(validatedNumericChannelId);
-    }
-  }, [validatedNumericChannelId, fetchCurrentProgram]);
-
-  const handlePrimaryLiveStreamError = useCallback(() => {}, []);
-
-  // Frozen values for the player
   const frozenSrc = stableSrcRef.current;
   const frozenPoster = stablePosterRef.current;
   const frozenTitle = stableTitleRef.current;
 
-  // Detect YouTube from program mp4_url marker (used only for CH21)
   const isYouTubeLive = (currentProgram as any)?.mp4_url?.toString().startsWith("youtube_channel:");
   const youtubeChannelId = isYouTubeLive
     ? ((currentProgram as any).mp4_url as string).split(":")[1]
     : null;
 
-  /* ─────────────── Render ─────────────── */
+  /* ───────── render ───────── */
 
   let content: ReactNode;
   if (error) {
@@ -390,13 +342,7 @@ export default function WatchPage() {
       </div>
     );
   } else if (isYouTubeLive && youtubeChannelId) {
-    content = (
-      <YouTubeEmbed
-        channelId={youtubeChannelId}
-        title={frozenTitle || "Live"}
-        muted={true}
-      />
-    );
+    content = <YouTubeEmbed channelId={youtubeChannelId} title={frozenTitle || "Live"} muted={true} />;
   } else if (currentProgram && frozenSrc) {
     content = (
       <VideoPlayer
@@ -405,10 +351,13 @@ export default function WatchPage() {
         poster={frozenPoster}
         isStandby={(currentProgram as any).id === STANDBY_PLACEHOLDER_ID}
         programTitle={frozenTitle}
-        onVideoEnded={handleProgramEnded}
-        isPrimaryLiveStream={false}
-        onPrimaryLiveStreamError={handlePrimaryLiveStreamError}
-        showNoLiveNotice={false}
+        onVideoEnded={() => {
+          if (validatedNumericChannelId !== null) fetchCurrentProgram(validatedNumericChannelId);
+        }}
+        autoPlay
+        muted
+        playsInline
+        preload="auto"
       />
     );
   } else {
@@ -459,11 +408,7 @@ export default function WatchPage() {
                         <span className="text-gray-400">
                           —{" "}
                           {d
-                            ? d.toLocaleTimeString("en-US", {
-                                hour: "2-digit",
-                                minute: "2-digit",
-                                timeZoneName: "short",
-                              })
+                            ? d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZoneName: "short" })
                             : "—"}
                         </span>
                       </li>
@@ -478,10 +423,9 @@ export default function WatchPage() {
         {(searchParams?.get("debug") ?? "0") === "1" && (
           <div className="mt-4 text-xs bg-gray-900/70 border border-gray-700 rounded p-3">
             <div><b>Bucket:</b> {channelBucketRef.current || "—"}</div>
-            <div><b>DB youtube_channel_id:</b> {String((channelDetails as any)?.youtube_channel_id || "")}</div>
-            <div><b>Chosen YouTube channel:</b> {youtubeChannelId || pickYouTubeChannelId(channelDetails) || "—"}</div>
-            <div><b>Program mp4_url:</b> {String((currentProgram as any)?.mp4_url || "")}</div>
+            <div><b>Program.mp4_url (raw):</b> {String((currentProgram as any)?.mp4_url || "")}</div>
             <div className="truncate"><b>Resolved MP4 URL:</b> {stableSrcRef.current || "—"}</div>
+            <div><b>Poster:</b> {String(frozenPoster || "")}</div>
           </div>
         )}
       </div>
