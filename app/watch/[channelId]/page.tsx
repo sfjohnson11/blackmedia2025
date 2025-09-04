@@ -1,22 +1,20 @@
 // app/watch/[channelId]/page.tsx
-// MP4-only + YouTube (ch21), UTC schedule, server-time sync, channel-bucket resolver,
-// signed URLs via /api/storage/sign, anti-thrash standby, optional debug overlay.
+// PUBLIC buckets only — MP4 player + YouTube (ch21), UTC schedule, channel-bucket resolver,
+// stable overlay, simple recovery to standby, and a small debug panel (?debug=1).
 
 "use client";
 
 import { useEffect, useState, useCallback, useRef, type ReactNode } from "react";
-import TopNav from "@/components/top-nav";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useSearchParams, useRouter } from "next/navigation";
+import { Loader2, ChevronLeft } from "lucide-react";
 import {
-  getVideoUrlForProgram,
-  fetchChannelDetails,
   supabase,
+  fetchChannelDetails,
+  getVideoUrlForProgram,
   STANDBY_PLACEHOLDER_ID,
 } from "@/lib/supabase";
-import { Loader2 } from "lucide-react";
-import YouTubeEmbed from "@/components/youtube-embed";
 
-/* ---------------------------- Inline minimal types ---------------------------- */
+/* ---------- Inline minimal types ---------- */
 type Program = {
   id: string;
   channel_id: number;
@@ -37,38 +35,60 @@ type Channel = {
   is_active?: boolean | null;
 };
 
-/* ------------------------------ BRAND / BUCKETS ------------------------------ */
+/* ---------- Tiny inline TopNav (no external imports) ---------- */
+function TopNav({ title }: { title?: string }) {
+  const router = useRouter();
+  return (
+    <header className="sticky top-0 z-20 bg-black/70 backdrop-blur border-b border-white/10">
+      <div className="mx-auto max-w-7xl px-3 sm:px-4">
+        <div className="h-14 sm:h-16 flex items-center justify-between">
+          <button
+            onClick={() => router.push("/")}
+            className="p-2 rounded-full hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-white/20"
+            aria-label="Go home"
+          >
+            <ChevronLeft className="h-6 w-6" />
+          </button>
+          <h1 className="text-sm sm:text-base font-semibold truncate">{title || "Channel"}</h1>
+          <div className="w-10 h-10" />
+        </div>
+      </div>
+    </header>
+  );
+}
 
+/* ---------- Brand/logo from 'brand' bucket (public) ---------- */
 const BRAND_BUCKET = "brand";
 const BRAND_LOGO_OBJECT = process.env.NEXT_PUBLIC_BRAND_LOGO_OBJECT || "blacktruth1.jpeg";
-const PUBLIC_LOGO_FALLBACK = "/brand/blacktruth-logo.png"; // optional fallback in /public
+const PUBLIC_LOGO_FALLBACK = "/brand/blacktruth-logo.png"; // optional public/ fallback
 
+/* ---------- Buckets: channel1..channel29 or slug like 'freedom_school' ---------- */
 function bucketNameFor(details: Channel | null): string | null {
   if (!details) return null;
   const slug = (details as any)?.slug?.toString().trim();
-  if (slug) return slug; // e.g. "freedom_school"
+  if (slug) return slug;                          // e.g. "freedom_school"
   const n = Number((details as any)?.id);
   if (Number.isFinite(n) && n > 0) return `channel${n}`; // e.g. "channel7"
   return null;
 }
 
-/* --------------------------- SCHEDULING / CONSTANTS --------------------------- */
-
-const CH21_ID_NUMERIC = 21;
+/* ---------- Scheduling constants ---------- */
+const CH21 = 21;
 const YT_CH21 = "UCMkW239dyAxDyOFDP0D6p2g";
-const ALWAYS_LIVE_CHANNEL_IDS = new Set<number>([CH21_ID_NUMERIC]);
+const ALWAYS_LIVE = new Set<number>([CH21]);
 
+const START_EARLY_GRACE_MS = 30_000;
+const END_LATE_GRACE_MS = 15_000;
+const POLL_MS = 12_000;
+
+/* ---------- Player constants ---------- */
 const STABLE_PLAY_MS = 700;
 const CANPLAY_TIMEOUT_MS = 8000;
 const STALL_RECOVERY_MS = 3500;
 const PROGRESS_STALL_MS = 4000;
 const MAX_ATTEMPTS_PER_SRC = 2;
 
-const START_EARLY_GRACE_MS = 30_000;
-const END_LATE_GRACE_MS = 15_000;
-
-/* --------------------------------- Helpers -------------------------------- */
-
+/* ---------- Helpers ---------- */
 function toUtcDate(val?: string | Date | null): Date | null {
   if (!val) return null;
   if (val instanceof Date) return Number.isNaN(val.getTime()) ? null : val;
@@ -80,21 +100,9 @@ function toUtcDate(val?: string | Date | null): Date | null {
 }
 const baseUrl = (u?: string | null) => (u ?? "").split("?")[0];
 
-/** Try server-signed URL (private buckets) then public URL */
-async function storageSignedOrPublic(bucket: string, objectPath: string): Promise<string | undefined> {
+/** Build a public URL from Supabase Storage (PUBLIC buckets only) */
+function publicUrl(bucket: string, objectPath: string): string | undefined {
   const clean = objectPath.replace(/^\.?\//, "");
-  // 1) server signer (works with private buckets)
-  try {
-    const u = new URL("/api/storage/sign", window.location.origin);
-    u.searchParams.set("bucket", bucket);
-    u.searchParams.set("object", clean);
-    const r = await fetch(u.toString(), { cache: "no-store" });
-    if (r.ok) {
-      const j = await r.json();
-      if (j?.url) return j.url as string;
-    }
-  } catch {}
-  // 2) public fallback
   try {
     const { data } = supabase.storage.from(bucket).getPublicUrl(clean);
     return data?.publicUrl || undefined;
@@ -103,8 +111,8 @@ async function storageSignedOrPublic(bucket: string, objectPath: string): Promis
   }
 }
 
-/** Try common standby names if your bucket uses a different filename/path */
-async function resolveStandbyForBucket(bucket: string) {
+/** Try common standby names inside the same channel bucket */
+function resolveStandbyPublic(bucket: string) {
   const candidates = [
     "standby_blacktruthtv.mp4",
     "standby.mp4",
@@ -112,13 +120,13 @@ async function resolveStandbyForBucket(bucket: string) {
     "standby/standby.mp4",
   ];
   for (const p of candidates) {
-    const u = await storageSignedOrPublic(bucket, p.replace(/^\.?\//, ""));
+    const u = publicUrl(bucket, p);
     if (u) return { path: p, url: u };
   }
   return null;
 }
 
-/** Resolve playable URL following your rules. Returns ONLY a real URL, never raw DB strings. */
+/** Resolve to a public URL based on your rules (no signing, no auth) */
 async function resolvePlayableUrl(program: Program, channelBucket: string | null): Promise<string | undefined> {
   try {
     const maybe = getVideoUrlForProgram(program) as unknown;
@@ -130,35 +138,47 @@ async function resolvePlayableUrl(program: Program, channelBucket: string | null
     if (!raw) return undefined;
     if (raw.startsWith("youtube_channel:")) return undefined;
 
-    // absolute or site-relative
+    // Absolute/site-relative
     if (/^https?:\/\//i.test(raw) || raw.startsWith("/")) return raw;
 
-    // explicit bucket override: "bucket:path" or "storage://bucket/path"
+    // Explicit bucket override: "bucket:path" or "storage://bucket/path"
     const m =
       /^([a-z0-9_\-]+):(.+)$/i.exec(raw) ||
       /^storage:\/\/([^/]+)\/(.+)$/i.exec(raw);
     if (m) {
       const b = m[1];
       const p = m[2].replace(/^\.?\//, "");
-      return storageSignedOrPublic(b, p);
+      return publicUrl(b, p);
     }
 
-    // path inside THIS channel's bucket
+    // Otherwise path inside THIS channel's bucket
     if (!channelBucket) return undefined;
-
     raw = raw.replace(/^\.?\//, "");
-    // strip duplicated prefix like "channel7/file.mp4" inside bucket "channel7"
-    const bucketPrefix = `${channelBucket.replace(/\/+$/, "")}/`;
-    if (raw.toLowerCase().startsWith(bucketPrefix.toLowerCase())) raw = raw.slice(bucketPrefix.length);
-
-    return storageSignedOrPublic(channelBucket, raw);
+    const prefix = `${channelBucket.replace(/\/+$/, "")}/`.toLowerCase();
+    if (raw.toLowerCase().startsWith(prefix)) raw = raw.slice(prefix.length);
+    return publicUrl(channelBucket, raw);
   } catch {
     return undefined;
   }
 }
 
-/* ------------------------------ SmartVideo player ------------------------------ */
+/* ---------- Very small inline YouTube live embed (ch21) ---------- */
+function YouTubeLive({ channelId, title }: { channelId: string; title?: string }) {
+  const src = `https://www.youtube.com/embed/live_stream?channel=${encodeURIComponent(
+    channelId
+  )}&autoplay=1&mute=1&playsinline=1`;
+  return (
+    <iframe
+      title={title || "YouTube Live"}
+      src={src}
+      allow="autoplay; encrypted-media; picture-in-picture"
+      referrerPolicy="no-referrer-when-downgrade"
+      className="w-full h-full"
+    />
+  );
+}
 
+/* ---------- SmartVideo: overlay + simple recovery to standby ---------- */
 function SmartVideo({
   src,
   logo,
@@ -168,7 +188,7 @@ function SmartVideo({
   onHardFail,
 }: {
   src: string;
-  logo: string;
+  logo?: string;
   isStandby: boolean;
   onReady: () => void;
   onEnded: () => void;
@@ -179,7 +199,6 @@ function SmartVideo({
   const [overlayText, setOverlayText] = useState("Starting stream…");
 
   const attemptsRef = useRef(0);
-  const gaveUpRef = useRef(false);
   const canplayTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stablePlayTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stallTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -217,8 +236,6 @@ function SmartVideo({
 
   useEffect(() => {
     attemptsRef.current = 0;
-    gaveUpRef.current = false;
-    attachModeRef.current = "direct";
     setShowOverlay(true);
     setOverlayText("Starting stream…");
     lastProgressT.current = 0;
@@ -238,20 +255,17 @@ function SmartVideo({
   };
 
   const tryRecoverOrFail = () => {
-    if (gaveUpRef.current) return;
     const v = videoRef.current; if (!v) return;
 
     const mediaErr = v.error?.code ?? null; // 3 decode, 4 src unsupported
     if (mediaErr === 3 || mediaErr === 4) {
-      if (isStandby) {
-        gaveUpRef.current = true;
-        clearTimers();
+      if (!isStandby) {
+        setOverlayText("Switching to standby…");
+        onHardFail();
+      } else {
         setOverlayText("Video unavailable");
         setShowOverlay(true);
-        return;
       }
-      setOverlayText("Switching to standby…");
-      onHardFail();
       return;
     }
 
@@ -261,14 +275,12 @@ function SmartVideo({
       clearTimers();
       attachAndPlay(attachModeRef.current === "direct" ? "source" : "direct");
     } else {
-      if (isStandby) {
-        gaveUpRef.current = true;
-        clearTimers();
-        setOverlayText("Video unavailable");
-        setShowOverlay(true);
-      } else {
+      if (!isStandby) {
         setOverlayText("Switching to standby…");
         onHardFail();
+      } else {
+        setOverlayText("Video unavailable");
+        setShowOverlay(true);
       }
     }
   };
@@ -277,12 +289,15 @@ function SmartVideo({
     <div className="relative w-full h-full">
       {showOverlay && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-black z-10">
-          <img
-            src={logo}
-            alt="Brand"
-            className="max-h-[60%] max-w-[80%] object-contain drop-shadow-[0_8px_28px_rgba(0,0,0,0.45)]"
-            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
-          />
+          {logo ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={logo}
+              alt="Brand"
+              className="max-h-[60%] max-w-[80%] object-contain drop-shadow-[0_8px_28px_rgba(0,0,0,0.45)]"
+              onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+            />
+          ) : null}
           <div className="flex items-center gap-2 mt-4 text-gray-300">
             {!/unavailable/i.test(overlayText) && <Loader2 className="h-5 w-5 animate-spin" />}
             <span>{overlayText}</span>
@@ -305,7 +320,10 @@ function SmartVideo({
         onCanPlay={() => { if (canplayTimer.current) clearTimeout(canplayTimer.current); }}
         onPlaying={() => {
           if (stablePlayTimer.current) clearTimeout(stablePlayTimer.current);
-          stablePlayTimer.current = setTimeout(() => setShowOverlay(false), STABLE_PLAY_MS);
+          stablePlayTimer.current = setTimeout(() => {
+            setOverlayText("");
+            setShowOverlay(false);
+          }, STABLE_PLAY_MS);
           armProgressWatch();
         }}
         onTimeUpdate={() => { lastProgressT.current = videoRef.current?.currentTime || 0; armProgressWatch(); }}
@@ -322,13 +340,13 @@ function SmartVideo({
 }
 
 /* ---------------------------------- PAGE ---------------------------------- */
-
 export default function WatchPage() {
   const params = useParams();
   const searchParams = useSearchParams();
 
   const channelIdString = params.channelId as string;
   const pollOn = (searchParams?.get("poll") ?? "0") === "1";
+  const debugOn = (searchParams?.get("debug") ?? "0") === "1";
 
   const [validatedNumericChannelId, setValidatedNumericChannelId] = useState<number | null>(null);
   const [currentProgram, setCurrentProgram] = useState<Program | null>(null);
@@ -341,50 +359,18 @@ export default function WatchPage() {
   const [videoKey, setVideoKey] = useState(0);
   useEffect(() => { setVideoKey(1); }, []);
 
-  // brand logo (signed first, then public)
+  // brand logo (PUBLIC)
   const [brandLogo, setBrandLogo] = useState<string>(PUBLIC_LOGO_FALLBACK);
   useEffect(() => {
-    (async () => {
-      try {
-        const u = new URL("/api/storage/sign", window.location.origin);
-        u.searchParams.set("bucket", BRAND_BUCKET);
-        u.searchParams.set("object", BRAND_LOGO_OBJECT);
-        const r = await fetch(u.toString(), { cache: "no-store" });
-        if (r.ok) {
-          const j = await r.json();
-          if (j?.url) { setBrandLogo(j.url); return; }
-        }
-      } catch {}
-      try {
-        const { data } = supabase.storage.from(BRAND_BUCKET).getPublicUrl(BRAND_LOGO_OBJECT);
-        if (data?.publicUrl) setBrandLogo(data.publicUrl);
-      } catch {}
-    })();
+    try {
+      const { data } = supabase.storage.from(BRAND_BUCKET).getPublicUrl(BRAND_LOGO_OBJECT);
+      if (data?.publicUrl) setBrandLogo(data.publicUrl);
+    } catch {}
   }, []);
-
-  // server-time skew
-  const skewMsRef = useRef<number>(0);
-  useEffect(() => {
-    (async () => {
-      try {
-        const t0 = Date.now();
-        const r = await fetch("/api/now", { cache: "no-store" });
-        const j = await r.json();
-        const t1 = Date.now();
-        const rtt = (t1 - t0) / 2;
-        const approxServerNowAtClient = j.epochMs + rtt;
-        skewMsRef.current = approxServerNowAtClient - t1;
-      } catch {
-        skewMsRef.current = 0;
-      }
-    })();
-  }, []);
-  const nowMs = () => Date.now() + skewMsRef.current;
 
   const isFetchingRef = useRef(false);
   const stableTitleRef = useRef<string | undefined>(undefined);
   const channelBucketRef = useRef<string | null>(null);
-  const quarantineRef = useRef<{ src: string; until: number } | null>(null);
 
   // Init channel
   useEffect(() => {
@@ -411,11 +397,12 @@ export default function WatchPage() {
       const numericId = Number.parseInt(String((details as any).id), 10);
       if (!Number.isNaN(numericId)) setValidatedNumericChannelId(numericId);
 
-      if (ALWAYS_LIVE_CHANNEL_IDS.has(numericId)) {
+      // CH21 always-live on YouTube
+      if (numericId === CH21) {
         const liveProgram: Program = {
           id: "live-ch21-youtube",
           title: "Live Broadcast (Channel 21)",
-          channel_id: CH21_ID_NUMERIC,
+          channel_id: CH21,
           mp4_url: `youtube_channel:${YT_CH21}`,
           duration: 86400 * 365,
           start_time: new Date(Date.now() - 3600000).toISOString(),
@@ -426,6 +413,7 @@ export default function WatchPage() {
         setIsLoading(false);
         return;
       }
+
       setIsLoading(false);
     })();
     return () => { cancelled = true; };
@@ -445,14 +433,13 @@ export default function WatchPage() {
 
   const fetchCurrentProgram = useCallback(
     async (numericChannelId: number) => {
-      if (ALWAYS_LIVE_CHANNEL_IDS.has(numericChannelId)) return;
       if (isFetchingRef.current) return;
       isFetchingRef.current = true;
 
       const firstLoad = !currentProgram;
       if (firstLoad) setIsLoading(true);
 
-      const now = nowMs();
+      const now = Date.now();
       try {
         const { data: programsData, error: dbError } = await supabase
           .from("programs")
@@ -470,6 +457,7 @@ export default function WatchPage() {
           return !!start && isActiveWindow(start, p.duration, now);
         });
         if (!active) {
+          // near-start window
           active = programs.find((p) => {
             if (!p.start_time || typeof p.duration !== "number" || p.duration <= 0) return false;
             const start = toUtcDate(p.start_time);
@@ -482,31 +470,16 @@ export default function WatchPage() {
         const chosen = active ? { ...active, channel_id: numericChannelId } : getStandbyProgram(numericChannelId, new Date(now));
         const bucket = channelBucketRef.current || `channel${numericChannelId}`;
 
-        // resolve chosen; if not resolvable, resolve standby; never pass raw strings to <video>
         let finalProgram = chosen;
         let finalSrc: string | undefined = await resolvePlayableUrl(chosen, bucket);
 
         if (!finalSrc) {
+          // fallback to standby in same bucket
           const standby = getStandbyProgram(numericChannelId, new Date(now));
-          const standbyResolved = await resolvePlayableUrl(standby, bucket);
-          if (standbyResolved) { finalProgram = standby; finalSrc = standbyResolved; }
-          else {
-            const cand = await resolveStandbyForBucket(bucket);
-            if (cand) { finalProgram = standby; finalSrc = cand.url; }
-          }
-        }
-
-        // quarantine: if the src is known-bad, force standby (1 minute)
-        const q = quarantineRef.current;
-        const inQ = q && finalSrc && baseUrl(finalSrc) === baseUrl(q.src) && now < q.until;
-        if (inQ) {
-          const standby = getStandbyProgram(numericChannelId, new Date(now));
-          const standbyResolved = await resolvePlayableUrl(standby, bucket);
-          if (standbyResolved) { finalProgram = standby; finalSrc = standbyResolved; }
-          else {
-            const cand = await resolveStandbyForBucket(bucket);
-            if (cand) { finalProgram = standby; finalSrc = cand.url; }
-          }
+          finalProgram = standby;
+          finalSrc =
+            (await resolvePlayableUrl(standby, bucket)) ||
+            resolveStandbyPublic(bucket)?.url;
         }
 
         setCurrentProgram((prev) => {
@@ -529,17 +502,13 @@ export default function WatchPage() {
         stableTitleRef.current = finalProgram?.title || undefined;
       } catch (e: any) {
         setError(e.message || "Failed to load program.");
-        const bucket = channelBucketRef.current || `channel${numericChannelId}`;
         const standby = getStandbyProgram(numericChannelId, new Date(now));
-        let standbyUrl = await resolvePlayableUrl(standby, bucket);
-        if (!standbyUrl) {
-          const cand = await resolveStandbyForBucket(bucket);
-          standbyUrl = cand?.url;
-        }
+        const bucket = channelBucketRef.current || `channel${numericChannelId}`;
+        const fallback =
+          (await resolvePlayableUrl(standby, bucket)) ||
+          resolveStandbyPublic(bucket)?.url;
         setCurrentProgram(standby);
-        if (standbyUrl) setResolvedSrc((prev) => (prev !== standbyUrl ? standbyUrl : prev));
-        else setResolvedSrc(undefined);
-        stableTitleRef.current = standby.title || undefined;
+        if (fallback) setResolvedSrc(fallback);
       } finally {
         if (firstLoad) setIsLoading(false);
         isFetchingRef.current = false;
@@ -550,12 +519,12 @@ export default function WatchPage() {
 
   const fetchUpcomingPrograms = useCallback(async (numericChannelId: number) => {
     try {
-      const nowIso = new Date(nowMs()).toISOString();
+      const nowIso = new Date().toISOString();
       const { data } = await supabase
         .from("programs")
         .select("id, channel_id, title, mp4_url, start_time, duration")
         .eq("channel_id", numericChannelId)
-        .gt("start_time", nowIso)
+        .gt("start_time", nowIso) // DB times are UTC
         .order("start_time", { ascending: true })
         .limit(8);
       if (data) setUpcomingPrograms(data as Program[]);
@@ -564,88 +533,46 @@ export default function WatchPage() {
     }
   }, []);
 
-  // aligned refresh / polling
-  const minuteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const startMinuteAlignedRefresh = useCallback((numericChannelId: number) => {
-    if (minuteTimerRef.current) clearTimeout(minuteTimerRef.current);
-    const tick = () => {
-      if (document.visibilityState === "visible") {
-        fetchCurrentProgram(numericChannelId);
-        fetchUpcomingPrograms(numericChannelId);
-      }
-      const n = nowMs();
-      const msToNext = 60_000 - (n % 60_000) + 500;
-      minuteTimerRef.current = setTimeout(tick, msToNext);
-    };
-    const n = nowMs();
-    const msToNext = 60_000 - (n % 60_000) + 500;
-    minuteTimerRef.current = setTimeout(tick, msToNext);
-  }, [fetchCurrentProgram, fetchUpcomingPrograms]);
-
+  // polling
   useEffect(() => {
     if (validatedNumericChannelId === null) return;
-    if (ALWAYS_LIVE_CHANNEL_IDS.has(validatedNumericChannelId)) return;
+    if (validatedNumericChannelId === CH21) return; // YouTube branch handles itself
 
     fetchCurrentProgram(validatedNumericChannelId);
     fetchUpcomingPrograms(validatedNumericChannelId);
 
-    if (pollOn) {
-      const id = setInterval(() => {
-        if (document.visibilityState === "visible") {
-          fetchCurrentProgram(validatedNumericChannelId);
-          fetchUpcomingPrograms(validatedNumericChannelId);
-        }
-      }, 12000);
-      return () => clearInterval(id);
-    } else {
-      startMinuteAlignedRefresh(validatedNumericChannelId);
-      return () => { if (minuteTimerRef.current) clearTimeout(minuteTimerRef.current); };
-    }
-  }, [validatedNumericChannelId, fetchCurrentProgram, fetchUpcomingPrograms, pollOn, startMinuteAlignedRefresh]);
+    const id = setInterval(() => {
+      if (document.visibilityState === "visible") {
+        fetchCurrentProgram(validatedNumericChannelId);
+        fetchUpcomingPrograms(validatedNumericChannelId);
+      }
+    }, POLL_MS);
+    return () => clearInterval(id);
+  }, [validatedNumericChannelId, fetchCurrentProgram, fetchUpcomingPrograms]);
 
   const handleProgramEnded = useCallback(() => {
-    if (validatedNumericChannelId !== null && !ALWAYS_LIVE_CHANNEL_IDS.has(validatedNumericChannelId)) {
+    if (validatedNumericChannelId !== null && validatedNumericChannelId !== CH21) {
       fetchCurrentProgram(validatedNumericChannelId);
     }
   }, [validatedNumericChannelId, fetchCurrentProgram]);
 
-  const handleHardFail = useCallback(async () => {
+  const forceStandby = useCallback(async () => {
     if (validatedNumericChannelId == null) return;
-    if (resolvedSrc) quarantineRef.current = { src: resolvedSrc, until: Date.now() + 60_000 };
-    const standby = getStandbyProgram(validatedNumericChannelId, new Date(nowMs()));
-    const bucket = channelBucketRef.current || `channel${validatedNumericChannelId}`;
-    let standbyUrl = await resolvePlayableUrl(standby, bucket);
-    if (!standbyUrl) {
-      const cand = await resolveStandbyForBucket(bucket);
-      standbyUrl = cand?.url;
-    }
+    const standby = getStandbyProgram(validatedNumericChannelId, new Date());
     setCurrentProgram(standby);
-    if (standbyUrl) setResolvedSrc(standbyUrl); else setResolvedSrc(undefined);
-  }, [validatedNumericChannelId, resolvedSrc, getStandbyProgram]);
-
-  // Debug overlay
-  function DebugBlock({ bucket, program, src }: { bucket: string | null; program: Program | null; src?: string }) {
-    if (!program) return null;
-    const raw = program?.mp4_url || "";
-    return (
-      <div className="mt-4 text-xs bg-gray-900/70 border border-gray-700 rounded p-3">
-        <div><b>Bucket:</b> {bucket || "—"}</div>
-        <div><b>DB mp4_url:</b> {String(raw)}</div>
-        <div className="truncate"><b>Resolved URL:</b> {src || "—"}</div>
-        {src ? (
-          <div className="mt-1 flex items-center gap-3">
-            <a href={src} target="_blank" className="underline text-amber-300">Open resolved URL</a>
-            <button className="px-2 py-0.5 rounded bg-gray-800 border border-gray-700" onClick={() => navigator.clipboard.writeText(src)}>
-              Copy URL
-            </button>
-          </div>
-        ) : null}
-      </div>
-    );
-  }
+    const bucket = channelBucketRef.current || `channel${validatedNumericChannelId}`;
+    const u =
+      (await resolvePlayableUrl(standby, bucket)) ||
+      resolveStandbyPublic(bucket)?.url;
+    if (u) setResolvedSrc(u);
+  }, [validatedNumericChannelId, getStandbyProgram]);
 
   // render
-  const frozenTitle = stableTitleRef.current;
+  const frozenTitle = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (currentProgram?.title) frozenTitle.current = currentProgram.title;
+  }, [currentProgram?.title]);
+
   const isYouTubeLive = currentProgram?.id === "live-ch21-youtube";
   const isStandby = currentProgram?.id === STANDBY_PLACEHOLDER_ID;
 
@@ -660,7 +587,7 @@ export default function WatchPage() {
       </div>
     );
   } else if (isYouTubeLive) {
-    content = <YouTubeEmbed channelId={YT_CH21} title={frozenTitle || "Channel 21 Live"} muted={true} />;
+    content = <YouTubeLive channelId={YT_CH21} title={frozenTitle.current || "Channel 21 Live"} />;
   } else if (currentProgram && resolvedSrc) {
     content = (
       <SmartVideo
@@ -670,7 +597,7 @@ export default function WatchPage() {
         isStandby={isStandby}
         onReady={() => {}}
         onEnded={handleProgramEnded}
-        onHardFail={handleHardFail}
+        onHardFail={forceStandby}
       />
     );
   } else {
@@ -679,13 +606,16 @@ export default function WatchPage() {
 
   return (
     <div className="bg-black min-h-screen flex flex-col text-white">
-      <TopNav channelName={(channelDetails as any)?.name || `Channel ${channelIdString}`} logoSrc={brandLogo} />
-      <main className="w-full aspect-video bg-black flex items-center justify-center">{content}</main>
+      <TopNav title={(channelDetails as any)?.name || `Channel ${channelIdString}`} />
+
+      <main className="w-full aspect-video bg-black flex items-center justify-center">
+        {content}
+      </main>
 
       <section className="p-4 flex-grow">
         {currentProgram && !isYouTubeLive && (
           <>
-            <h2 className="text-2xl font-bold">{frozenTitle}</h2>
+            <h2 className="text-2xl font-bold">{frozenTitle.current || currentProgram.title || "Program"}</h2>
             <p className="text-sm text-white/60">
               Channel: {(channelDetails as any)?.name || `Channel ${channelIdString}`}
             </p>
@@ -712,10 +642,22 @@ export default function WatchPage() {
                 </ul>
               </div>
             )}
-            {error && <p className="text-xs text-red-400 mt-4">{error}</p>}
-            {searchParams?.get("debug") === "1" && (
-              <DebugBlock bucket={channelBucketRef.current} program={currentProgram} src={resolvedSrc} />
+            {debugOn && (
+              <div className="mt-4 text-xs bg-gray-900/70 border border-gray-700 rounded p-3">
+                <div><b>Bucket:</b> {channelBucketRef.current || "—"}</div>
+                <div><b>DB mp4_url:</b> {String((currentProgram as any)?.mp4_url || "")}</div>
+                <div className="truncate"><b>Resolved URL:</b> {resolvedSrc || "—"}</div>
+                {resolvedSrc ? (
+                  <div className="mt-1 flex items-center gap-3">
+                    <a href={resolvedSrc} target="_blank" className="underline text-amber-300">Open resolved URL</a>
+                    <button className="px-2 py-0.5 rounded bg-gray-800 border border-gray-700" onClick={() => navigator.clipboard.writeText(resolvedSrc!)}>
+                      Copy URL
+                    </button>
+                  </div>
+                ) : null}
+              </div>
             )}
+            {error && <p className="text-xs text-red-400 mt-4">{error}</p>}
           </>
         )}
       </section>
