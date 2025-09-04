@@ -3,7 +3,6 @@
 
 import { type ReactNode, useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import VideoPlayer from "@/components/video-player";
 import {
   getVideoUrlForProgram,
   fetchChannelDetails,
@@ -14,32 +13,27 @@ import type { Program, Channel } from "@/types";
 import { ChevronLeft, Loader2 } from "lucide-react";
 import YouTubeEmbed from "@/components/youtube-embed";
 
+// ------------------ CONSTANTS ------------------
 const CH21_ID_NUMERIC = 21;
-/** Your 24/7 YouTube Channel ID for Channel 21 */
 const YT_CH21 = "UCMkW239dyAxDyOFDP0D6p2g";
-
-/** Channels that are *always* live on YouTube (skip schedule fetch) */
 const ALWAYS_LIVE_CHANNEL_IDS = new Set<number>([CH21_ID_NUMERIC]);
 
-/** Parse DB date/time as *UTC* (works for timestamptz, ISO, and "YYYY-MM-DD HH:mm:ss"). */
+// how long to wait for canplay before retrying / falling back
+const CANPLAY_TIMEOUT_MS = 8000; // tweak if you want
+const STALL_RECOVERY_MS = 5000;  // when "waiting" fires and playback stalls
+
+// ------------------ HELPERS ------------------
+/** Parse DB date/time as UTC (works for tz/ISO and "YYYY-MM-DD HH:mm:ss"). */
 function toUtcDate(val?: string | Date | null): Date | null {
   if (!val) return null;
-  if (val instanceof Date) {
-    // Already a Date from the client; Date stores epoch ms (UTC-based)
-    return Number.isNaN(val.getTime()) ? null : val;
-  }
-  let s = String(val).trim();
+  if (val instanceof Date) return Number.isNaN(val.getTime()) ? null : val;
 
-  // Normalize common Postgres/SQL format "YYYY-MM-DD HH:mm:ss(.sss)"
+  let s = String(val).trim();
   if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?$/.test(s)) {
     s = s.replace(" ", "T") + "Z";
-  } else {
-    // If it lacks Z or +/-offset, assume UTC and append Z
-    if (!/[zZ]|[+\-]\d{2}:\d{2}$/.test(s)) {
-      s = s + "Z";
-    }
+  } else if (!/[zZ]|[+\-]\d{2}:\d{2}$/.test(s)) {
+    s = s + "Z";
   }
-
   const d = new Date(s);
   return Number.isNaN(d.getTime()) ? null : d;
 }
@@ -61,6 +55,129 @@ async function resolvePlayableUrl(program: Program): Promise<string | undefined>
   }
 }
 
+// ------------------ SMART VIDEO (buffer watchdog + logo overlay) ------------------
+function SmartVideo({
+  src,
+  poster,
+  onReady,
+  onEnded,
+  onHardFail,
+  autoPlay = true,
+  muted = true,
+  playsInline = true,
+  preload = "auto",
+}: {
+  src: string;
+  poster?: string;
+  onReady: () => void;
+  onEnded: () => void;
+  onHardFail: () => void;
+  autoPlay?: boolean;
+  muted?: boolean;
+  playsInline?: boolean;
+  preload?: "auto" | "metadata" | "none";
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [showOverlay, setShowOverlay] = useState(true);
+  const [triedOnce, setTriedOnce] = useState(false);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stallRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Start watchdog each time src changes
+  useEffect(() => {
+    setShowOverlay(true);
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = setTimeout(() => {
+      if (!triedOnce) {
+        // try once to reload the same src
+        setTriedOnce(true);
+        const v = videoRef.current;
+        if (v) {
+          v.load();
+          v.play().catch(() => {});
+        }
+        // schedule a second guard: if still not ready, hard-fail to standby
+        timeoutRef.current = setTimeout(() => {
+          onHardFail();
+        }, CANPLAY_TIMEOUT_MS);
+      } else {
+        // second time: give up → standby
+        onHardFail();
+      }
+    }, CANPLAY_TIMEOUT_MS);
+
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      if (stallRef.current) clearTimeout(stallRef.current);
+    };
+  }, [src, triedOnce, onHardFail]);
+
+  const handleCanPlay = () => {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    setShowOverlay(false);
+    onReady();
+  };
+
+  const handleWaiting = () => {
+    // playback stalled: start a short recovery timer
+    if (stallRef.current) clearTimeout(stallRef.current);
+    stallRef.current = setTimeout(() => {
+      // if still stalled after STALL_RECOVERY_MS, reload once or fail
+      const v = videoRef.current;
+      if (v) {
+        v.load();
+        v.play().catch(() => {});
+      }
+    }, STALL_RECOVERY_MS);
+  };
+
+  const handleError = () => {
+    onHardFail();
+  };
+
+  return (
+    <div className="relative w-full h-full">
+      {/* Poster/Logo overlay */}
+      {showOverlay && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black z-10">
+          {/* Logo */}
+          {poster ? (
+            <img
+              src={poster}
+              alt="Channel Logo"
+              className="max-h-[60%] max-w-[80%] object-contain opacity-90"
+            />
+          ) : null}
+          <div className="flex items-center gap-2 mt-4 text-gray-300">
+            <Loader2 className="h-5 w-5 animate-spin" />
+            <span>Starting stream…</span>
+          </div>
+        </div>
+      )}
+
+      <video
+        ref={videoRef}
+        key={src}
+        src={src}
+        poster={poster}
+        autoPlay={autoPlay}
+        muted={muted}
+        playsInline={playsInline}
+        preload={preload}
+        controls={false}
+        className="w-full h-full"
+        onCanPlay={handleCanPlay}
+        onLoadedData={() => { /* extra signal if you want */ }}
+        onPlay={() => { setShowOverlay(false); }}
+        onEnded={onEnded}
+        onWaiting={handleWaiting}
+        onError={handleError}
+      />
+    </div>
+  );
+}
+
+// ------------------ PAGE ------------------
 export default function WatchPage() {
   const params = useParams();
   const searchParams = useSearchParams();
@@ -166,7 +283,7 @@ export default function WatchPage() {
       const firstLoad = !currentProgram;
       if (firstLoad) setIsLoading(true);
 
-      const nowUtcMs = Date.now(); // epoch ms; comparisons are timezone-agnostic
+      const nowUtcMs = Date.now(); // epoch ms; timezone-agnostic
       try {
         const { data: programsData, error: dbError } = await supabase
           .from("programs")
@@ -244,7 +361,6 @@ export default function WatchPage() {
   const fetchUpcomingPrograms = useCallback(async (numericChannelId: number) => {
     if (ALWAYS_LIVE_CHANNEL_IDS.has(numericChannelId)) return;
     try {
-      // Use UTC "now" in the filter to stay aligned with a UTC schedule
       const nowUtcIso = new Date().toISOString();
       const { data, error } = await supabase
         .from("programs")
@@ -273,7 +389,7 @@ export default function WatchPage() {
         fetchCurrentProgram(validatedNumericChannelId);
         fetchUpcomingPrograms(validatedNumericChannelId);
       }
-    }, 15000); // minute-by-minute schedules benefit from quicker polling
+    }, 15000); // quicker polling for minute-by-minute schedules
     return () => clearInterval(interval);
   }, [validatedNumericChannelId, fetchCurrentProgram, fetchUpcomingPrograms, pollOn]);
 
@@ -283,15 +399,31 @@ export default function WatchPage() {
     }
   }, [validatedNumericChannelId, fetchCurrentProgram]);
 
-  const handlePrimaryLiveStreamError = useCallback(() => {}, []);
+  // ------------- RENDER -------------
+  const frozenTitle = useRef<string | undefined>(undefined);
+  if (currentProgram?.title) frozenTitle.current = currentProgram.title;
 
-  const frozenTitle = stableTitleRef.current;
   const isYouTubeLive = currentProgram?.id === "live-ch21-youtube";
-  const shouldLoopInPlayer = currentProgram?.id === STANDBY_PLACEHOLDER_ID;
+  const isStandby = currentProgram?.id === STANDBY_PLACEHOLDER_ID;
 
-  const posterForThisProgram = shouldLoopInPlayer
-    ? (channelDetails as any)?.logo_url || undefined
-    : undefined;
+  const posterForThisProgram =
+    (channelDetails as any)?.logo_url || undefined;
+
+  // onHardFail: fallback to standby if current src won’t start
+  const forceStandby = useCallback(async () => {
+    if (validatedNumericChannelId == null) return;
+    const standby = getStandbyMp4Program(validatedNumericChannelId, new Date());
+    setCurrentProgram(standby);
+    const signed = await resolvePlayableUrl(standby);
+    const effective = signed ?? standby.mp4_url;
+    setResolvedSrc((prev) => {
+      if (prev !== effective) {
+        setVideoPlayerKey(Date.now());
+        return effective;
+      }
+      return prev;
+    });
+  }, [validatedNumericChannelId, getStandbyMp4Program]);
 
   let content: ReactNode;
   if (error) {
@@ -305,28 +437,34 @@ export default function WatchPage() {
     );
   } else if (isYouTubeLive) {
     content = (
-      <YouTubeEmbed channelId={YT_CH21} title={frozenTitle || "Channel 21 Live"} muted={true} />
+      <YouTubeEmbed
+        channelId={YT_CH21}
+        title={frozenTitle.current || "Channel 21 Live"}
+        muted={true}
+      />
     );
   } else if (currentProgram && resolvedSrc) {
+    // Use SmartVideo to keep logo visible until playback actually starts
     content = (
-      <VideoPlayer
+      <SmartVideo
         key={videoPlayerKey}
         src={resolvedSrc}
         poster={posterForThisProgram}
-        isStandby={shouldLoopInPlayer}
-        programTitle={frozenTitle}
-        onVideoEnded={handleProgramEnded}
-        isPrimaryLiveStream={false}
-        onPrimaryLiveStreamError={handlePrimaryLiveStreamError}
-        showNoLiveNotice={false}
-        autoPlay={true}
-        muted={true}
-        playsInline={true}
+        onReady={() => { /* started successfully */ }}
+        onEnded={handleProgramEnded}
+        onHardFail={forceStandby}
+        autoPlay
+        muted
+        playsInline
         preload="auto"
       />
     );
   } else {
-    content = <p className="text-gray-400 p-4 text-center">Initializing channel...</p>;
+    content = (
+      <div className="flex items-center justify-center h-full text-gray-400">
+        Initializing channel…
+      </div>
+    );
   }
 
   return (
@@ -348,7 +486,7 @@ export default function WatchPage() {
       <div className="p-4 flex-grow">
         {currentProgram && !isYouTubeLive && (
           <>
-            <h2 className="text-2xl font-bold">{frozenTitle}</h2>
+            <h2 className="text-2xl font-bold">{frozenTitle.current}</h2>
             <p className="text-sm text-gray-400">
               Channel: {(channelDetails as any)?.name || `Channel ${channelIdString}`}
             </p>
@@ -364,7 +502,7 @@ export default function WatchPage() {
             {upcomingPrograms.length > 0 && (
               <div className="mt-6">
                 <h3 className="text-lg font-semibold text-white mb-2">Upcoming Programs</h3>
-              <ul className="text-sm text-gray-300 space-y-1">
+                <ul className="text-sm text-gray-300 space-y-1">
                   {upcomingPrograms.map((program) => {
                     const d = toUtcDate(program.start_time);
                     return (
@@ -385,25 +523,6 @@ export default function WatchPage() {
                   })}
                 </ul>
               </div>
-            )}
-
-            {/* Optional debug (remove anytime) */}
-            {process.env.NODE_ENV !== "production" && (
-              <pre className="text-xs text-gray-500 mt-4 whitespace-pre-wrap">
-                {JSON.stringify(
-                  {
-                    channelId: validatedNumericChannelId,
-                    isYouTubeLive,
-                    currentProgramId: currentProgram?.id,
-                    resolvedSrc,
-                    start: currentProgram?.start_time,
-                    duration: currentProgram?.duration,
-                    clientNowISO: new Date().toISOString(),
-                  },
-                  null,
-                  2
-                )}
-              </pre>
             )}
           </>
         )}
