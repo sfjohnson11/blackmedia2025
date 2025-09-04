@@ -1,10 +1,9 @@
 // app/watch/[channelId]/page.tsx
-// MP4-only + YouTube, UTC-safe, stable overlay, with branded navbar + Donate
+// MP4-only + YouTube, UTC-safe, stable overlay, branded navbar, hydration-safe
 "use client";
 
 import { type ReactNode, useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
-import Image from "next/image";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   getVideoUrlForProgram,
@@ -16,12 +15,21 @@ import type { Program, Channel } from "@/types";
 import { ChevronLeft, Loader2 } from "lucide-react";
 import YouTubeEmbed from "@/components/youtube-embed";
 
-// —————————————————— BRAND / NAV
-const BRAND_LOGO_SRC = "/brand/blacktruth-logo.png"; // <- put your file here (public/brand/blacktruth-logo.png)
-const BRAND_NAME = "Black Truth TV";
+/* ------------------------------ BRAND / NAV ------------------------------ */
 
-// Top nav with logo + links + Donate CTA
-function TopNav({ channelName, showBack }: { channelName?: string; showBack?: boolean }) {
+const BRAND_NAME = "Black Truth TV";
+const DEFAULT_PUBLIC_LOGO = "/brand/blacktruth-logo.png"; // place your file at public/brand/blacktruth-logo.png
+const DEFAULT_BUCKET = "brand"; // if you store logo in a Supabase public bucket
+
+function TopNav({
+  channelName,
+  logoSrc,
+  showBack = false,
+}: {
+  channelName?: string;
+  logoSrc?: string;
+  showBack?: boolean;
+}) {
   return (
     <header className="sticky top-0 z-20 bg-gradient-to-b from-black/80 to-black/40 backdrop-blur supports-[backdrop-filter]:bg-black/60 border-b border-white/10">
       <div className="mx-auto max-w-7xl px-3 sm:px-4">
@@ -36,16 +44,14 @@ function TopNav({ channelName, showBack }: { channelName?: string; showBack?: bo
                 <ChevronLeft className="h-6 w-6" />
               </Link>
             ) : null}
+
             <Link href="/" className="flex items-center gap-2">
-              {/* Logo */}
-              <div className="relative h-9 w-9 sm:h-10 sm:w-10 rounded-md overflow-hidden ring-1 ring-white/10">
-                <Image
-                  src={BRAND_LOGO_SRC}
+              <div className="h-9 w-9 sm:h-10 sm:w-10 rounded-md overflow-hidden ring-1 ring-white/10 flex items-center justify-center bg-black/30">
+                {/* plain <img> keeps things simple (no next/image config) */}
+                <img
+                  src={logoSrc || DEFAULT_PUBLIC_LOGO}
                   alt="Black Truth TV Logo"
-                  fill
-                  sizes="40px"
-                  className="object-contain"
-                  priority
+                  className="h-full w-full object-contain"
                 />
               </div>
               <div className="leading-tight">
@@ -59,7 +65,6 @@ function TopNav({ channelName, showBack }: { channelName?: string; showBack?: bo
             </Link>
           </div>
 
-          {/* Center nav links */}
           <nav className="hidden md:flex items-center gap-6 text-sm">
             <Link href="/" className="hover:text-white/90 text-white/70">Home</Link>
             <Link href="/guide" className="hover:text-white/90 text-white/70">Guide</Link>
@@ -68,7 +73,6 @@ function TopNav({ channelName, showBack }: { channelName?: string; showBack?: bo
             <Link href="/contact" className="hover:text-white/90 text-white/70">Contact</Link>
           </nav>
 
-          {/* Donate CTA */}
           <div className="flex items-center gap-2">
             <Link
               href="/donate"
@@ -81,7 +85,7 @@ function TopNav({ channelName, showBack }: { channelName?: string; showBack?: bo
           </div>
         </div>
 
-        {/* Mobile secondary links */}
+        {/* Mobile quick links */}
         <div className="md:hidden py-2 flex items-center justify-center gap-5 text-xs border-t border-white/10">
           <Link href="/guide" className="hover:text-white text-white/80">Guide</Link>
           <Link href="/channels" className="hover:text-white text-white/80">Channels</Link>
@@ -93,20 +97,24 @@ function TopNav({ channelName, showBack }: { channelName?: string; showBack?: bo
   );
 }
 
-// —————————————————— CONSTANTS (player/schedule)
+/* --------------------------- PLAYER / SCHEDULING -------------------------- */
+
 const CH21_ID_NUMERIC = 21;
 const YT_CH21 = "UCMkW239dyAxDyOFDP0D6p2g";
 const ALWAYS_LIVE_CHANNEL_IDS = new Set<number>([CH21_ID_NUMERIC]);
 
+// Player timings
 const STABLE_PLAY_MS = 1000;
 const CANPLAY_TIMEOUT_MS = 7000;
 const STALL_RECOVERY_MS = 3000;
 const MAX_ATTEMPTS_PER_SRC = 2;
 
+// Grace windows so minute-by-minute grids don’t “miss” a tick on slight skew
 const START_EARLY_GRACE_MS = 30_000;
 const END_LATE_GRACE_MS = 15_000;
 
-// —————————————————— HELPERS
+/* --------------------------------- Helpers -------------------------------- */
+
 function toUtcDate(val?: string | Date | null): Date | null {
   if (!val) return null;
   if (val instanceof Date) return Number.isNaN(val.getTime()) ? null : val;
@@ -129,7 +137,8 @@ async function resolvePlayableUrl(program: Program): Promise<string | undefined>
   }
 }
 
-// —————————————————— MP4-only SmartVideo (logo overlay + stability + recovery)
+/* ------------------------- MP4-only SmartVideo UI ------------------------- */
+
 function SmartVideo({
   src,
   logo,
@@ -201,24 +210,31 @@ function SmartVideo({
   const tryRecoverOrFail = () => {
     const v = videoRef.current;
     if (!v) return;
-    const mediaErr = v.error?.code ?? null; // 3: decode, 4: src unsupported
+
+    const mediaErr = v.error?.code ?? null; // 3 decode, 4 src unsupported
     if (mediaErr === 3 || mediaErr === 4) {
       setOverlayText("Switching to standby…");
       onHardFail();
       return;
     }
+
     if (attemptsRef.current < MAX_ATTEMPTS_PER_SRC) {
       attemptsRef.current += 1;
       setOverlayText("Recovering stream…");
+
       if (canplayTimer.current) clearTimeout(canplayTimer.current);
       if (stablePlayTimer.current) clearTimeout(stablePlayTimer.current);
       if (stallTimer.current) clearTimeout(stallTimer.current);
+
       try {
         v.pause();
         v.load();
       } catch {}
       v.play().catch(() => {});
-      canplayTimer.current = setTimeout(() => tryRecoverOrFail(), CANPLAY_TIMEOUT_MS);
+
+      canplayTimer.current = setTimeout(() => {
+        tryRecoverOrFail();
+      }, CANPLAY_TIMEOUT_MS);
     } else {
       setOverlayText("Switching to standby…");
       onHardFail();
@@ -230,11 +246,10 @@ function SmartVideo({
       {showOverlay && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-black z-10">
           {logo ? (
-            // Show your logo while starting/recovering
             <img
               src={logo}
               alt="Channel Logo"
-              className="max-h-[60%] max-w-[80%] object-contain drop-shadow-[0_6px_24px_rgba(0,0,0,0.45)]"
+              className="max-h-[60%] max-w-[80%] object-contain drop-shadow-[0_8px_28px_rgba(0,0,0,0.45)]"
             />
           ) : null}
           <div className="flex items-center gap-2 mt-4 text-gray-300">
@@ -277,7 +292,8 @@ function SmartVideo({
   );
 }
 
-// —————————————————— PAGE
+/* ---------------------------------- PAGE ---------------------------------- */
+
 export default function WatchPage() {
   const params = useParams();
   const searchParams = useSearchParams();
@@ -294,14 +310,35 @@ export default function WatchPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [resolvedSrc, setResolvedSrc] = useState<string | undefined>(undefined);
-  const [videoPlayerKey, setVideoPlayerKey] = useState(Date.now());
+
+  // hydration-safe key (no Date.now() at render)
+  const [videoPlayerKey, setVideoPlayerKey] = useState(0);
+  useEffect(() => { setVideoPlayerKey(1); }, []);
+
+  // Build a logo URL from either channelDetails.logo_url (full URL or path in bucket)
+  const [logoSrc, setLogoSrc] = useState<string>(DEFAULT_PUBLIC_LOGO);
+  useEffect(() => {
+    const raw = (channelDetails as any)?.logo_url as string | undefined;
+    if (!raw) {
+      setLogoSrc(DEFAULT_PUBLIC_LOGO);
+      return;
+    }
+    if (raw.startsWith("http") || raw.startsWith("/")) {
+      setLogoSrc(raw);
+      return;
+    }
+    // treat as path in DEFAULT_BUCKET
+    const { data } = supabase.storage.from(DEFAULT_BUCKET).getPublicUrl(raw);
+    setLogoSrc(data.publicUrl || DEFAULT_PUBLIC_LOGO);
+  }, [channelDetails]);
 
   const isFetchingRef = useRef(false);
   const stableTitleRef = useRef<string | undefined>(undefined);
 
-  // Init: load channel details and handle always-live CH21
+  // Init: load channel details and handle CH21 (YouTube live)
   useEffect(() => {
     let cancelled = false;
+
     async function init() {
       if (!channelIdString) {
         setError("Channel ID is missing in URL.");
@@ -331,7 +368,6 @@ export default function WatchPage() {
       }
       setValidatedNumericChannelId(numericId);
 
-      // Always-live channel 21 shortcut (YouTube)
       if (ALWAYS_LIVE_CHANNEL_IDS.has(numericId)) {
         const liveProgram: Program = {
           id: "live-ch21-youtube",
@@ -350,6 +386,7 @@ export default function WatchPage() {
 
       setIsLoading(false);
     }
+
     init();
     return () => {
       cancelled = true;
@@ -396,7 +433,6 @@ export default function WatchPage() {
 
         const programs = (programsData ?? []) as Program[];
 
-        // Choose active program with grace windows
         const activeProgram = programs.find((p) => {
           if (!p.start_time || typeof p.duration !== "number" || p.duration <= 0) return false;
           const start = toUtcDate(p.start_time);
@@ -423,7 +459,7 @@ export default function WatchPage() {
 
         setResolvedSrc((prev) => {
           if (prev !== effectiveSrc) {
-            setVideoPlayerKey(Date.now());
+            setVideoPlayerKey((k) => k + 1);
             return effectiveSrc;
           }
           return prev;
@@ -441,7 +477,7 @@ export default function WatchPage() {
 
         setResolvedSrc((prev) => {
           if (prev !== effectiveFallback) {
-            setVideoPlayerKey(Date.now());
+            setVideoPlayerKey((k) => k + 1);
             return effectiveFallback;
           }
           return prev;
@@ -481,17 +517,15 @@ export default function WatchPage() {
     fetchCurrentProgram(validatedNumericChannelId);
     fetchUpcomingPrograms(validatedNumericChannelId);
 
-    // minute-by-minute polling
-    const poll = (searchParams?.get("poll") ?? "0") === "1";
-    if (!poll) return;
+    if (!pollOn) return;
     const id = setInterval(() => {
       if (document.visibilityState === "visible") {
         fetchCurrentProgram(validatedNumericChannelId);
         fetchUpcomingPrograms(validatedNumericChannelId);
       }
-    }, 12000);
+    }, 12000); // minute-by-minute friendly polling
     return () => clearInterval(id);
-  }, [validatedNumericChannelId, fetchCurrentProgram, fetchUpcomingPrograms, searchParams]);
+  }, [validatedNumericChannelId, fetchCurrentProgram, fetchUpcomingPrograms, pollOn]);
 
   const handleProgramEnded = useCallback(() => {
     if (validatedNumericChannelId !== null && !ALWAYS_LIVE_CHANNEL_IDS.has(validatedNumericChannelId)) {
@@ -499,10 +533,9 @@ export default function WatchPage() {
     }
   }, [validatedNumericChannelId, fetchCurrentProgram]);
 
-  // — render
+  // render
   const frozenTitle = stableTitleRef.current;
   const isYouTubeLive = currentProgram?.id === "live-ch21-youtube";
-  const logoOverlay = (channelDetails as any)?.logo_url || BRAND_LOGO_SRC;
 
   const forceStandby = useCallback(async () => {
     if (validatedNumericChannelId == null) return;
@@ -512,7 +545,7 @@ export default function WatchPage() {
     const effective = signed ?? standby.mp4_url;
     setResolvedSrc((prev) => {
       if (prev !== effective) {
-        setVideoPlayerKey(Date.now());
+        setVideoPlayerKey((k) => k + 1);
         return effective;
       }
       return prev;
@@ -538,7 +571,7 @@ export default function WatchPage() {
       <SmartVideo
         key={videoPlayerKey}
         src={resolvedSrc}
-        logo={logoOverlay}
+        logo={logoSrc}
         onReady={() => {}}
         onEnded={handleProgramEnded}
         onHardFail={forceStandby}
@@ -556,6 +589,7 @@ export default function WatchPage() {
     <div className="bg-black min-h-screen flex flex-col text-white">
       <TopNav
         channelName={(channelDetails as any)?.name || `Channel ${channelIdString}`}
+        logoSrc={logoSrc}
         showBack={false}
       />
 
