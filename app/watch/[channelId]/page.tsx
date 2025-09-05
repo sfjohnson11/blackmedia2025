@@ -61,13 +61,16 @@ function toUtcDate(val?: string | Date | null): Date | null {
 }
 function addSeconds(d: Date, secs: number) { return new Date(d.getTime() + secs * 1000); }
 
+/** Bucket rule: ALL channels use "channel{id}" except Freedom School which is "freedom_school" (lowercase). */
 function bucketForChannel(ch: Channel | null): string | null {
   if (!ch) return null;
-  if (ch.slug && ch.slug.trim()) return ch.slug.trim();
+  const slug = (ch.slug || "").toLowerCase().trim();
+  if (slug === "freedom-school" || slug === "freedom_school") return "freedom_school";
   if (Number.isFinite(ch.id) && ch.id > 0) return `channel${ch.id}`;
   return null;
 }
 
+/** Public URL helper for *public* buckets (your buckets are public) */
 function publicUrl(bucket: string, objectPath: string): string | undefined {
   try {
     const { data } = supabase.storage.from(bucket).getPublicUrl(cleanPath(objectPath));
@@ -75,11 +78,16 @@ function publicUrl(bucket: string, objectPath: string): string | undefined {
   } catch { return undefined; }
 }
 
+/** Resolve absolute/bucket/relative into a playable PUBLIC URL (no extension gating) */
 async function resolvePlayableUrl(program: Program, channelBucket: string | null) {
-  let raw = (getVideoUrlForProgram(program) || "").trim();
+  // Prefer your helper if present; otherwise use mp4_url as stored
+  let raw = (getVideoUrlForProgram(program) || program.mp4_url || "").trim();
   if (!raw) return undefined;
 
-  // Already absolute URL or absolute path
+  // YouTube handled by render branch
+  if (isYouTubeMarker(raw)) return undefined;
+
+  // Absolute https or absolute path → use as-is (unchanged logic)
   if (/^https?:\/\//i.test(raw) || raw.startsWith("/")) return raw;
 
   // Explicit bucket override: "bucket:path" or "storage://bucket/path"
@@ -88,18 +96,22 @@ async function resolvePlayableUrl(program: Program, channelBucket: string | null
     /^storage:\/\/([^/]+)\/(.+)$/i.exec(raw);
   if (m) {
     const b = m[1];
-    const p = m[2];
+    const p = cleanPath(m[2]);
     return publicUrl(b, p);
   }
 
-  // Relative path: resolve against this channel's bucket
+  // Relative path: resolve against this channel's bucket (channel{id} or freedom_school)
   if (!channelBucket) return undefined;
-  raw = cleanPath(raw);
+  let rel = cleanPath(raw);
+
+  // If someone accidentally stored "channel{id}/file.mp4", strip that prefix
   const prefix = `${channelBucket.replace(/\/+$/, "")}/`.toLowerCase();
-  if (raw.toLowerCase().startsWith(prefix)) raw = raw.slice(prefix.length);
-  return publicUrl(channelBucket, raw);
+  if (rel.toLowerCase().startsWith(prefix)) rel = rel.slice(prefix.length);
+
+  return publicUrl(channelBucket, rel);
 }
 
+/** Standby public URL in the same bucket */
 function resolveStandbyUrl(channelBucket: string | null) {
   if (!channelBucket) return undefined;
   return publicUrl(channelBucket, STANDBY_OBJECT);
@@ -164,7 +176,7 @@ export default function WatchPage() {
         title: channel.name ? `${channel.name} Live` : "Live",
         mp4_url: `youtube_channel:${channel.youtube_channel_id || YT_FALLBACK_CH21}`,
         start_time: new Date(Date.now() - 3600000).toISOString(),
-        duration: 31536000,
+        duration: 31536000, // 1y window
       } as any);
       setNextProgram(null);
       setPlayingSrc(undefined);
@@ -290,7 +302,7 @@ export default function WatchPage() {
           <VideoPlayer
             key={playerKeyRef.current}
             src={playingSrc}
-            poster={poster}
+            poster={channel?.logo_url || undefined}
             programTitle={
               activeProgram
                 ? (usingStandby ? `${activeProgram.title || "Program"} (Standby playback)` : activeProgram.title || undefined)
@@ -346,13 +358,13 @@ export default function WatchPage() {
           )}
         </div>
 
-        {(search?.get("debug") ?? "0") === "1" && (
+        {debugOn && (
           <div className="mt-2 text-xs bg-gray-900/70 border border-gray-700 rounded p-3 space-y-1">
             <div><b>Bucket:</b> {bucketRef.current || "—"}</div>
             <div><b>Active Program:</b> {activeProgram ? `${String(activeProgram.id)} • ${activeProgram.title || "—"}` : "— (none)"}</div>
             <div className="truncate"><b>Playing Src:</b> {playingSrc || "—"}</div>
             <div><b>Using Standby:</b> {usingStandby ? "yes" : "no"}</div>
-            <div><b>Poster (logo_url):</b> {poster || "—"}</div>
+            <div><b>Poster (logo_url):</b> {channel?.logo_url || "—"}</div>
           </div>
         )}
       </div>
