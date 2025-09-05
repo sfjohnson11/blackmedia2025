@@ -4,23 +4,33 @@
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useSearchParams } from "next/navigation";
-import { Loader2 } from "lucide-react";
-
-import VideoPlayer from "../../../components/video-player";
 import YouTubeEmbed from "../../../components/youtube-embed";
-import {
-  supabase,
-  fetchChannelDetails,
-  getVideoUrlForProgram,
-  STANDBY_PLACEHOLDER_ID,
-  type Program,
-  type Channel,
-} from "../../../lib/supabase";
+import { supabase, fetchChannelDetails, STANDBY_PLACEHOLDER_ID } from "../../../lib/supabase";
+
+/* ---------- types (your schema) ---------- */
+type Channel = {
+  id: number;
+  name?: string | null;
+  logo_url?: string | null;
+  youtube_channel_id?: string | null;
+  [k: string]: any;
+};
+
+type Program = {
+  id: string | number;
+  channel_id: number;
+  title: string | null;
+  mp4_url: string | null;   // absolute or storage key
+  start_time: string;       // UTC (accepts "YYYY-MM-DD HH:mm:ss")
+  duration: number;         // seconds
+};
 
 /* ---------- constants ---------- */
-const CH21_ID = 21;
+const CH21 = 21;
 const STANDBY_FILE = "standby_blacktruthtv.mp4";
 const SAFE_DEFAULT_SECS = 1800;
+const SUPA_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "");
+const PUB_ROOT = `${SUPA_URL}/storage/v1/object/public`;
 
 /* ---------- UTC helpers ---------- */
 function toUtcDate(val?: string | Date | null): Date | null {
@@ -33,7 +43,7 @@ function toUtcDate(val?: string | Date | null): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 const addSeconds = (d: Date, s: number) => new Date(d.getTime() + s * 1000);
-const nowUtc = () => new Date(new Date().toISOString()); // explicit UTC "now"
+const nowUtc = () => new Date(new Date().toISOString());
 
 function isNowUTC(p: Program, n = nowUtc()) {
   const st = toUtcDate(p.start_time);
@@ -45,26 +55,60 @@ function isNowUTC(p: Program, n = nowUtc()) {
   return n.getTime() >= st.getTime() && n.getTime() < en.getTime();
 }
 
-/* reachability probe */
-async function reachable(url?: string): Promise<boolean> {
-  if (!url) return false;
-  try {
-    const res = await fetch(url, { method: "GET", headers: { Range: "bytes=0-0" } });
-    return res.ok || res.status === 206;
-  } catch { return false; }
+/* ---------- storage path helpers ---------- */
+const cleanKey = (k: string) =>
+  k.trim().replace(/^\.?\//, "").replace(/\\/g, "/").replace(/\/{2,}/g, "/");
+const bucketFor = (id: number) => `channel${id}`;
+const encPath = (p: string) => p.split("/").map(encodeURIComponent).join("/");
+
+/** Build the exact public MP4 url without SDK calls. Handles:
+ * - https:// absolute
+ * - bucket:path/file.mp4
+ * - storage://bucket/path/file.mp4
+ * - bucket/path/file.mp4
+ * - relative → channel{ID}/key
+ */
+function resolveSrc(p: Program, channelId: number): string | undefined {
+  let raw = (p?.mp4_url || "").trim();
+  if (!raw) return undefined;
+
+  // Absolute URL
+  if (/^https?:\/\//i.test(raw)) return raw;
+  // Absolute path (from site root)
+  if (raw.startsWith("/")) return raw;
+
+  raw = cleanKey(raw);
+
+  // 1) "bucket:path/to/file.mp4"
+  const m1 = /^([a-z0-9_\-]+):(.+)$/i.exec(raw);
+  if (m1) {
+    const bucket = m1[1];
+    const key = encPath(cleanKey(m1[2]));
+    return `${PUB_ROOT}/${bucket}/${key}`;
+  }
+
+  // 2) "storage://bucket/path/to/file.mp4"
+  const m2 = /^storage:\/\/([^/]+)\/(.+)$/.exec(raw);
+  if (m2) {
+    const bucket = m2[1];
+    const key = encPath(cleanKey(m2[2]));
+    return `${PUB_ROOT}/${bucket}/${key}`;
+  }
+
+  // 3) "bucket/path/to/file.mp4" → treat first segment as bucket
+  const firstSeg = raw.split("/")[0];
+  if (/^[a-z0-9_\-]+$/i.test(firstSeg)) {
+    const bucket = firstSeg;
+    const rest = encPath(cleanKey(raw.slice(firstSeg.length + 1)));
+    if (rest) return `${PUB_ROOT}/${bucket}/${rest}`;
+  }
+
+  // 4) relative to this channel bucket
+  raw = raw.replace(new RegExp(`^channel${channelId}/`, "i"), "");
+  return `${PUB_ROOT}/${bucketFor(channelId)}/${encPath(raw)}`;
 }
 
-/* ---------- tiny formatter for countdown ---------- */
-function fmtHMS(total: number) {
-  const s = Math.max(0, total | 0);
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = s % 60;
-  const mm = String(m).padStart(2, "0");
-  const ss = String(sec).padStart(2, "0");
-  return h > 0 ? `${h}:${mm}:${ss}` : `${m}:${ss}`;
-}
-
+/* ---------- component ---------- */
 export default function WatchClient({ channelId }: { channelId: string }) {
   const search = useSearchParams();
   const debug = (search?.get("debug") ?? "0") === "1";
@@ -77,24 +121,22 @@ export default function WatchClient({ channelId }: { channelId: string }) {
 
   const [videoSrc, setVideoSrc] = useState<string | undefined>(undefined);
   const [usingStandby, setUsingStandby] = useState(false);
-  const [reachOk, setReachOk] = useState<boolean | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
   const playerKey = useRef(0);
 
-  /* load channel */
+  // Load channel (client-only)
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         setLoading(true); setErr(null);
-        if (!channelId) { setErr("Missing channel id"); setLoading(false); return; }
         const ch = await fetchChannelDetails(channelId);
         if (cancelled) return;
-        setChannel(ch);
-        if (!ch) setErr("Channel not found.");
+        if (!ch) { setErr("Channel not found."); setLoading(false); return; }
+        setChannel({ id: Number((ch as any).id), ...ch });
       } catch (e: any) {
         if (!cancelled) setErr(e?.message ?? "Failed to load channel.");
       } finally {
@@ -104,7 +146,7 @@ export default function WatchClient({ channelId }: { channelId: string }) {
     return () => { cancelled = true; };
   }, [channelId]);
 
-  /* standby */
+  // Build a local standby program
   const standbyFor = useCallback((chId: number): Program => {
     const now = nowUtc();
     return {
@@ -117,36 +159,15 @@ export default function WatchClient({ channelId }: { channelId: string }) {
     } as Program;
   }, []);
 
-  /* resolve + verify */
-  const setVideoForProgram = useCallback(async (p: Program, chId: number) => {
-    const url = getVideoUrlForProgram({ ...p, channel_id: chId } as Program);
-    if (await reachable(url)) {
-      setVideoSrc(url);
-      setUsingStandby(p.id === STANDBY_PLACEHOLDER_ID);
-      setReachOk(true);
-      playerKey.current += 1;
-      return;
-    }
-    const sb = standbyFor(chId);
-    const sbUrl = getVideoUrlForProgram(sb);
-    const ok = await reachable(sbUrl);
-    setVideoSrc(ok ? sbUrl : undefined);
-    setUsingStandby(true);
-    setReachOk(ok);
-    playerKey.current += 1;
-  }, [standbyFor]);
-
-  /* pick active/next in UTC */
   const pickAndPlay = useCallback(async () => {
     if (!channel?.id) return;
 
-    // CH21 → YouTube if configured
-    if (Number(channel.id) === CH21_ID && (channel.youtube_channel_id || "").trim()) {
+    // Channel 21 → YouTube embed if configured
+    if (Number(channel.id) === CH21 && (channel.youtube_channel_id || "").trim()) {
       setActive(null);
       setNextUp(null);
       setVideoSrc(undefined);
       setUsingStandby(false);
-      setReachOk(null);
       setLoading(false);
       return;
     }
@@ -159,11 +180,13 @@ export default function WatchClient({ channelId }: { channelId: string }) {
         .select("id, channel_id, title, mp4_url, start_time, duration")
         .eq("channel_id", channel.id)
         .order("start_time", { ascending: true });
+
       if (error) throw new Error(error.message);
 
       const list = (data || []) as Program[];
       const n = nowUtc();
 
+      // Find current and next (UTC)
       let current: Program | null = null;
       for (const p of list) { if (isNowUTC(p, n)) { current = p; break; } }
 
@@ -174,45 +197,34 @@ export default function WatchClient({ channelId }: { channelId: string }) {
       }
       setNextUp(next);
 
+      // Choose what to play
       const chosen = current || standbyFor(Number(channel.id));
       setActive({ ...chosen, channel_id: Number(channel.id) } as Program);
-      await setVideoForProgram(chosen, Number(channel.id));
+
+      const src = resolveSrc(chosen, Number(channel.id));
+      setVideoSrc(src);
+      setUsingStandby(!current); // standby only if no current
+      playerKey.current += 1;
     } catch (e: any) {
       setErr(e?.message ?? "Failed to load schedule.");
       const sb = standbyFor(Number(channel.id));
       setActive(sb);
-      await setVideoForProgram(sb, Number(channel.id));
+      setVideoSrc(resolveSrc(sb, Number(channel.id)));
+      setUsingStandby(true);
+      playerKey.current += 1;
     } finally {
       setLoading(false);
     }
-  }, [channel?.id, channel?.youtube_channel_id, setVideoForProgram, standbyFor]);
+  }, [channel?.id, channel?.youtube_channel_id, standbyFor]);
 
   useEffect(() => { void pickAndPlay(); }, [pickAndPlay]);
 
-  /* ----------- overlay: time remaining + status ----------- */
-  const [nowTick, setNowTick] = useState<number>(Date.now());
-  useEffect(() => {
-    const iv = setInterval(() => setNowTick(Date.now()), 1000);
-    return () => clearInterval(iv);
-  }, []);
-
-  const timeRemainingSec = useMemo(() => {
-    if (!active) return null;
-    const st = toUtcDate(active.start_time);
-    if (!st) return null;
-    const dur = Number.isFinite(Number(active.duration)) && Number(active.duration)! > 0
-      ? Number(active.duration)!
-      : SAFE_DEFAULT_SECS;
-    const end = addSeconds(st, dur).getTime();
-    return Math.max(0, Math.floor((end - nowTick) / 1000));
-  }, [active, nowTick]);
-
+  /* ---------- render ---------- */
   const isYouTube =
-    Number(channel?.id) === CH21_ID && (channel?.youtube_channel_id || "").trim().length > 0;
+    Number(channel?.id) === CH21 && (channel?.youtube_channel_id || "").trim().length > 0;
 
   const poster = channel?.logo_url || undefined;
 
-  /* ---------- render ---------- */
   let content: ReactNode;
   if (err) {
     content = <p className="text-red-400 p-4 text-center">Error: {err}</p>;
@@ -226,64 +238,72 @@ export default function WatchClient({ channelId }: { channelId: string }) {
   } else if (loading && !active) {
     content = (
       <div className="flex flex-col items-center justify-center h-full">
-        <Loader2 className="h-10 w-10 animate-spin text-red-500 mb-2" />
+        <svg className="animate-spin h-10 w-10 text-red-500 mb-2" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+        </svg>
         <p>Loading…</p>
       </div>
     );
   } else if (active && videoSrc) {
     content = (
-      <VideoPlayer
-        key={playerKey.current}
-        src={videoSrc}
-        poster={poster}
-        programTitle={active.title || undefined}
-        isStandby={active.id === STANDBY_PLACEHOLDER_ID}
-        onVideoEnded={() => void pickAndPlay()}
-        onError={() => void pickAndPlay()}
-        autoPlay={true}
-        muted={false}
-        playsInline
-        preload="auto"
-      />
+      <div className="w-full h-full">
+        <video
+          key={playerKey.current}
+          src={videoSrc}           // VIDEO ONLY
+          poster={poster || undefined} // LOGO ONLY
+          controls
+          autoPlay={false}         // user clicks play → audio intact
+          muted={false}
+          playsInline
+          preload="metadata"
+          className="w-full h-full object-contain bg-black"
+          onEnded={() => void pickAndPlay()}
+          onError={() => {
+            // if actual playback error, fall back to standby for this channel
+            const sb = standbyFor(idNum);
+            setActive(sb);
+            setVideoSrc(resolveSrc(sb, idNum));
+            setUsingStandby(true);
+            playerKey.current += 1;
+          }}
+        />
+        {debug && (
+          <div className="p-2 text-xs bg-gray-900/80 border-t border-gray-800">
+            <div><b>Now (UTC):</b> {nowUtc().toISOString()}</div>
+            {active && (
+              <>
+                <div><b>Active:</b> {active.title || "(untitled)"}</div>
+                <div><b>Start (UTC):</b> {toUtcDate(active.start_time)?.toISOString() || "—"}</div>
+                <div>
+                  <b>End (UTC):</b>{" "}
+                  {(() => {
+                    const st = toUtcDate(active.start_time);
+                    const dur = Number.isFinite(Number(active.duration)) && Number(active.duration)! > 0
+                      ? Number(active.duration)!
+                      : SAFE_DEFAULT_SECS;
+                    return st ? addSeconds(st, dur).toISOString() : "—";
+                  })()}
+                </div>
+                <div className="truncate">
+                  <b>Video Src:</b>{" "}
+                  {videoSrc ? <a className="underline text-sky-300" href={videoSrc} target="_blank" rel="noreferrer">{videoSrc}</a> : "—"}
+                </div>
+                <div><b>Using Standby:</b> {usingStandby ? "yes" : "no"}</div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
     );
   } else {
     content = <p className="text-gray-400 p-4 text-center">Standby… waiting for next program.</p>;
   }
 
-  const statusBadge = isYouTube
-    ? { text: "LIVE • YouTube", cls: "bg-red-500/80 text-white" }
-    : usingStandby
-      ? { text: "Standby", cls: "bg-yellow-400/90 text-black" }
-      : { text: "Now", cls: "bg-emerald-500/90 text-black" };
-
   return (
     <div className="bg-black min-h-screen flex flex-col text-white">
-      {/* Make this container relative so overlays can position inside */}
-      <div className="relative w-full aspect-video bg-black overflow-hidden">
+      <div className="w-full aspect-video bg-black flex items-center justify-center">
         {content}
-
-        {/* TOP-LEFT status for YouTube as well */}
-        <div className="pointer-events-none absolute left-3 top-3">
-          <div className={`pointer-events-auto inline-flex items-center gap-2 px-2.5 py-1 rounded-full text-xs font-semibold ${statusBadge.cls} shadow`}>
-            {statusBadge.text}
-          </div>
-        </div>
-
-        {/* BOTTOM overlay: title + remaining */}
-        {active && (
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 p-3">
-            <div className="pointer-events-auto mx-1 sm:mx-3 rounded-xl bg-black/60 backdrop-blur border border-white/10 px-3 py-2 flex items-center gap-3">
-              <div className="truncate font-semibold">
-                {active.title || (usingStandby ? "Standby Programming" : "Now Playing")}
-              </div>
-              {!isYouTube && timeRemainingSec !== null && (
-                <div className="ml-auto text-xs text-white/80">
-                  Ends in {fmtHMS(timeRemainingSec)}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
       </div>
 
       <div className="p-4 space-y-4">
@@ -314,30 +334,6 @@ export default function WatchClient({ channelId }: { channelId: string }) {
                   : "—";
               })()}
             </span>
-          </div>
-        )}
-
-        {debug && (
-          <div className="mt-2 text-xs bg-gray-900/70 border border-gray-700 rounded p-3 space-y-1">
-            <div><b>Now (UTC):</b> {nowUtc().toISOString()}</div>
-            {active ? (
-              <>
-                <div><b>Active start (UTC):</b> {toUtcDate(active.start_time)?.toISOString() || "—"}</div>
-                <div>
-                  <b>Active end (UTC):</b>{" "}
-                  {(() => {
-                    const st = toUtcDate(active.start_time);
-                    const dur = Number.isFinite(Number(active.duration)) && Number(active.duration)! > 0
-                      ? Number(active.duration)!
-                      : SAFE_DEFAULT_SECS;
-                    return st ? addSeconds(st, dur).toISOString() : "—";
-                  })()}
-                </div>
-              </>
-            ) : <div><b>Active:</b> —</div>}
-            <div className="truncate"><b>Video Src:</b> {videoSrc || (isYouTube ? "YouTube Live" : "—")}</div>
-            <div><b>Using Standby:</b> {usingStandby ? "yes" : "no"}</div>
-            <div><b>Reachable:</b> {reachOk === null ? "n/a" : reachOk ? "yes" : "NO"}</div>
           </div>
         )}
       </div>
