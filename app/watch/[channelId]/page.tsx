@@ -6,24 +6,25 @@ import { useParams, useSearchParams } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 import YouTubeEmbed from "@/components/youtube-embed";
 
-/* ---------- YOUR schemas (exact column names) ---------- */
+/* ---------- schema (your exact columns) ---------- */
 type Channel = {
   id: number;
   name: string | null;
   slug?: string | null;
   description?: string | null;
-  logo_url: string | null;
-  youtube_channel_id: string | null;
+  logo_url: string | null;            // poster only
+  youtube_channel_id: string | null;  // ch21 live
   youtube_is_live?: boolean | null;
   is_active?: boolean | null;
 };
+
 type Program = {
   id: string | number;
   channel_id: number;
   title: string | null;
-  mp4_url: string | null;          // video src ONLY
-  start_time: string;              // UTC (with Z) or "YYYY-MM-DD HH:mm:ss"
-  duration: number | string;       // seconds (can be text "7620" / "7620s")
+  mp4_url: string | null;             // VIDEO ONLY
+  start_time: string;                 // UTC with Z (or "YYYY-MM-DD HH:mm:ss" UTC)
+  duration: number | string;          // seconds (number or "7620" / "7620s")
 };
 
 const CH21 = 21;
@@ -31,6 +32,7 @@ const STANDBY_FILE = "standby_blacktruthtv.mp4";
 
 /* ---------- time (STRICT UTC) ---------- */
 const nowUtc = () => new Date(new Date().toISOString());
+
 function toUtcDate(val?: string | Date | null): Date | null {
   if (!val) return null;
   if (val instanceof Date) return Number.isNaN(val.getTime()) ? null : val;
@@ -52,7 +54,7 @@ function parseDurationSec(v: number | string | null | undefined): number {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
-/* ---------- storage: resolve ONLY video srcs ---------- */
+/* ---------- storage (public buckets) ---------- */
 const bucketFor = (id: number) => `channel${id}`;
 const cleanKey = (k: string) => k.trim().replace(/^\.?\//, "").replace(/\\/g, "/").replace(/\/{2,}/g, "/");
 const encPath  = (p: string) => p.split("/").map(encodeURIComponent).join("/");
@@ -67,13 +69,13 @@ function computePubRoot(ch?: Channel, progs?: Program[]) {
     if (s.startsWith("http") && i > 0) return s.slice(0, i + "/storage/v1/object/public".length);
     return null;
   };
-  const a = scan(ch?.logo_url);
-  if (a) return a;
+  const fromLogo = scan(ch?.logo_url);
+  if (fromLogo) return fromLogo;
   for (const p of progs || []) {
     const x = scan(p?.mp4_url || "");
     if (x) return x;
   }
-  return "/storage/v1/object/public";
+  return "/storage/v1/object/public"; // last resort; debug will show
 }
 function fromBucket(pubRoot: string, bucket: string, key: string) {
   const root = pubRoot.replace(/\/+$/, "");
@@ -106,9 +108,6 @@ function resolveSrc(p: Program, channelId: number, pubRoot: string): string | un
   return fromBucket(pubRoot, bucketFor(channelId), raw);
 }
 
-/* sanity: only treat these as "video-like" for src */
-const isProbablyVideo = (u?: string) => !!u && /\.(mp4|m4v|mov)(\?|#|$)/i.test(u);
-
 /* ---------- component ---------- */
 export default function WatchPage() {
   const { channelId } = useParams<{ channelId: string }>();
@@ -125,14 +124,14 @@ export default function WatchPage() {
   const [nextUp, setNextUp] = useState<Program | null>(null);
 
   // STRICT separation: video vs poster
-  const [videoSrc, setVideoSrc] = useState<string | undefined>(undefined); // ← ONLY program.mp4_url (resolved)
-  const posterSrc = channel?.logo_url || undefined;                        // ← ONLY channel.logo_url (poster)
+  const [videoSrc, setVideoSrc] = useState<string | undefined>(undefined); // ONLY program.mp4_url
+  const posterSrc = channel?.logo_url || undefined;                        // ONLY channel.logo_url
 
   const [usingStandby, setUsingStandby] = useState(false);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
-  // video element state (for overlays)
+  // play-state + ref
   const [vidState, setVidState] = useState<"idle"|"loading"|"ready"|"playing"|"error">("idle");
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
@@ -150,7 +149,6 @@ export default function WatchPage() {
 
   // choose latest started show whose window contains now
   function pickActive(rows: Program[], now: Date): Program | null {
-    // rows = newest first by start_time
     for (const p of rows) {
       const st = toUtcDate(p.start_time); if (!st) continue;
       const en = addSeconds(st, parseDurationSec(p.duration) || 1800);
@@ -175,7 +173,6 @@ export default function WatchPage() {
       if (chErr) throw new Error(chErr.message);
       setChannel(ch as Channel);
 
-      // decide PUB_ROOT
       pubRootRef.current = computePubRoot(ch as Channel, []);
 
       // CH21 → YouTube if configured
@@ -189,7 +186,7 @@ export default function WatchPage() {
         return;
       }
 
-      // Pull candidates: started <= now (DESC) + next > now (ASC)
+      // candidates: started <= now (DESC) + next > now (ASC)
       const [{ data: started, error: sErr }, { data: upcoming, error: nErr }] = await Promise.all([
         supabase
           .from("programs")
@@ -219,16 +216,9 @@ export default function WatchPage() {
       if (current) {
         const resolved = resolveSrc(current, idNum, pubRootRef.current);
         setActive(current);
-        // absolute separation of concerns: only program URL goes here
-        if (isProbablyVideo(resolved)) {
-          setVideoSrc(resolved);
-          setUsingStandby(false);
-          setVidState("loading");
-        } else {
-          // bad src (e.g., image or missing) → show error overlay; do NOT use logo as src
-          setVideoSrc(undefined);
-          setVidState("error");
-        }
+        setVideoSrc(resolved);      // ← ALWAYS program url here
+        setUsingStandby(false);
+        setVidState("loading");
         playerKey.current += 1;
 
         const st = toUtcDate(current.start_time)!;
@@ -236,13 +226,13 @@ export default function WatchPage() {
         const boundary = next && toUtcDate(next.start_time)! < en ? toUtcDate(next.start_time)! : en;
         scheduleRefreshAt(boundary);
       } else {
-        // none active → standby (uses channel{ID}/standby_blacktruthtv.mp4)
+        // none active → standby
         const sb: Program = {
           id: "standby",
           channel_id: idNum,
           title: "Standby Programming",
           mp4_url: `channel${idNum}/${STANDBY_FILE}`,
-          start_time: now.toISOString(),
+          start_time: nowISO,
           duration: 300,
         };
         const resolved = resolveSrc(sb, idNum, pubRootRef.current);
@@ -270,25 +260,53 @@ export default function WatchPage() {
     return () => clearInterval(iv);
   }, [idNum, pickAndPlay]);
 
+  /* ---------- play helpers ---------- */
+  async function ensurePlay() {
+    const v = videoRef.current;
+    if (!v) return;
+
+    try {
+      // 1) normal play first
+      await v.play();
+      return;
+    } catch {
+      // 2) autoplay policy: try muted trick, then unmute after playing
+      try {
+        v.muted = true;
+        await v.play();
+        // wait one frame for playing event, then unmute
+        setTimeout(() => { if (videoRef.current) videoRef.current.muted = false; }, 250);
+        return;
+      } catch {
+        // 3) keep native controls; user can press native play
+      }
+    }
+  }
+
   /* ---------- render ---------- */
   const isYouTube = idNum === CH21 && (channel?.youtube_channel_id || "").trim().length > 0;
 
-  // overlays
+  // overlay with a REAL Play button that calls ensurePlay()
   const overlay: ReactNode = (
-    <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
       {vidState === "loading" && (
-        <div className="rounded bg-black/70 px-3 py-2 text-sm">
-          Loading video…
-        </div>
+        <div className="rounded bg-black/70 px-3 py-2 text-sm">Loading video…</div>
       )}
       {vidState === "ready" && (
-        <div className="rounded bg-black/70 px-3 py-2 text-sm">
-          Press ▶️ Play to start
-        </div>
+        <button
+          type="button"
+          className="pointer-events-auto rounded bg-amber-300 text-black font-semibold px-4 py-2 shadow"
+          onClick={async () => {
+            setVidState("loading");
+            await ensurePlay();
+          }}
+        >
+          ▶️ Press Play to start
+        </button>
       )}
       {vidState === "error" && (
         <div className="rounded bg-black/70 px-3 py-2 text-sm text-red-300">
-          Video failed to load. (Check mp4_url for this program.)
+          Video failed to load. {debug && videoSrc ? (<a className="underline text-sky-300 ml-1" href={videoSrc} target="_blank" rel="noreferrer">Open MP4</a>) : null}
         </div>
       )}
     </div>
@@ -310,22 +328,28 @@ export default function WatchPage() {
         <video
           key={playerKey.current}
           ref={videoRef}
-          src={videoSrc}               // ← VIDEO ONLY (program.mp4_url)
-          poster={posterSrc}           // ← POSTER ONLY (channel.logo_url)
+          // IMPORTANT: only program URL as source
+          crossOrigin="anonymous"
           controls
-          autoPlay={false}             // user taps play → audio intact
+          autoPlay={false}             // we call play() from button, so audio stays
           muted={false}
           playsInline
           preload="metadata"
           className="w-full h-full object-contain bg-black"
+          poster={posterSrc || undefined}  // ONLY logo_url as poster
+
           onLoadedData={() => setVidState("ready")}
+          onLoadedMetadata={() => setVidState("ready")}
           onCanPlay={() => setVidState("ready")}
           onPlaying={() => setVidState("playing")}
           onWaiting={() => setVidState("loading")}
           onStalled={() => setVidState("loading")}
           onEnded={() => void pickAndPlay()}
           onError={() => setVidState("error")}
-        />
+        >
+          {/* give browser explicit type */}
+          <source src={videoSrc} type="video/mp4" />
+        </video>
         {overlay}
       </div>
     );
@@ -382,7 +406,10 @@ export default function WatchPage() {
         {debug && (
           <div className="mt-3 text-[11px] bg-gray-900/70 border border-gray-700 rounded p-2 space-y-1">
             <div className="truncate"><b>Poster (logo_url):</b> {posterSrc || "—"}</div>
-            <div className="truncate"><b>Video Src (resolved):</b> {videoSrc || "—"}</div>
+            <div className="truncate">
+              <b>Video Src (click to test):</b>{" "}
+              {videoSrc ? <a className="underline text-sky-300" href={videoSrc} target="_blank" rel="noreferrer">{videoSrc}</a> : "—"}
+            </div>
             <div><b>Vid State:</b> {vidState}</div>
           </div>
         )}
