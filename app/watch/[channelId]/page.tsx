@@ -6,55 +6,43 @@ import { useParams, useSearchParams } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 import YouTubeEmbed from "@/components/youtube-embed";
 
-/* ---------- tables (your exact cols) ---------- */
+/* ---------- schema (your columns) ---------- */
 type Channel = {
   id: number;
   name: string | null;
-  logo_url: string | null;            // poster ONLY
-  youtube_channel_id: string | null;  // CH21 live
   slug?: string | null;
   description?: string | null;
+  logo_url: string | null;            // poster only
+  youtube_channel_id: string | null;  // ch21 live
   youtube_is_live?: boolean | null;
   is_active?: boolean | null;
 };
-
 type Program = {
   id: string | number;
   channel_id: number;
   title: string | null;
-  mp4_url: string | null;             // VIDEO ONLY (absolute or storage key)
-  start_time: string;                 // UTC string: "...Z" or "YYYY-MM-DD HH:mm:ss"
-  duration: number | string;          // seconds (e.g. 7620 or "7620s")
+  mp4_url: string | null;             // VIDEO ONLY
+  start_time: string;                 // UTC "Z" or "YYYY-MM-DD HH:mm:ss" (UTC)
+  duration: number | string;          // seconds (number or "7620" / "7620s")
 };
 
-/* ---------- constants ---------- */
 const CH21 = 21;
 const STANDBY_FILE = "standby_blacktruthtv.mp4";
-const MIN_FALLBACK_DURATION = 1800; // 30m fallback when duration is missing
-
-// Public storage root
-const SUPA_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "");
-const PUB_ROOT = `${SUPA_URL}/storage/v1/object/public`;
 
 /* ---------- time (STRICT UTC) ---------- */
 const nowUtc = () => new Date(new Date().toISOString());
-
 function toUtcDate(val?: string | Date | null): Date | null {
   if (!val) return null;
   if (val instanceof Date) return Number.isNaN(val.getTime()) ? null : val;
-
   let s = String(val).trim();
-  // naive DB: "YYYY-MM-DD HH:mm:ss(.sss)" → treat as UTC
   if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?$/.test(s)) s = s.replace(" ", "T") + "Z";
-  // ISO without tz → force Z (UTC)
   else if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(s)) s = s + "Z";
-
   const d = new Date(s);
   return Number.isNaN(d.getTime()) ? null : d;
 }
 const addSeconds = (d: Date, secs: number) => new Date(d.getTime() + secs * 1000);
 
-/* ---------- duration parsing (handles "7620s" or 7620) ---------- */
+/* ---------- duration parsing ---------- */
 function parseDurationSec(v: number | string | null | undefined): number {
   if (typeof v === "number") return Number.isFinite(v) && v > 0 ? v : 0;
   if (v == null) return 0;
@@ -64,93 +52,100 @@ function parseDurationSec(v: number | string | null | undefined): number {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
-/* ---------- storage helpers ---------- */
+/* ---------- storage (public buckets) ---------- */
 const bucketFor = (id: number) => `channel${id}`;
-const cleanKey = (k: string) =>
-  k.trim().replace(/^\.?\//, "").replace(/\\/g, "/").replace(/\/{2,}/g, "/");
-const encPath = (p: string) => p.split("/").map(encodeURIComponent).join("/");
+const cleanKey  = (k: string) => k.trim().replace(/^\.?\//, "").replace(/\\/g, "/").replace(/\/{2,}/g, "/");
+const encPath   = (p: string) => p.split("/").map(encodeURIComponent).join("/");
 
-function fromBucket(bucket: string, key: string) {
-  return `${PUB_ROOT}/${bucket}/${encPath(cleanKey(key))}`;
+function computePubRoot(ch?: Channel, progs?: Program[]) {
+  const envBase = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "");
+  if (envBase) return `${envBase}/storage/v1/object/public`;
+  const scan = (u?: string | null) => {
+    if (!u) return null;
+    const s = String(u);
+    const i = s.indexOf("/storage/v1/object/public/");
+    if (s.startsWith("http") && i > 0) return s.slice(0, i + "/storage/v1/object/public".length);
+    return null;
+  };
+  const a = scan(ch?.logo_url);
+  if (a) return a;
+  for (const p of progs || []) {
+    const x = scan(p?.mp4_url || "");
+    if (x) return x;
+  }
+  return "/storage/v1/object/public";
 }
-
-function standbyUrl(channelId: number) {
-  return fromBucket(bucketFor(channelId), STANDBY_FILE);
+function fromBucket(pubRoot: string, bucket: string, key: string) {
+  const root = pubRoot.replace(/\/+$/, "");
+  return `${root}/${bucket}/${encPath(cleanKey(key))}`;
 }
-
-/** Resolve MP4 source exactly (public buckets only, no SDK probing) */
-function resolveSrc(program: Program, channelId: number): string | undefined {
-  let raw = (program?.mp4_url || "").trim();
+function resolveSrc(p: Program, channelId: number, pubRoot: string): string | undefined {
+  let raw = (p?.mp4_url || "").trim();
   if (!raw) return undefined;
-
-  // absolute URL or absolute path
   if (/^https?:\/\//i.test(raw) || raw.startsWith("/")) return raw;
-
   raw = cleanKey(raw);
 
-  // "bucket:key"
   const m1 = /^([a-z0-9_\-]+):(.+)$/i.exec(raw);
-  if (m1) return fromBucket(m1[1], m1[2]);
+  if (m1) return fromBucket(pubRoot, m1[1], m1[2]);
 
-  // "storage://bucket/path"
   const m2 = /^storage:\/\/([^/]+)\/(.+)$/.exec(raw);
-  if (m2) return fromBucket(m2[1], m2[2]);
+  if (m2) return fromBucket(pubRoot, m2[1], m2[2]);
 
-  // "bucket/path/to/file.mp4"
   const first = raw.split("/")[0];
   if (/^[a-z0-9_\-]+$/i.test(first)) {
     const rest = raw.slice(first.length + 1);
-    if (rest) return fromBucket(first, rest);
+    if (rest) return fromBucket(pubRoot, first, rest);
   }
 
-  // relative → channel{ID}/key (strip accidental "channel{ID}/")
   raw = raw.replace(new RegExp(`^channel${channelId}/`, "i"), "");
-  return fromBucket(bucketFor(channelId), raw);
+  return fromBucket(pubRoot, bucketFor(channelId), raw);
 }
 
 /* ---------- component ---------- */
 export default function WatchPage() {
   const { channelId } = useParams<{ channelId: string }>();
   const search = useSearchParams();
-  const debug = (search?.get("debug") ?? "0") === "1";
-  const tz = (search?.get("tz") ?? "local") as "local" | "utc"; // display only
+  const debug  = (search?.get("debug") ?? "0") === "1";
 
   const idNum = useMemo(() => Number(channelId), [channelId]);
-  const supabase = useMemo(
-    () => createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!),
-    []
-  );
+  const supabase = useMemo(() => createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  ), []);
 
   const [channel, setChannel] = useState<Channel | null>(null);
-  const [active, setActive] = useState<Program | null>(null);
-  const [nextUp, setNextUp] = useState<Program | null>(null);
+  const [active, setActive]   = useState<Program | null>(null);
+  const [nextUp, setNextUp]   = useState<Program | null>(null);
 
-  // strict separation: poster vs video
-  const poster = channel?.logo_url || undefined;      // poster ONLY
-  const [videoSrc, setVideoSrc] = useState<string>(); // VIDEO ONLY
-  const lastSrcRef = useRef<string | undefined>(undefined); // prevent unnecessary reloads
+  // HARD separation: video vs poster
+  const [videoSrc, setVideoSrc] = useState<string | undefined>(undefined); // ONLY program.mp4_url
+  const posterSrc = channel?.logo_url || undefined;                        // ONLY channel.logo_url
 
   const [usingStandby, setUsingStandby] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading]           = useState(true);
+  const [err, setErr]                   = useState<string | null>(null);
 
-  const playerKey = useRef(0);
-  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // play-state + ref
+  const [vidState, setVidState] = useState<"idle"|"loading"|"ready"|"playing"|"error">("idle");
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
-  useEffect(() => () => { if (refreshTimer.current) clearTimeout(refreshTimer.current); }, []);
+  const playerKey   = useRef(0);
+  const refreshTref = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pubRootRef  = useRef<string>("");
+
+  useEffect(() => () => { if (refreshTref.current) clearTimeout(refreshTref.current); }, []);
   const scheduleRefreshAt = useCallback((when: Date | null) => {
-    if (refreshTimer.current) clearTimeout(refreshTimer.current);
+    if (refreshTref.current) clearTimeout(refreshTref.current);
     if (!when) return;
     const delay = Math.max(0, when.getTime() - Date.now() + 1000);
-    refreshTimer.current = setTimeout(() => { void pickAndPlay(); }, delay);
+    refreshTref.current = setTimeout(() => { void pickAndPlay(); }, delay);
   }, []);
 
   function pickActive(list: Program[], now: Date): Program | null {
+    // list is ASC; walk and keep the latest that started <= now and hasn’t ended
     let candidate: Program | null = null;
     for (const p of list) {
       const st = toUtcDate(p.start_time); if (!st) continue;
-      const en = addSeconds(st, parseDurationSec(p.duration) || MIN_FALLBACK_DURATION);
+      const en = addSeconds(st, parseDurationSec(p.duration) || 1800);
       if (now >= st && now < en) candidate = p;
       if (st > now) break;
     }
@@ -161,27 +156,31 @@ export default function WatchPage() {
     if (!Number.isFinite(idNum)) return;
 
     try {
-      setLoading(true); setErr(null);
+      setLoading(true); setErr(null); setVidState("idle");
 
-      // 1) Channel
+      // CHANNEL
       const { data: ch, error: chErr } = await supabase
         .from("channels")
-        .select("id, name, logo_url, youtube_channel_id")
+        .select("id, name, slug, description, logo_url, youtube_channel_id, youtube_is_live, is_active")
         .eq("id", idNum)
         .single();
       if (chErr) throw new Error(chErr.message);
       setChannel(ch as Channel);
 
+      pubRootRef.current = computePubRoot(ch as Channel, []);
+
       // CH21 → YouTube if configured
       if (idNum === CH21 && (ch?.youtube_channel_id || "").trim()) {
         setActive(null);
+        setVideoSrc(undefined);
+        setUsingStandby(false);
         setNextUp(null);
-        if (refreshTimer.current) clearTimeout(refreshTimer.current);
+        scheduleRefreshAt(null);
         setLoading(false);
         return;
       }
 
-      // 2) Programs
+      // PROGRAMS — NO TIME FILTERS (avoid DB time/text mismatch)
       const { data: list, error: pErr } = await supabase
         .from("programs")
         .select("id, channel_id, title, mp4_url, start_time, duration")
@@ -192,10 +191,10 @@ export default function WatchPage() {
       const programs = (list || []) as Program[];
       const now = nowUtc();
 
-      // ACTIVE (strict UTC)
+      // ACTIVE (client-only, strict UTC)
       const current = pickActive(programs, now);
 
-      // NEXT
+      // NEXT (first with start > now)
       const nxt = programs.find(p => {
         const st = toUtcDate(p.start_time);
         return !!st && st > now;
@@ -203,27 +202,24 @@ export default function WatchPage() {
       setNextUp(nxt);
 
       if (current) {
-        const resolved = resolveSrc(current, idNum);
+        const resolved = resolveSrc(current, idNum, pubRootRef.current);
         setActive(current);
+        setVideoSrc(resolved);
         setUsingStandby(false);
+        setVidState("loading");
+        playerKey.current += 1;
 
-        // Only swap <video> when src actually changes
-        if (resolved !== lastSrcRef.current) {
-          setVideoSrc(resolved);
-          playerKey.current += 1;
-          lastSrcRef.current = resolved;
-          // force browser to fetch new source without remount loops
-          setTimeout(() => videoRef.current?.load(), 0);
-        }
+        // force a load for new source
+        setTimeout(() => videoRef.current?.load(), 0);
 
         const st = toUtcDate(current.start_time)!;
-        const en = addSeconds(st, parseDurationSec(current.duration) || MIN_FALLBACK_DURATION);
+        const en = addSeconds(st, parseDurationSec(current.duration) || 1800);
         const boundary = nxt && (toUtcDate(nxt.start_time) as Date) < en
           ? (toUtcDate(nxt.start_time) as Date)
           : en;
         scheduleRefreshAt(boundary);
       } else {
-        // STANDBY until next
+        // STANDBY
         const sb: Program = {
           id: "standby",
           channel_id: idNum,
@@ -232,17 +228,13 @@ export default function WatchPage() {
           start_time: now.toISOString(),
           duration: 300,
         };
-        const resolved = resolveSrc(sb, idNum);
+        const resolved = resolveSrc(sb, idNum, pubRootRef.current);
         setActive(sb);
+        setVideoSrc(resolved);
         setUsingStandby(true);
-
-        if (resolved !== lastSrcRef.current) {
-          setVideoSrc(resolved);
-          playerKey.current += 1;
-          lastSrcRef.current = resolved;
-          setTimeout(() => videoRef.current?.load(), 0);
-        }
-
+        setVidState("loading");
+        playerKey.current += 1;
+        setTimeout(() => videoRef.current?.load(), 0);
         scheduleRefreshAt(nxt ? (toUtcDate(nxt.start_time) as Date) : null);
       }
     } catch (e: any) {
@@ -253,24 +245,66 @@ export default function WatchPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [idNum, supabase]);
 
-  // INITIAL LOAD ONLY — no interval polling (prevents periodic resets)
   useEffect(() => {
     if (!Number.isFinite(idNum)) return;
     void pickAndPlay();
+    const iv = setInterval(() => {
+      if (document.visibilityState === "visible") void pickAndPlay();
+    }, 60_000);
+    return () => clearInterval(iv);
   }, [idNum, pickAndPlay]);
+
+  /* ---------- play helpers ---------- */
+  async function ensurePlay() {
+    const v = videoRef.current;
+    if (!v) return;
+    try {
+      await v.play(); // normal (with sound) if allowed
+      return;
+    } catch {
+      try {
+        v.muted = true;
+        await v.play(); // autoplay policy workaround
+        setTimeout(() => { if (videoRef.current) videoRef.current.muted = false; }, 300);
+        return;
+      } catch {
+        // fall back to native controls—user can hit native play
+      }
+    }
+  }
 
   /* ---------- render ---------- */
   const isYouTube = idNum === CH21 && (channel?.youtube_channel_id || "").trim().length > 0;
 
-  function fmt(isoish?: string) {
-    const d = toUtcDate(isoish);
-    if (!d) return "—";
-    const opt: Intl.DateTimeFormatOptions = {
-      hour12: true, hour: "2-digit", minute: "2-digit", second: "2-digit", timeZoneName: "short",
-    };
-    if (tz === "utc") (opt as any).timeZone = "UTC";
-    return d.toLocaleString([], opt);
-  }
+  const overlay: ReactNode = (
+    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+      {vidState === "loading" && (
+        <div className="rounded bg-black/70 px-3 py-2 text-sm">Loading video…</div>
+      )}
+      {vidState === "ready" && (
+        <button
+          type="button"
+          className="pointer-events-auto rounded bg-amber-300 text-black font-semibold px-4 py-2 shadow"
+          onClick={async () => {
+            setVidState("loading");
+            await ensurePlay();
+          }}
+        >
+          ▶️ Press Play to start
+        </button>
+      )}
+      {vidState === "error" && (
+        <div className="rounded bg-black/70 px-3 py-2 text-sm text-red-300">
+          Video failed to load.
+        </div>
+      )}
+    </div>
+  );
+
+  // small helper to expose video states in debug
+  const rs = videoRef.current?.readyState ?? 0;      // 0..4
+  const ns = videoRef.current?.networkState ?? 0;    // 0..3
+  const errMsg = (videoRef.current as any)?.error?.message || (videoRef.current as any)?.error?.code || "";
 
   let content: ReactNode;
   if (err) {
@@ -284,30 +318,34 @@ export default function WatchPage() {
     );
   } else if (active && videoSrc) {
     content = (
-      <video
-        key={playerKey.current}
-        ref={videoRef}
-        src={videoSrc}                 // VIDEO ONLY
-        poster={poster || undefined}   // LOGO ONLY
-        controls
-        autoPlay={false}               // user clicks Play → audio intact
-        muted={false}
-        playsInline
-        preload="metadata"
-        className="w-full h-full object-contain bg-black"
-        onEnded={() => void pickAndPlay()}
-        onError={() => {
-          // swap to standby only if different
-          const sb = standbyUrl(idNum);
-          if (lastSrcRef.current !== sb) {
-            setVideoSrc(sb);
-            setUsingStandby(true);
-            playerKey.current += 1;
-            lastSrcRef.current = sb;
-            setTimeout(() => videoRef.current?.load(), 0);
-          }
-        }}
-      />
+      <div className="relative w-full h-full">
+        <video
+          key={playerKey.current}
+          ref={videoRef}
+          crossOrigin="anonymous"
+          controls
+          autoPlay={false}
+          muted={false}
+          playsInline
+          preload="metadata"
+          className="w-full h-full object-contain bg-black"
+          poster={posterSrc || undefined}
+
+          onLoadedData={() => setVidState("ready")}
+          onLoadedMetadata={() => setVidState("ready")}
+          onCanPlay={() => setVidState("ready")}
+          onPlay={() => setVidState("playing")}
+          onPlaying={() => setVidState("playing")}
+          onPause={() => setVidState("ready")}
+          onWaiting={() => setVidState("loading")}
+          onStalled={() => setVidState("loading")}
+          onEnded={() => void pickAndPlay()}
+          onError={() => setVidState("error")}
+        >
+          <source src={videoSrc} type="video/mp4" />
+        </video>
+        {overlay}
+      </div>
     );
   } else if (loading) {
     content = (
@@ -320,7 +358,14 @@ export default function WatchPage() {
       </div>
     );
   } else {
-    content = <p className="text-gray-400 p-4 text-center">Standby… waiting for next program.</p>;
+    content = (
+      <div className="relative w-full h-full">
+        <div className="w-full h-full flex items-center justify-center text-gray-400">
+          Standby… waiting for next program.
+        </div>
+        {overlay}
+      </div>
+    );
   }
 
   return (
@@ -329,14 +374,13 @@ export default function WatchPage() {
         {content}
       </div>
 
-      {/* Info */}
       <div className="p-4 space-y-3">
         {active && !isYouTube && (
           <>
             <h2 className="text-xl font-bold">{active.title || "Now Playing"}</h2>
             {active.id !== "standby" && active.start_time && (
               <p className="text-sm text-gray-400">
-                Start ({tz.toUpperCase()}): {fmt(active.start_time)}
+                Start (local): {toUtcDate(active.start_time)?.toLocaleString()}
               </p>
             )}
             {usingStandby && <p className="text-amber-300 text-sm">Fallback: Standby asset</p>}
@@ -347,30 +391,35 @@ export default function WatchPage() {
           <div className="text-sm text-gray-300">
             <span className="font-medium">Next:</span>{" "}
             {nextUp.title || "Upcoming program"}{" "}
-            <span className="text-gray-400">— {fmt(nextUp.start_time)}</span>
+            <span className="text-gray-400">
+              — {toUtcDate(nextUp.start_time)?.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZoneName: "short" })}
+            </span>
           </div>
         )}
 
         {debug && (
           <div className="mt-3 text-[11px] bg-gray-900/70 border border-gray-700 rounded p-2 space-y-1">
-            <div><b>PUB_ROOT:</b> {PUB_ROOT}</div>
             <div><b>Now (UTC):</b> {nowUtc().toISOString()}</div>
             {active ? (
               <>
                 <div><b>Active:</b> {active.title || "(untitled)"} ({String(active.id)})</div>
-                <div><b>Start (UTC raw):</b> {toUtcDate(active.start_time)?.toISOString() || "—"}</div>
+                <div><b>Start (UTC):</b> {toUtcDate(active.start_time)?.toISOString() || "—"}</div>
                 <div>
-                  <b>End (UTC raw):</b>{" "}
+                  <b>End (UTC):</b>{" "}
                   {(() => {
                     const st = toUtcDate(active.start_time);
-                    const dur = parseDurationSec(active.duration) || MIN_FALLBACK_DURATION;
+                    const dur = parseDurationSec(active.duration) || 1800;
                     return st ? addSeconds(st, dur).toISOString() : "—";
                   })()}
                 </div>
-                <div className="truncate"><b>Video Src:</b> {videoSrc || "—"}</div>
-                <div><b>Using Standby:</b> {usingStandby ? "yes" : "no"}</div>
               </>
             ) : <div><b>Active:</b> —</div>}
+            <div className="truncate"><b>Poster (logo_url):</b> {posterSrc || "—"}</div>
+            <div className="truncate">
+              <b>Video Src:</b>{" "}
+              {videoSrc ? <a className="underline text-sky-300" href={videoSrc} target="_blank" rel="noreferrer">{videoSrc}</a> : "—"}
+            </div>
+            <div><b>readyState:</b> {rs} <b>networkState:</b> {ns} {errMsg ? <span><b>err:</b> {String(errMsg)}</span> : null}</div>
           </div>
         )}
       </div>
