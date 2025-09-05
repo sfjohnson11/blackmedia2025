@@ -22,3 +22,4 @@ export default function YouTubeEmbed({ channelId, title, muted = true }: Props) 
     />
   );
 }
+
