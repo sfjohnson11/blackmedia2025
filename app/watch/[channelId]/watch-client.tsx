@@ -45,13 +45,24 @@ function isNowUTC(p: Program, n = nowUtc()) {
   return n.getTime() >= st.getTime() && n.getTime() < en.getTime();
 }
 
-/* reachability probe (prevents “logo only” if file missing) */
+/* reachability probe */
 async function reachable(url?: string): Promise<boolean> {
   if (!url) return false;
   try {
     const res = await fetch(url, { method: "GET", headers: { Range: "bytes=0-0" } });
     return res.ok || res.status === 206;
   } catch { return false; }
+}
+
+/* ---------- tiny formatter for countdown ---------- */
+function fmtHMS(total: number) {
+  const s = Math.max(0, total | 0);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  const mm = String(m).padStart(2, "0");
+  const ss = String(sec).padStart(2, "0");
+  return h > 0 ? `${h}:${mm}:${ss}` : `${m}:${ss}`;
 }
 
 export default function WatchClient({ channelId }: { channelId: string }) {
@@ -73,7 +84,7 @@ export default function WatchClient({ channelId }: { channelId: string }) {
 
   const playerKey = useRef(0);
 
-  /* load channel (client-only, no server crash) */
+  /* load channel */
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -93,7 +104,7 @@ export default function WatchClient({ channelId }: { channelId: string }) {
     return () => { cancelled = true; };
   }, [channelId]);
 
-  /* standby program */
+  /* standby */
   const standbyFor = useCallback((chId: number): Program => {
     const now = nowUtc();
     return {
@@ -106,7 +117,7 @@ export default function WatchClient({ channelId }: { channelId: string }) {
     } as Program;
   }, []);
 
-  /* resolve + verify, fallback to standby */
+  /* resolve + verify */
   const setVideoForProgram = useCallback(async (p: Program, chId: number) => {
     const url = getVideoUrlForProgram({ ...p, channel_id: chId } as Program);
     if (await reachable(url)) {
@@ -125,7 +136,7 @@ export default function WatchClient({ channelId }: { channelId: string }) {
     playerKey.current += 1;
   }, [standbyFor]);
 
-  /* pick active/next entirely in UTC */
+  /* pick active/next in UTC */
   const pickAndPlay = useCallback(async () => {
     if (!channel?.id) return;
 
@@ -178,7 +189,24 @@ export default function WatchClient({ channelId }: { channelId: string }) {
 
   useEffect(() => { void pickAndPlay(); }, [pickAndPlay]);
 
-  /* render prep */
+  /* ----------- overlay: time remaining + status ----------- */
+  const [nowTick, setNowTick] = useState<number>(Date.now());
+  useEffect(() => {
+    const iv = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(iv);
+  }, []);
+
+  const timeRemainingSec = useMemo(() => {
+    if (!active) return null;
+    const st = toUtcDate(active.start_time);
+    if (!st) return null;
+    const dur = Number.isFinite(Number(active.duration)) && Number(active.duration)! > 0
+      ? Number(active.duration)!
+      : SAFE_DEFAULT_SECS;
+    const end = addSeconds(st, dur).getTime();
+    return Math.max(0, Math.floor((end - nowTick) / 1000));
+  }, [active, nowTick]);
+
   const isYouTube =
     Number(channel?.id) === CH21_ID && (channel?.youtube_channel_id || "").trim().length > 0;
 
@@ -206,8 +234,8 @@ export default function WatchClient({ channelId }: { channelId: string }) {
     content = (
       <VideoPlayer
         key={playerKey.current}
-        src={videoSrc}                 // VIDEO ONLY
-        poster={poster}                // poster ONLY
+        src={videoSrc}
+        poster={poster}
         programTitle={active.title || undefined}
         isStandby={active.id === STANDBY_PLACEHOLDER_ID}
         onVideoEnded={() => void pickAndPlay()}
@@ -222,10 +250,40 @@ export default function WatchClient({ channelId }: { channelId: string }) {
     content = <p className="text-gray-400 p-4 text-center">Standby… waiting for next program.</p>;
   }
 
+  const statusBadge = isYouTube
+    ? { text: "LIVE • YouTube", cls: "bg-red-500/80 text-white" }
+    : usingStandby
+      ? { text: "Standby", cls: "bg-yellow-400/90 text-black" }
+      : { text: "Now", cls: "bg-emerald-500/90 text-black" };
+
   return (
     <div className="bg-black min-h-screen flex flex-col text-white">
-      <div className="w-full aspect-video bg-black flex items-center justify-center">
+      {/* Make this container relative so overlays can position inside */}
+      <div className="relative w-full aspect-video bg-black overflow-hidden">
         {content}
+
+        {/* TOP-LEFT status for YouTube as well */}
+        <div className="pointer-events-none absolute left-3 top-3">
+          <div className={`pointer-events-auto inline-flex items-center gap-2 px-2.5 py-1 rounded-full text-xs font-semibold ${statusBadge.cls} shadow`}>
+            {statusBadge.text}
+          </div>
+        </div>
+
+        {/* BOTTOM overlay: title + remaining */}
+        {active && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 p-3">
+            <div className="pointer-events-auto mx-1 sm:mx-3 rounded-xl bg-black/60 backdrop-blur border border-white/10 px-3 py-2 flex items-center gap-3">
+              <div className="truncate font-semibold">
+                {active.title || (usingStandby ? "Standby Programming" : "Now Playing")}
+              </div>
+              {!isYouTube && timeRemainingSec !== null && (
+                <div className="ml-auto text-xs text-white/80">
+                  Ends in {fmtHMS(timeRemainingSec)}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="p-4 space-y-4">
