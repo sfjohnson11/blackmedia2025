@@ -1,13 +1,13 @@
 // lib/supabase.ts
 import { createClient } from "@supabase/supabase-js";
 
-/* Minimal types (unchanged, except poster_url removed) */
+/* Minimal types (kept simple; no extra fields) */
 export type Program = {
   id: string | number;
   channel_id: number | string;
   title?: string | null;
   mp4_url?: string | null;
-  duration?: number | null;
+  duration?: number | string | null;
   start_time?: string | null;
   description?: string | null;
   [k: string]: any;
@@ -19,6 +19,7 @@ export type Channel = {
   slug?: string | null;
   logo_url?: string | null;         // used for posters
   youtube_channel_id?: string | null;
+  youtube_is_live?: boolean | null;
   [k: string]: any;
 };
 
@@ -31,8 +32,8 @@ export const STANDBY_PLACEHOLDER_ID = "standby-placeholder";
 
 /** ---------- Time utilities (UTC) ---------- */
 /** Robust UTC parser:
- * - If the string has a timezone (Z or ±HH[:MM]) → honor it.
- * - If it has NO timezone → treat it as UTC by components (no guessing/local).
+ * - If string has a timezone (Z or ±HH[:MM]) → honor it.
+ * - If NO timezone → treat as UTC by components (no blind "Z" appending).
  * - Accepts YYYY-MM-DD HH:mm[:ss], with space or 'T'.
  * - Accepts date-only YYYY-MM-DD (UTC midnight).
  */
@@ -43,7 +44,7 @@ export function toUtcDate(val?: string | Date | null): Date | null {
   let s = String(val).trim();
   if (!s) return null;
 
-  // Has explicit timezone? normalize then parse with native Date.
+  // Has explicit timezone? normalize then parse
   const isoWithTz = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?([zZ]|[+\-]\d{2}:?\d{2})$/;
   if (isoWithTz.test(s)) {
     s = s.replace(" ", "T").replace(/([+\-]\d{2})(\d{2})$/, "$1:$2").replace(/[zZ]$/, "Z");
@@ -51,7 +52,7 @@ export function toUtcDate(val?: string | Date | null): Date | null {
     return Number.isNaN(d.getTime()) ? null : d;
   }
 
-  // ISO-like without timezone → interpret as UTC by components.
+  // ISO-like without timezone → interpret as UTC by components
   const isoNoTz = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/;
   let m = s.match(isoNoTz);
   if (m) {
@@ -76,6 +77,42 @@ export function toUtcDate(val?: string | Date | null): Date | null {
 
 export function addSeconds(d: Date, secs: number) {
   return new Date(d.getTime() + secs * 1000);
+}
+
+/** Robust duration parser:
+ * supports "HH:MM:SS", "MM:SS", "2h15m", "90m", "45s", and plain seconds.
+ */
+export function parseDurationSec(v: number | string | null | undefined): number {
+  if (typeof v === "number") return Number.isFinite(v) && v > 0 ? v : 0;
+  if (v == null) return 0;
+
+  const s = String(v).trim().toLowerCase();
+  if (!s) return 0;
+
+  // HH:MM:SS
+  let m = /^(\d+):([0-5]?\d):([0-5]?\d)$/.exec(s);
+  if (m) return (+m[1]) * 3600 + (+m[2]) * 60 + (+m[3]);
+
+  // MM:SS
+  m = /^([0-5]?\d):([0-5]?\d)$/.exec(s);
+  if (m) return (+m[1]) * 60 + (+m[2]);
+
+  // 2h15m10s / 90m / 45s / 2h
+  let total = 0;
+  const re = /(\d+)\s*(h|hr|hrs|hour|hours|m|min|mins|minute|minutes|s|sec|secs|second|seconds)\b/g;
+  let mm: RegExpExecArray | null;
+  while ((mm = re.exec(s))) {
+    const num = +mm[1];
+    const unit = mm[2][0]; // h/m/s
+    if (unit === "h") total += num * 3600;
+    else if (unit === "m") total += num * 60;
+    else if (unit === "s") total += num;
+  }
+  if (total > 0) return total;
+
+  // Plain digits (assume seconds)
+  const plain = /^\d+$/.test(s) ? +s : NaN;
+  return Number.isFinite(plain) ? plain : 0;
 }
 
 /** ---------- Public storage URL helpers ---------- */
