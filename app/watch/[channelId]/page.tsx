@@ -23,43 +23,43 @@ type Program = {
   channel_id: number;
   title: string | null;
   mp4_url: string | null;             // VIDEO ONLY (absolute or storage key)
-  start_time: string;                 // UTC-like string (ISO Z, or "YYYY-MM-DD HH:mm:ss[Z|±HH:MM]")
+  start_time: string;                 // e.g., "YYYY-MM-DD HH:mm:ss"
   duration: number | string;          // seconds (e.g., 7620 or "7620s")
 };
 
 const CH21 = 21;
 const STANDBY_FILE = "standby_blacktruthtv.mp4";
 
-/* ---------- time (STRICT UTC for logic) ---------- */
-const nowUtc = () => new Date(new Date().toISOString());
+/* ---------- time helpers ---------- */
+// NOTE: Date comparisons are absolute ms; this returns "now".
+const nowUtc = () => new Date();
 
-/** Parse many UTC-like forms, always as UTC. */
+/** Parse many forms. IMPORTANT: Do NOT force 'Z' when the string has no timezone.
+ * Naive timestamps (no Z/±HH:MM) are interpreted as LOCAL time (your original behavior).
+ */
 function toUtcDate(val?: string | Date | null): Date | null {
   if (!val) return null;
   if (val instanceof Date) return Number.isNaN(val.getTime()) ? null : val;
 
   let s = String(val).trim();
 
-  // Normalize common variants → ISO UTC
-  // 1) "YYYY-MM-DD HH:mm:ssZ" (space before Z/z) → "YYYY-MM-DDTHH:mm:ssZ"
+  // "YYYY-MM-DD HH:mm:ssZ" or "...z" → ISO "T" + "Z"
   if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?[zZ]$/.test(s)) {
     s = s.replace(" ", "T").replace(/[zZ]$/, "Z");
   }
-  // 2) "YYYY-MM-DD HH:mm:ss±HH:MM" or "±HHMM" → add T, normalize colon
+  // "YYYY-MM-DD HH:mm:ss±HH:MM" or ±HHMM → add "T" and ensure colon in offset
   else if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?[+\-]\d{2}:?\d{2}$/.test(s)) {
-    s = s.replace(" ", "T");
-    // add colon if missing in offset
-    s = s.replace(/([+\-]\d{2})(\d{2})$/, "$1:$2");
+    s = s.replace(" ", "T").replace(/([+\-]\d{2})(\d{2})$/, "$1:$2");
   }
-  // 3) "YYYY-MM-DDTHH:mm:ss" (no tz) → force Z
+  // "YYYY-MM-DDTHH:mm:ss" (no tz) → leave as-is (LOCAL time)
   else if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(s)) {
-    s = s + "Z";
+    // no change
   }
-  // 4) "YYYY-MM-DD HH:mm:ss" (no tz) → T + Z
+  // "YYYY-MM-DD HH:mm:ss" (no tz) → replace space with T (LOCAL time)
   else if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(s)) {
-    s = s.replace(" ", "T") + "Z";
+    s = s.replace(" ", "T"); // DO NOT append Z
   }
-  // 5) Already ISO with tz ? OK.
+  // else: assume already ISO with tz or parseable
 
   const d = new Date(s);
   return Number.isNaN(d.getTime()) ? null : d;
@@ -91,7 +91,7 @@ function resolveSrc(p: Program, channelId: number): string | undefined {
   let raw = (p?.mp4_url || "").trim();
   if (!raw) return undefined;
 
-  // absolute URLs or root-relative
+  // absolute or root-relative
   if (/^https?:\/\//i.test(raw) || raw.startsWith("/")) return raw;
 
   raw = cleanKey(raw);
@@ -153,7 +153,6 @@ export default function WatchPage() {
   const lastSrcRef = useRef<string | undefined>(undefined);
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // extra debug: show parsed windows so we can SEE why it's standby
   const [dbgRows, setDbgRows] = useState<
     { id: string | number; title: string | null; raw: string; startIso?: string; endIso?: string; duration: number; isNow: boolean; resolved?: string }[]
   >([]);
@@ -183,7 +182,7 @@ export default function WatchPage() {
     try {
       setLoading(true); setErr(null);
 
-      // CHANNEL (correct columns)
+      // CHANNEL
       const { data: ch, error: chErr } = await supabase
         .from("channels")
         .select("id, name, slug, description, logo_url, youtube_channel_id, youtube_is_live, is_active")
@@ -213,7 +212,7 @@ export default function WatchPage() {
       const programs = (list || []) as Program[];
       const now = nowUtc();
 
-      // Build debug rows
+      // Debug rows (you can see Active now? flip to YES after this fix)
       const rows = programs.map(pr => {
         const st = toUtcDate(pr.start_time);
         const dur = parseDurationSec(pr.duration) || 1800;
@@ -279,7 +278,7 @@ export default function WatchPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [idNum, supabase]);
 
-  // INITIAL ONLY (no minute polling that interrupts playback)
+  // INITIAL ONLY
   useEffect(() => {
     if (!Number.isFinite(idNum)) return;
     void pickAndPlay();
@@ -303,13 +302,13 @@ export default function WatchPage() {
       <video
         ref={videoRef}
         controls
-        autoPlay={false}          // user clicks Play (keeps audio)
+        autoPlay={false}          // keep as before; click to start audio
         muted={false}
         playsInline
         preload="metadata"
         className="w-full h-full object-contain bg-black"
-        poster={posterSrc || undefined}   // poster ONLY
-        loop={usingStandby}               // standby loops until next
+        poster={channel?.logo_url || undefined}   // poster ONLY
+        loop={usingStandby}                       // standby loops until next
         onEnded={() => void pickAndPlay()}
         onError={() => {
           if (!usingStandby) {
