@@ -11,6 +11,7 @@ type Channel = {
   slug?: string | null;
   description?: string | null;
   logo_url?: string | null;
+  youtube_channel_id?: string | null; // ← added so Home reflects CH21 rule
   youtube_is_live?: boolean | null;
   is_active?: boolean | null;
 };
@@ -25,10 +26,10 @@ export default async function HomePage() {
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
   const supabase = createClient(url, anon);
 
-  // server-side order by id ASC
+  // Server-side fetch (no cache)
   const { data, error } = await supabase
     .from("channels")
-    .select("id, name, slug, description, logo_url, youtube_is_live, is_active")
+    .select("id, name, slug, description, logo_url, youtube_channel_id, youtube_is_live, is_active")
     .eq("is_active", true)
     .order("id", { ascending: true });
 
@@ -38,11 +39,12 @@ export default async function HomePage() {
     slug: r.slug ?? null,
     description: r.description ?? null,
     logo_url: r.logo_url ?? null,
+    youtube_channel_id: r.youtube_channel_id ?? null,
     youtube_is_live: r.youtube_is_live ?? null,
     is_active: r.is_active ?? null,
   }));
 
-  // client-side numeric sort (extra safety)
+  // client-side numeric sort (stable)
   const channelsSorted = [...channels].sort((a, b) => {
     const na = num(a.id), nb = num(b.id);
     if (na !== null && nb !== null) return na - nb;
@@ -68,18 +70,32 @@ export default async function HomePage() {
             {channelsSorted.map((ch) => {
               const art = ch.logo_url || null;
               const chNum = num(ch.id) ?? String(ch.id);
+
+              // Your rule: Channel 21 should render the YouTube embed when youtube_channel_id is present.
+              const isCh21YouTube =
+                (num(ch.id) === 21) && !!(ch.youtube_channel_id || "").trim();
+
               return (
                 <Link
                   href={`/watch/${encodeURIComponent(String(ch.id))}`}
                   key={String(ch.id)}
                   className="group relative rounded-xl overflow-hidden border border-gray-800 hover:border-gray-600 transition-colors bg-gray-900"
                 >
-                  {/* small number badge */}
+                  {/* channel number badge */}
                   <div className="absolute left-2 top-2 z-10">
                     <span className="inline-flex items-center rounded-md bg-black/70 px-2 py-0.5 text-[11px] font-semibold ring-1 ring-white/20">
                       Ch {chNum}
                     </span>
                   </div>
+
+                  {/* LIVE badge for CH21 when YouTube is configured */}
+                  {isCh21YouTube && (
+                    <div className="absolute right-2 top-2 z-10">
+                      <span className="inline-flex items-center rounded bg-red-600 px-2 py-0.5 text-[10px] font-bold">
+                        LIVE
+                      </span>
+                    </div>
+                  )}
 
                   <div className="aspect-video bg-black overflow-hidden">
                     {art ? (
@@ -101,7 +117,9 @@ export default async function HomePage() {
                     <div className="text-base font-semibold truncate">
                       {ch.name ?? `Channel ${chNum}`}
                     </div>
-                    <div className="mt-0.5 text-xs text-gray-400">Channel {chNum}</div>
+                    <div className="mt-0.5 text-xs text-gray-400">
+                      Channel {chNum}{isCh21YouTube ? " • YouTube Live" : ""}
+                    </div>
 
                     {ch.description ? (
                       <div className="text-xs text-gray-400 line-clamp-2 mt-1">
