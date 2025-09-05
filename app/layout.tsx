@@ -1,6 +1,7 @@
 // app/layout.tsx
 import "./globals.css";
 import type { Metadata } from "next";
+import TopNav from "@/components/top-nav";
 
 export const metadata: Metadata = {
   title: "Black Truth TV",
@@ -22,7 +23,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           href="https://msllqpnxwbugvkpnquwx.supabase.co"
         />
       </head>
-      <body className="bg-black text-white">{children}</body>
+      <body className="bg-black text-white">
+        {/* Global nav on every page */}
+        <TopNav />
+        {children}
+      </body>
     </html>
   );
 }
