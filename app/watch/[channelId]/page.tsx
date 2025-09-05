@@ -7,14 +7,21 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { ChevronLeft, Loader2 } from "lucide-react";
 
 import VideoPlayer from "../../../components/video-player";
-import { supabase, fetchChannelDetails, getVideoUrlForProgram, STANDBY_PLACEHOLDER_ID, toUtcDate, addSeconds, type Program, type Channel } from "../../../lib/supabase";
+import YouTubeEmbed from "../../../components/youtube-embed";
+import {
+  supabase,
+  fetchChannelDetails,
+  getVideoUrlForProgram,
+  STANDBY_PLACEHOLDER_ID,
+  toUtcDate,
+  addSeconds,
+  type Program,
+  type Channel,
+} from "../../../lib/supabase";
 
-// === constants ===
 const CH21_ID = 21;
-// if HLS is down we fallback to channel21 standby mp4
-const HLS_LIVE_STREAM_URL_CH21 = "https://cdn.livepush.io/hls/fe96095a2d2b4314aa1789fb309e48f8/index.m3u8";
+const STANDBY_FILE = "standby_blacktruthtv.mp4";
 
-// === page ===
 export default function WatchPage() {
   const { channelId } = useParams<{ channelId: string }>();
   const router = useRouter();
@@ -28,15 +35,15 @@ export default function WatchPage() {
   const [upcomingPrograms, setUpcomingPrograms] = useState<Program[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  const [hlsFailed, setHlsFailed] = useState(false);
 
   const playerKey = useRef(0);
 
-  // load channel details
+  // Load channel details
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      setLoading(true); setErr(null);
+      setLoading(true);
+      setErr(null);
       const details = await fetchChannelDetails(channelId!);
       if (cancelled) return;
       setChannel(details);
@@ -46,75 +53,70 @@ export default function WatchPage() {
     return () => { cancelled = true; };
   }, [channelId]);
 
+  /** Build a minimal standby Program that resolves via getVideoUrlForProgram */
   const standbyFor = useCallback((chId: number): Program => {
     const now = new Date();
     return {
       id: STANDBY_PLACEHOLDER_ID,
       channel_id: chId,
-      title: chId === CH21_ID ? "Channel 21 - Standby" : "Standby Programming",
-      mp4_url: `channel${chId}/standby_blacktruthtv.mp4`,
+      title: "Standby Programming",
+      mp4_url: `channel${chId}/${STANDBY_FILE}`,
       duration: 300,
       start_time: now.toISOString(),
       poster_url: null,
-      description: chId === CH21_ID ? "Live stream unavailable. Standby programming will play." : "Programming will resume shortly."
     };
   }, []);
 
+  /** Pick the active program (strict window); else fallback to standby. */
   const fetchCurrentProgram = useCallback(async (chId: number) => {
     setLoading(true);
     const now = new Date();
     try {
       const { data, error } = await supabase
         .from("programs")
-        .select("id, channel_id, title, mp4_url, start_time, duration, description")
+        .select("id, channel_id, title, mp4_url, start_time, duration") // ← no description
         .eq("channel_id", chId)
         .order("start_time", { ascending: true });
 
       if (error) throw new Error(error.message);
+
       const list = (data || []) as Program[];
 
-      // find active
+      // Find active program
       let active: Program | null = null;
       for (const p of list) {
         const d = Number(p.duration);
         if (!p.start_time || !Number.isFinite(d) || d <= 0) continue;
-        const st = toUtcDate(p.start_time); if (!st) continue;
+        const st = toUtcDate(p.start_time);
+        if (!st) continue;
         const en = addSeconds(st, d);
-        if (now >= st && now < en) { active = { ...p, channel_id: chId }; break; }
-      }
-
-      // channel 21 special: if no active, try HLS first unless we've marked it failed
-      if (!active && chId === CH21_ID) {
-        if (!hlsFailed) {
-          active = {
-            id: "live-ch21-hls",
-            title: "Live Broadcast (Channel 21)",
-            description: "Currently broadcasting live.",
-            channel_id: CH21_ID,
-            mp4_url: `/api/cors-proxy?url=${encodeURIComponent(HLS_LIVE_STREAM_URL_CH21)}`,
-            duration: 24 * 3600,
-            start_time: new Date(Date.now() - 3600000).toISOString(),
-            poster_url: channel?.logo_url || null,
-          };
-        } else {
-          active = standbyFor(CH21_ID);
+        if (now >= st && now < en) {
+          active = { ...p, channel_id: chId };
+          break;
         }
       }
 
-      // else: if no active and not CH21 → standby
-      if (!active) active = standbyFor(chId);
+      // Channel 21 → YouTube only (don’t pass MP4 to player)
+      if (chId === CH21_ID) {
+        setCurrentProgram(null);
+      } else {
+        if (!active) active = standbyFor(chId);
+        setCurrentProgram(prev => {
+          if (
+            prev?.id !== active!.id ||
+            prev?.mp4_url !== active!.mp4_url ||
+            prev?.start_time !== active!.start_time
+          ) {
+            playerKey.current += 1;
+          }
+          return active!;
+        });
+      }
 
-      setCurrentProgram(prev => {
-        if (prev?.id !== active!.id || prev?.mp4_url !== active!.mp4_url || prev?.start_time !== active!.start_time) {
-          playerKey.current += 1;
-        }
-        return active!;
-      });
-
-      // upcoming (next 6)
+      // Upcoming (next 6)
       const { data: up, error: upErr } = await supabase
         .from("programs")
-        .select("id, channel_id, title, mp4_url, start_time, duration")
+        .select("id, channel_id, title, mp4_url, start_time, duration") // ← no description
         .eq("channel_id", chId)
         .gt("start_time", now.toISOString())
         .order("start_time", { ascending: true })
@@ -122,17 +124,16 @@ export default function WatchPage() {
       if (!upErr && up) setUpcomingPrograms(up as Program[]);
     } catch (e: any) {
       setErr(e.message || "Failed to load schedule.");
-      setCurrentProgram(standbyFor(chId));
+      if (chId !== CH21_ID) setCurrentProgram(standbyFor(chId));
     } finally {
       setLoading(false);
     }
-  }, [channel, hlsFailed, standbyFor]);
+  }, [standbyFor]);
 
-  // polling / refresh
+  // Poll every minute while visible
   useEffect(() => {
     if (!channelIdNum) return;
     void fetchCurrentProgram(channelIdNum);
-
     const iv = setInterval(() => {
       if (document.visibilityState === "visible") {
         void fetchCurrentProgram(channelIdNum);
@@ -141,29 +142,32 @@ export default function WatchPage() {
     return () => clearInterval(iv);
   }, [channelIdNum, fetchCurrentProgram]);
 
-  const onPrimaryLiveStreamError = useCallback(() => {
-    if (channelIdNum === CH21_ID && !hlsFailed) {
-      setHlsFailed(true);
-      setCurrentProgram(standbyFor(CH21_ID));
-      playerKey.current += 1;
-    }
-  }, [channelIdNum, hlsFailed, standbyFor]);
+  const isYouTubeChannel =
+    channel?.id === CH21_ID && (channel.youtube_channel_id || "").trim().length > 0;
 
-  const videoSrc = currentProgram ? getVideoUrlForProgram(currentProgram) : undefined;
+  const videoSrc =
+    currentProgram && !isYouTubeChannel ? getVideoUrlForProgram(currentProgram) : undefined;
+
   const posterSrc = currentProgram?.poster_url || channel?.logo_url || undefined;
   const isStandby = currentProgram?.id === STANDBY_PLACEHOLDER_ID;
-  const isCh21Hls = currentProgram?.id === "live-ch21-hls";
 
-  // === render ===
+  // UI
   let content: ReactNode;
   if (err) {
     content = <p className="text-red-400 p-4 text-center">Error: {err}</p>;
-  } else if (loading && !currentProgram) {
+  } else if (loading && !currentProgram && !isYouTubeChannel) {
     content = (
       <div className="flex flex-col items-center justify-center h-full">
         <Loader2 className="h-10 w-10 animate-spin text-red-500 mb-2" />
         <p>Loading Channel...</p>
       </div>
+    );
+  } else if (isYouTubeChannel) {
+    content = (
+      <YouTubeEmbed
+        channelId={channel!.youtube_channel_id as string}
+        title={channel?.name ? `${channel.name} Live` : "Live"}
+      />
     );
   } else if (currentProgram && videoSrc) {
     content = (
@@ -174,8 +178,7 @@ export default function WatchPage() {
         programTitle={currentProgram?.title || undefined}
         isStandby={isStandby}
         onVideoEnded={() => void fetchCurrentProgram(channelIdNum)}
-        onError={isCh21Hls ? onPrimaryLiveStreamError : undefined}
-        autoPlay={true}     // tries sound-first; falls back to muted w/ button
+        autoPlay={true}   // tries sound-first; falls back to muted if blocked
         muted={false}
         playsInline
         preload="auto"
@@ -205,18 +208,13 @@ export default function WatchPage() {
 
       {/* details + upcoming */}
       <div className="p-4 space-y-4">
-        {currentProgram && (
+        {currentProgram && !isYouTubeChannel && (
           <>
             <h2 className="text-2xl font-bold">{currentProgram.title || "Now Playing"}</h2>
-            {currentProgram.id !== STANDBY_PLACEHOLDER_ID &&
-              currentProgram.id !== "live-ch21-hls" &&
-              currentProgram.start_time && (
-                <p className="text-sm text-gray-400">
-                  Scheduled Start: {new Date(currentProgram.start_time).toLocaleString()}
-                </p>
-              )}
-            {currentProgram.description && (
-              <p className="text-xs text-gray-300 mt-1">{currentProgram.description}</p>
+            {currentProgram.id !== STANDBY_PLACEHOLDER_ID && currentProgram.start_time && (
+              <p className="text-sm text-gray-400">
+                Scheduled Start: {new Date(currentProgram.start_time).toLocaleString()}
+              </p>
             )}
           </>
         )}
@@ -244,10 +242,9 @@ export default function WatchPage() {
         {debugOn && (
           <div className="mt-2 text-xs bg-gray-900/70 border border-gray-700 rounded p-3 space-y-1">
             <div><b>Channel ID:</b> {channelIdNum || "—"}</div>
-            <div className="truncate"><b>Video Src:</b> {videoSrc || "—"}</div>
+            <div className="truncate"><b>Video Src:</b> {videoSrc || (isYouTubeChannel ? "YouTube Live" : "—")}</div>
             <div><b>Poster (logo_url):</b> {posterSrc || "—"}</div>
-            <div><b>Program ID:</b> {currentProgram?.id || "—"}</div>
-            <div><b>HLS failed:</b> {hlsFailed ? "yes" : "no"}</div>
+            <div><b>Program ID:</b> {currentProgram?.id || (isYouTubeChannel ? "youtube-live" : "—")}</div>
           </div>
         )}
       </div>
