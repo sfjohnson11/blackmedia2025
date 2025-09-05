@@ -31,12 +31,6 @@ export const supabase = createClient(URL, KEY);
 export const STANDBY_PLACEHOLDER_ID = "standby-placeholder";
 
 /** ---------- Time utilities (UTC) ---------- */
-/** Robust UTC parser:
- * - If string has a timezone (Z or ±HH[:MM]) → honor it.
- * - If NO timezone → treat as UTC by components (no blind "Z" appending).
- * - Accepts YYYY-MM-DD HH:mm[:ss], with space or 'T'.
- * - Accepts date-only YYYY-MM-DD (UTC midnight).
- */
 export function toUtcDate(val?: string | Date | null): Date | null {
   if (!val) return null;
   if (val instanceof Date) return Number.isNaN(val.getTime()) ? null : val;
@@ -79,9 +73,7 @@ export function addSeconds(d: Date, secs: number) {
   return new Date(d.getTime() + secs * 1000);
 }
 
-/** Robust duration parser:
- * supports "HH:MM:SS", "MM:SS", "2h15m", "90m", "45s", and plain seconds.
- */
+/** Robust duration parser: "HH:MM:SS", "MM:SS", "2h15m", "90m", "45s", digits */
 export function parseDurationSec(v: number | string | null | undefined): number {
   if (typeof v === "number") return Number.isFinite(v) && v > 0 ? v : 0;
   if (v == null) return 0;
@@ -148,7 +140,7 @@ export function getVideoUrlForProgram(p: Program): string | undefined {
   if (m) return buildPublicUrl(m[1], m[2]);
 
   // bucket/key
-  m = /^([a-z0-9_\-]+)\/(.+)$/i.exec(raw);
+  m = /^([a-z0-9_\-]+)\/(.+)$/.exec(raw);
   if (m) return buildPublicUrl(m[1], m[2]);
 
   // relative filename → channel{channel_id}
