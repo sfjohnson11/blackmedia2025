@@ -5,15 +5,16 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useParams, useSearchParams } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 import YouTubeEmbed from "@/components/youtube-embed";
+import { toUtcDate, addSeconds } from "@/lib/supabase";
 
-/* ---------- schema (your exact columns) ---------- */
+/* ---------- schema ---------- */
 type Channel = {
   id: number;
   name: string | null;
   slug?: string | null;
   description?: string | null;
-  logo_url: string | null;            // poster only
-  youtube_channel_id: string | null;  // CH21 live
+  logo_url: string | null;
+  youtube_channel_id: string | null;
   youtube_is_live?: boolean | null;
   is_active?: boolean | null;
 };
@@ -22,55 +23,21 @@ type Program = {
   id: string | number;
   channel_id: number;
   title: string | null;
-  mp4_url: string | null;             // VIDEO ONLY (absolute or storage key)
-  start_time: string;                 // e.g., "YYYY-MM-DD HH:mm:ss"
-  duration: number | string;          // seconds (e.g., 7620 or "7620s")
+  mp4_url: string | null;
+  start_time: string;
+  duration: number | string;
 };
 
 const CH21 = 21;
 const STANDBY_FILE = "standby_blacktruthtv.mp4";
 
 /* ---------- time helpers ---------- */
-// NOTE: Date comparisons are absolute ms; this returns "now".
-const nowUtc = () => new Date();
-
-/** Parse many forms. IMPORTANT: Do NOT force 'Z' when the string has no timezone.
- * Naive timestamps (no Z/±HH:MM) are interpreted as LOCAL time (your original behavior).
- */
-function toUtcDate(val?: string | Date | null): Date | null {
-  if (!val) return null;
-  if (val instanceof Date) return Number.isNaN(val.getTime()) ? null : val;
-
-  let s = String(val).trim();
-
-  // "YYYY-MM-DD HH:mm:ssZ" or "...z" → ISO "T" + "Z"
-  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?[zZ]$/.test(s)) {
-    s = s.replace(" ", "T").replace(/[zZ]$/, "Z");
-  }
-  // "YYYY-MM-DD HH:mm:ss±HH:MM" or ±HHMM → add "T" and ensure colon in offset
-  else if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?[+\-]\d{2}:?\d{2}$/.test(s)) {
-    s = s.replace(" ", "T").replace(/([+\-]\d{2})(\d{2})$/, "$1:$2");
-  }
-  // "YYYY-MM-DDTHH:mm:ss" (no tz) → leave as-is (LOCAL time)
-  else if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(s)) {
-    // no change
-  }
-  // "YYYY-MM-DD HH:mm:ss" (no tz) → replace space with T (LOCAL time)
-  else if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(s)) {
-    s = s.replace(" ", "T"); // DO NOT append Z
-  }
-  // else: assume already ISO with tz or parseable
-
-  const d = new Date(s);
-  return Number.isNaN(d.getTime()) ? null : d;
-}
-
-const addSeconds = (d: Date, secs: number) => new Date(d.getTime() + secs * 1000);
+const nowUtc = () => new Date(); // Date compares by absolute ms
 
 function parseDurationSec(v: number | string | null | undefined): number {
   if (typeof v === "number") return Number.isFinite(v) && v > 0 ? v : 0;
   if (v == null) return 0;
-  const m = String(v).match(/^\s*(\d+)/); // takes "7620" from "7620s"
+  const m = String(v).match(/^\s*(\d+)/);
   if (!m) return 0;
   const n = Number(m[1]);
   return Number.isFinite(n) && n > 0 ? n : 0;
@@ -91,18 +58,17 @@ function resolveSrc(p: Program, channelId: number): string | undefined {
   let raw = (p?.mp4_url || "").trim();
   if (!raw) return undefined;
 
-  // absolute or root-relative
   if (/^https?:\/\//i.test(raw) || raw.startsWith("/")) return raw;
 
   raw = cleanKey(raw);
 
   // "bucket:key"
-  const m1 = /^([a-z0-9_\-]+):(.+)$/i.exec(raw);
-  if (m1) return fromBucket(m1[1], m1[2]);
+  let m = /^([a-z0-9_\-]+):(.+)$/i.exec(raw);
+  if (m) return fromBucket(m[1], m[2]);
 
   // "storage://bucket/path"
-  const m2 = /^storage:\/\/([^/]+)\/(.+)$/.exec(raw);
-  if (m2) return fromBucket(m2[1], m2[2]);
+  m = /^storage:\/\/([^/]+)\/(.+)$/.exec(raw);
+  if (m) return fromBucket(m[1], m[2]);
 
   // "bucket/path/file"
   const first = raw.split("/")[0];
@@ -191,7 +157,7 @@ export default function WatchPage() {
       if (chErr) throw new Error(chErr.message);
       setChannel(ch as Channel);
 
-      // CH21 → YouTube embed when channel has a YouTube id
+      // CH21 → YouTube embed if configured
       if (idNum === CH21 && (ch?.youtube_channel_id || "").trim()) {
         setActive(null); setNextUp(null); setVideoSrc(undefined); setUsingStandby(false);
         lastSrcRef.current = undefined;
@@ -201,7 +167,7 @@ export default function WatchPage() {
         return;
       }
 
-      // All programs for channel (ordered)
+      // PROGRAMS
       const { data: list, error: pErr } = await supabase
         .from("programs")
         .select("id, channel_id, title, mp4_url, start_time, duration")
@@ -212,7 +178,7 @@ export default function WatchPage() {
       const programs = (list || []) as Program[];
       const now = nowUtc();
 
-      // Debug rows (you can see Active now? flip to YES after this fix)
+      // Debug rows
       const rows = programs.map(pr => {
         const st = toUtcDate(pr.start_time);
         const dur = parseDurationSec(pr.duration) || 1800;
@@ -256,7 +222,7 @@ export default function WatchPage() {
           : en;
         scheduleRefreshAt(boundary);
       } else {
-        // STANDBY loops until next
+        // STANDBY until next
         const sb = standbyProgram(idNum);
         const sbSrc = resolveSrc(sb, idNum);
         setActive(sb);
@@ -302,13 +268,17 @@ export default function WatchPage() {
       <video
         ref={videoRef}
         controls
-        autoPlay={false}          // keep as before; click to start audio
-        muted={false}
+        autoPlay={true}          // ← autoplay back on
+        muted={true}             // ← required for autoplay policies
         playsInline
-        preload="metadata"
+        preload="auto"           // ← start fetching immediately
         className="w-full h-full object-contain bg-black"
-        poster={channel?.logo_url || undefined}   // poster ONLY
-        loop={usingStandby}                       // standby loops until next
+        poster={usingStandby ? (channel?.logo_url || undefined) : undefined} // poster ONLY on standby
+        loop={usingStandby}      // standby loops
+        onLoadedMetadata={(e) => {
+          // if you later add "continue watching", seek here then play:
+          try { (e.currentTarget as HTMLVideoElement).play().catch(() => {}); } catch {}
+        }}
         onEnded={() => void pickAndPlay()}
         onError={() => {
           if (!usingStandby) {
