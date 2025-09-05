@@ -9,7 +9,7 @@ import VideoPlayer from "@/components/video-player";
 import {
   toUtcDate,
   addSeconds,
-  parseDurationSec,       // strict seconds-only now
+  parseDurationSec,
   getVideoUrlForProgram,
   STANDBY_PLACEHOLDER_ID,
   fetchChannelDetails,
@@ -27,41 +27,18 @@ const nowUtc = () => new Date();
 const MIN_RECHECK_MS = 15_000;
 const POLL_MS = 30_000;
 
-const num = (v: unknown): number | null => {
+const isNumeric = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+const asNum = (v: unknown): number | null => {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
 };
 
-const coerceChanLoose = (v: string | number | null | undefined): number | null => {
-  if (v == null) return null;
-  if (typeof v === "number") return num(v);
-  const m = String(v).trim().match(/-?\d+/);
-  if (!m) return null;
-  const n = Number(m[0]);
-  return Number.isFinite(n) ? n : null;
-};
-
-const belongsToChannel = (p: Program, channelNum: number, rawId: string | number): boolean => {
-  const cid = coerceChanLoose(p.channel_id);
-  if (cid === channelNum) return true;
-  if (String(p.channel_id).trim() === String(rawId).trim()) return true;
-
-  const u = (p.mp4_url || "").toLowerCase().trim();
-  const needle = `channel${channelNum}`;
-  return (
-    u.startsWith(`${needle}/`) ||
-    u.startsWith(`${needle}:`) ||
-    u.includes(`/${needle}/`) ||
-    u.startsWith(`storage://${needle}/`)
-  );
-};
-
-function standbyProgram(channelId: number): Program {
+function standbyProgram(channelKey: number | string): Program {
   return {
     id: STANDBY_PLACEHOLDER_ID,
-    channel_id: channelId,
+    channel_id: channelKey,
     title: "Standby Programming",
-    mp4_url: `channel${channelId}/${STANDBY_FILE}`,
+    mp4_url: STANDBY_FILE,              // relative; resolver will choose the right bucket
     start_time: nowUtc().toISOString(),
     duration: 300,
   } as any;
@@ -72,7 +49,10 @@ export default function WatchPage() {
   const search = useSearchParams();
   const debug = (search?.get("debug") ?? "0") === "1";
 
-  const param = useMemo(() => String(channelId), [channelId]);
+  const paramRaw = useMemo(() => String(channelId), [channelId]);
+  // normalize freedom-school → freedom_school just in case
+  const param = useMemo(() => paramRaw.replace(/-/g, "_"), [paramRaw]);
+
   const supabase = useMemo(
     () => createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!),
     []
@@ -96,7 +76,7 @@ export default function WatchPage() {
   const [dbgRows, setDbgRows] = useState<
     { id: string | number; title: string | null; raw: string; startIso?: string; endIso?: string; duration: number; isNow: boolean; resolved?: string }[]
   >([]);
-  const [dbgMeta, setDbgMeta] = useState<{ primaryCount: number; fallbackCount: number; window: string } | null>(null);
+  const [dbgMeta, setDbgMeta] = useState<{ count: number } | null>(null);
 
   useEffect(() => () => {
     if (refreshTimer.current) clearTimeout(refreshTimer.current);
@@ -115,67 +95,35 @@ export default function WatchPage() {
     let candidate: Program | null = null;
     for (const p of list) {
       const st = toUtcDate(p.start_time); if (!st) continue;
-      // STRICT seconds
-      const durSec = Math.max(60, parseDurationSec(p.duration) || 0); // min 60s for safety
-      const en = addSeconds(st, durSec);
+      const dur = Math.max(60, parseDurationSec(p.duration) || 0); // seconds-only
+      const en = addSeconds(st, dur);
       if (now >= st && now < en) candidate = p;
     }
     return candidate;
   };
 
-  const fetchProgramsForChannel = useCallback(async (chNum: number, rawId: string | number): Promise<Program[]> => {
+  const fetchProgramsForChannel = useCallback(async (chId: number | string): Promise<Program[]> => {
     const sel = "id, channel_id, title, mp4_url, start_time, duration";
 
-    // Try precise keys first (INT/TEXT/slug safety)
-    const keys = Array.from(new Set([ chNum, String(chNum), rawId, String(rawId) ]));
-
-    const results = await Promise.all(
-      keys.map((k) => supabase.from("programs").select(sel).eq("channel_id", k).order("start_time", { ascending: true }))
-    );
-
-    let combined: Program[] = [];
-    for (const r of results) if (r.data) combined.push(...(r.data as any));
-
-    // de-dup and sort
-    const seen = new Set<string>();
-    combined = combined.filter((r) => {
-      const key = `${String(r.id)}|${r.start_time}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    }).sort((a, b) => {
-      const as = toUtcDate(a.start_time)?.getTime() ?? 0;
-      const bs = toUtcDate(b.start_time)?.getTime() ?? 0;
-      return as - bs;
-    });
-
-    if (combined.length > 0) {
-      setDbgMeta({ primaryCount: combined.length, fallbackCount: 0, window: "primary-only" });
-      return combined;
+    let q;
+    if (isNumeric(chId)) {
+      q = supabase.from("programs").select(sel).eq("channel_id", chId).order("start_time", { ascending: true });
+    } else {
+      q = supabase.from("programs").select(sel).eq("channel_id", String(chId)).order("start_time", { ascending: true });
     }
 
-    // Fallback: 48h window then filter by channel number or mp4_url bucket hints
-    const start = new Date(Date.now() - 24 * 3600 * 1000);
-    const end   = new Date(Date.now() + 24 * 3600 * 1000);
-    const { data: win, error: winErr } = await supabase
-      .from("programs")
-      .select(sel)
-      .gte("start_time", start.toISOString())
-      .lte("start_time", end.toISOString())
-      .order("start_time", { ascending: true });
+    const { data, error } = await q;
+    if (error) throw new Error(error.message);
 
-    if (winErr) throw new Error(winErr.message);
-
-    const filtered = (win || []).filter((r: any) => belongsToChannel(r as Program, chNum, rawId)) as Program[];
-
-    filtered.sort((a, b) => {
+    const rows = (data || []) as Program[];
+    rows.sort((a, b) => {
       const as = toUtcDate(a.start_time)?.getTime() ?? 0;
       const bs = toUtcDate(b.start_time)?.getTime() ?? 0;
       return as - bs;
     });
 
-    setDbgMeta({ primaryCount: 0, fallbackCount: filtered.length, window: `${start.toISOString()} .. ${end.toISOString()}` });
-    return filtered;
+    setDbgMeta({ count: rows.length });
+    return rows;
   }, [supabase]);
 
   const pickAndPlay = useCallback(async (showLoading = true) => {
@@ -183,28 +131,27 @@ export default function WatchPage() {
       if (showLoading) setLoading(true);
       setErr(null);
 
-      // Resolve channel by id OR slug
       const ch = await fetchChannelDetails(param);
       if (!ch) throw new Error("Channel not found.");
       setChannel(ch as Channel);
 
-      const chNum = num((ch as any).id);
-      setChannelNum(chNum);
+      const n = asNum((ch as any).id);
+      setChannelNum(n);
 
-      // CH21 → YouTube embed
-      if (chNum === CH21 && (ch as any)?.youtube_channel_id && String((ch as any).youtube_channel_id).trim()) {
+      // CH21 → YouTube embed if youtube_channel_id present
+      if (n === CH21 && (ch as any)?.youtube_channel_id && String((ch as any).youtube_channel_id).trim()) {
         setActive(null); setNextUp(null); setVideoSrc(undefined); setUsingStandby(false);
         setDbgRows([]);
         if (showLoading) setLoading(false);
         return;
       }
 
-      const programs = await fetchProgramsForChannel(chNum ?? -1, (ch as any).id);
+      const programs = await fetchProgramsForChannel((ch as any).id);
       const now = nowUtc();
 
       const rows = programs.map(pr => {
         const st = toUtcDate(pr.start_time);
-        const dur = Math.max(60, parseDurationSec(pr.duration) || 0); // strict seconds
+        const dur = Math.max(60, parseDurationSec(pr.duration) || 0);
         const en = st ? addSeconds(st, dur) : null;
         return {
           id: pr.id,
@@ -244,7 +191,7 @@ export default function WatchPage() {
           : en;
         if (boundary) scheduleRefreshAt(boundary);
       } else {
-        const sb = standbyProgram(chNum ?? 0);
+        const sb = standbyProgram((ch as any).id);
         const sbSrc = getVideoUrlForProgram(sb) || sb.mp4_url || undefined;
         setActive(sb);
         setUsingStandby(true);
@@ -265,7 +212,6 @@ export default function WatchPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [param, fetchProgramsForChannel]);
 
-  // initial + soft polling (visible tab only)
   useEffect(() => {
     void pickAndPlay(true);
     if (pollTimer.current) clearInterval(pollTimer.current);
@@ -302,8 +248,8 @@ export default function WatchPage() {
         preload="auto"
         onVideoEnded={() => void pickAndPlay(false)}
         onError={() => {
-          if (!usingStandby && channelNum != null) {
-            const sb = standbyProgram(channelNum);
+          if (!usingStandby) {
+            const sb = standbyProgram((channel as any).id);
             const sbSrc = getVideoUrlForProgram(sb) || sb.mp4_url || undefined;
             setActive(sb);
             setUsingStandby(true);
@@ -362,14 +308,10 @@ export default function WatchPage() {
         {debug && (
           <div className="mt-3 text-[11px] bg-gray-900/70 border border-gray-700 rounded p-2 space-y-2">
             <div><b>Now (UTC):</b> {nowUtc().toISOString()}</div>
-            {dbgMeta && (
-              <div>
-                <b>Primary rows:</b> {dbgMeta.primaryCount} • <b>Fallback rows:</b> {dbgMeta.fallbackCount} • <b>Window:</b> {dbgMeta.window}
-              </div>
-            )}
+            {dbgMeta && <div><b>Programs found:</b> {dbgMeta.count}</div>}
             <div className="pt-2 border-t border-gray-800">
               <div className="font-semibold mb-1">Programs (parsed):</div>
-              {dbgRows.slice(0, 24).map(r => (
+              {dbgRows.slice(0, 20).map(r => (
                 <div key={String(r.id)} className="grid grid-cols-1 md:grid-cols-2 gap-1 mb-2">
                   <div><b>ID:</b> {String(r.id)} • <b>Title:</b> {r.title || "—"}</div>
                   <div className="truncate"><b>Src:</b> {r.resolved || "—"}</div>
