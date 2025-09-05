@@ -9,22 +9,16 @@ import VideoPlayer from "@/components/video-player";
 import {
   toUtcDate,
   addSeconds,
-  parseDurationSec,
+  parseDurationSec,       // strict seconds-only now
   getVideoUrlForProgram,
   STANDBY_PLACEHOLDER_ID,
-  fetchChannelDetails,       // ← use the helper that supports id OR slug
+  fetchChannelDetails,
   type Channel as ChannelT,
   type Program as ProgramT,
 } from "@/lib/supabase";
 
-/* Keep local minimal types to avoid import collisions if needed */
-type Channel = ChannelT & {
-  youtube_channel_id?: string | null;
-};
-type Program = ProgramT & {
-  start_time: string;
-  duration: number | string;
-};
+type Channel = ChannelT & { youtube_channel_id?: string | null };
+type Program = ProgramT & { start_time: string; duration: number | string };
 
 const CH21 = 21;
 const STANDBY_FILE = "standby_blacktruthtv.mp4";
@@ -39,7 +33,7 @@ const num = (v: unknown): number | null => {
 };
 
 const coerceChanLoose = (v: string | number | null | undefined): number | null => {
-  if (v === null || v === undefined) return null;
+  if (v == null) return null;
   if (typeof v === "number") return num(v);
   const m = String(v).trim().match(/-?\d+/);
   if (!m) return null;
@@ -121,7 +115,9 @@ export default function WatchPage() {
     let candidate: Program | null = null;
     for (const p of list) {
       const st = toUtcDate(p.start_time); if (!st) continue;
-      const en = addSeconds(st, Math.max(60, parseDurationSec(p.duration) || 1800));
+      // STRICT seconds
+      const durSec = Math.max(60, parseDurationSec(p.duration) || 0); // min 60s for safety
+      const en = addSeconds(st, durSec);
       if (now >= st && now < en) candidate = p;
     }
     return candidate;
@@ -130,20 +126,11 @@ export default function WatchPage() {
   const fetchProgramsForChannel = useCallback(async (chNum: number, rawId: string | number): Promise<Program[]> => {
     const sel = "id, channel_id, title, mp4_url, start_time, duration";
 
-    // Try several precise keys first (covers INT/TEXT/slug)
-    const keys = Array.from(
-      new Set([
-        chNum,
-        String(chNum),
-        rawId,
-        String(rawId),
-      ])
-    );
+    // Try precise keys first (INT/TEXT/slug safety)
+    const keys = Array.from(new Set([ chNum, String(chNum), rawId, String(rawId) ]));
 
     const results = await Promise.all(
-      keys.map((k) =>
-        supabase.from("programs").select(sel).eq("channel_id", k).order("start_time", { ascending: true })
-      )
+      keys.map((k) => supabase.from("programs").select(sel).eq("channel_id", k).order("start_time", { ascending: true }))
     );
 
     let combined: Program[] = [];
@@ -167,7 +154,7 @@ export default function WatchPage() {
       return combined;
     }
 
-    // Fallback: 48h window then filter by belongsToChannel
+    // Fallback: 48h window then filter by channel number or mp4_url bucket hints
     const start = new Date(Date.now() - 24 * 3600 * 1000);
     const end   = new Date(Date.now() + 24 * 3600 * 1000);
     const { data: win, error: winErr } = await supabase
@@ -201,7 +188,6 @@ export default function WatchPage() {
       if (!ch) throw new Error("Channel not found.");
       setChannel(ch as Channel);
 
-      // Numeric id (if channel.id is numeric)
       const chNum = num((ch as any).id);
       setChannelNum(chNum);
 
@@ -213,14 +199,12 @@ export default function WatchPage() {
         return;
       }
 
-      // Programs
       const programs = await fetchProgramsForChannel(chNum ?? -1, (ch as any).id);
       const now = nowUtc();
 
-      // Debug rows
       const rows = programs.map(pr => {
         const st = toUtcDate(pr.start_time);
-        const dur = Math.max(60, parseDurationSec(pr.duration) || 1800);
+        const dur = Math.max(60, parseDurationSec(pr.duration) || 0); // strict seconds
         const en = st ? addSeconds(st, dur) : null;
         return {
           id: pr.id,
@@ -250,13 +234,11 @@ export default function WatchPage() {
         if (nextSrc && nextSrc !== lastSrcRef.current) {
           setVideoSrc(nextSrc);
           lastSrcRef.current = nextSrc;
-          setTimeout(() => {
-            try { (videoRef.current as any)?.load?.(); } catch {}
-          }, 0);
+          setTimeout(() => { try { (videoRef.current as any)?.load?.(); } catch {} }, 0);
         }
 
         const st = toUtcDate(current.start_time)!;
-        const en = addSeconds(st, Math.max(60, parseDurationSec(current.duration) || 1800));
+        const en = addSeconds(st, Math.max(60, parseDurationSec(current.duration) || 0));
         const boundary = nxt && (toUtcDate(nxt.start_time) as Date) < en
           ? (toUtcDate(nxt.start_time) as Date)
           : en;
@@ -270,9 +252,7 @@ export default function WatchPage() {
         if (sbSrc && sbSrc !== lastSrcRef.current) {
           setVideoSrc(sbSrc);
           lastSrcRef.current = sbSrc;
-          setTimeout(() => {
-            try { (videoRef.current as any)?.load?.(); } catch {}
-          }, 0);
+          setTimeout(() => { try { (videoRef.current as any)?.load?.(); } catch {} }, 0);
         }
 
         if (nxt) scheduleRefreshAt(toUtcDate(nxt.start_time) as Date);
@@ -285,7 +265,7 @@ export default function WatchPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [param, fetchProgramsForChannel]);
 
-  // initial + soft polling
+  // initial + soft polling (visible tab only)
   useEffect(() => {
     void pickAndPlay(true);
     if (pollTimer.current) clearInterval(pollTimer.current);
@@ -330,9 +310,7 @@ export default function WatchPage() {
             if (sbSrc) {
               setVideoSrc(sbSrc);
               lastSrcRef.current = sbSrc;
-              setTimeout(() => {
-                try { (videoRef.current as any)?.load?.(); } catch {}
-              }, 0);
+              setTimeout(() => { try { (videoRef.current as any)?.load?.(); } catch {} }, 0);
             }
           }
         }}
@@ -384,13 +362,11 @@ export default function WatchPage() {
         {debug && (
           <div className="mt-3 text-[11px] bg-gray-900/70 border border-gray-700 rounded p-2 space-y-2">
             <div><b>Now (UTC):</b> {nowUtc().toISOString()}</div>
-
             {dbgMeta && (
               <div>
                 <b>Primary rows:</b> {dbgMeta.primaryCount} • <b>Fallback rows:</b> {dbgMeta.fallbackCount} • <b>Window:</b> {dbgMeta.window}
               </div>
             )}
-
             <div className="pt-2 border-t border-gray-800">
               <div className="font-semibold mb-1">Programs (parsed):</div>
               {dbgRows.slice(0, 24).map(r => (
