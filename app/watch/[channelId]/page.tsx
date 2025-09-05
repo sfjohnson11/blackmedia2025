@@ -138,7 +138,7 @@ export default function WatchPage() {
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const playerKeyRef = useRef(0);
 
-  // Load channel
+  // Load channel (NO image_url anywhere)
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -304,6 +304,7 @@ export default function WatchPage() {
             }
             onVideoEnded={() => { void pickAndResolve(); }}
             onError={() => {
+              // If the current candidate fails at runtime, try next candidate; else fallback to standby
               if (srcQueue.length > 0) {
                 const [nextSrc, ...rest] = srcQueue;
                 setPlayingSrc(nextSrc);
