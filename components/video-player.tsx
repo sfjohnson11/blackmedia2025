@@ -43,26 +43,21 @@ const VideoPlayer = forwardRef<HTMLVideoElement, Props>(function VideoPlayer(
 ) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [ready, setReady] = useState(false);
-  const hlsRef = useRef<any>(null); // hls.js instance if used
+  const hlsRef = useRef<any>(null);
 
   useImperativeHandle(ref, () => videoRef.current as HTMLVideoElement);
 
-  // Attach source whenever src changes
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
 
     setReady(false);
 
-    // Clean up old hls instance (if any)
     if (hlsRef.current) {
-      try {
-        hlsRef.current.destroy();
-      } catch {}
+      try { hlsRef.current.destroy(); } catch {}
       hlsRef.current = null;
     }
 
-    // If HLS URL and browser doesn't support native HLS, try hls.js (optional)
     if (isHls(src)) {
       const canNativeHls =
         (video as any).canPlayType?.("application/vnd.apple.mpegURL") ||
@@ -70,86 +65,59 @@ const VideoPlayer = forwardRef<HTMLVideoElement, Props>(function VideoPlayer(
 
       if (canNativeHls) {
         video.src = src;
+        video.load();
+        if (autoPlay) void safePlay(video);
+        setReady(true);
       } else {
-        // If you install hls.js, this will attach automatically.
-        // npm i hls.js  (or add it to your bundle)
-        // We try dynamic import; if it fails, fall back to direct src.
         (async () => {
           try {
-            const mod = await import("hls.js"); // make sure hls.js is installed to use this path
-            const Hls = mod.default || (mod as any);
-            if (Hls && Hls.isSupported()) {
-              const hls = new Hls({
-                enableWorker: true,
-                lowLatencyMode: true,
-                backBufferLength: 60,
-              });
+            const mod = await import("hls.js"); // install with: npm i hls.js
+            const Hls = (mod as any).default || mod;
+            if (Hls?.isSupported()) {
+              const hls = new Hls({ enableWorker: true, lowLatencyMode: true, backBufferLength: 60 });
               hlsRef.current = hls;
               hls.attachMedia(video);
-              hls.on(Hls.Events.MEDIA_ATTACHED, () => {
-                hls.loadSource(src);
-              });
+              hls.on(Hls.Events.MEDIA_ATTACHED, () => { hls.loadSource(src); });
               hls.on(Hls.Events.MANIFEST_PARSED, () => {
                 setReady(true);
                 if (autoPlay) void safePlay(video);
               });
-              hls.on(Hls.Events.ERROR, (_, data: any) => {
+              hls.on(Hls.Events.ERROR, (_: any, data: any) => {
                 if (data?.fatal) {
-                  try {
-                    hls.destroy();
-                  } catch {}
+                  try { hls.destroy(); } catch {}
                   hlsRef.current = null;
-                  // Fallback: set src directly (may or may not work in this browser)
-                  video.src = src;
-                  video.load();
-                  if (autoPlay) void safePlay(video);
+                  video.src = src; video.load(); if (autoPlay) void safePlay(video);
                 }
               });
-              return;
             } else {
-              // Not supported by hls.js, fall through to native
-              video.src = src;
+              video.src = src; video.load(); if (autoPlay) void safePlay(video); setReady(true);
             }
           } catch {
-            // hls.js not installed or failed to import; fall back
-            video.src = src;
+            video.src = src; video.load(); if (autoPlay) void safePlay(video); setReady(true);
           }
-          video.load();
-          if (autoPlay) void safePlay(video);
-          setReady(true);
         })();
-        return () => {
-          // cleanup handled above when src changes
-        };
       }
     } else {
-      // MP4 or other directly playable type
       video.src = src;
+      video.load();
+      if (autoPlay) void safePlay(video);
+      setReady(true);
     }
-
-    video.load();
-    if (autoPlay) void safePlay(video);
-    setReady(true);
 
     return () => {
       if (hlsRef.current) {
-        try {
-          hlsRef.current.destroy();
-        } catch {}
+        try { hlsRef.current.destroy(); } catch {}
         hlsRef.current = null;
       }
     };
   }, [src, autoPlay]);
 
-  // Basic visibility-based pause/resume (optional safeguard)
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
     const onVis = () => {
       if (document.visibilityState === "hidden") {
-        try {
-          video.pause();
-        } catch {}
+        try { video.pause(); } catch {}
       } else if (autoPlay) {
         void safePlay(video);
       }
@@ -164,16 +132,13 @@ const VideoPlayer = forwardRef<HTMLVideoElement, Props>(function VideoPlayer(
         ref={videoRef}
         className="w-full h-full"
         poster={poster}
-        // Controlled via props
         muted={muted}
         playsInline={playsInline}
         preload={preload}
-        // Events
         onEnded={() => onVideoEnded?.()}
         onError={(e) => onError?.(e)}
         controls
       />
-      {/* Small label overlay (optional) */}
       <div className="absolute left-2 bottom-2 text-xs px-2 py-1 rounded bg-black/60 text-white pointer-events-none">
         {isStandby ? "Standby" : programTitle || (ready ? "Playing" : "Loading…")}
       </div>
@@ -183,13 +148,9 @@ const VideoPlayer = forwardRef<HTMLVideoElement, Props>(function VideoPlayer(
 
 export default VideoPlayer;
 
-// ---- helpers ----
 async function safePlay(video: HTMLVideoElement) {
   try {
-    // Many browsers require muted to allow autoplay
     if (!video.muted) video.muted = true;
     await video.play();
-  } catch {
-    // Autoplay might be blocked; user can press play
-  }
+  } catch {}
 }
