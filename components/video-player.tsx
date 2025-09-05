@@ -24,17 +24,16 @@ export default function VideoPlayer({
   autoPlay = true,            // enable autoplay by default
   muted: mutedProp = false,
   playsInline = true,
-  preload = "auto",           // ← default to "auto" for faster start
+  preload = "auto",           // faster start
   onVideoEnded,
   onError,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
-  // Keep a React state mirror of "muted" for the JSX attribute
   const [muted, setMuted] = useState<boolean>(!!mutedProp);
   const [autoplayBlocked, setAutoplayBlocked] = useState(false);
 
-  // If parent flips the muted prop, reflect it here too
+  // Reflect parent muted changes
   useEffect(() => {
     setMuted(!!mutedProp);
     const v = videoRef.current;
@@ -45,7 +44,6 @@ export default function VideoPlayer({
     const v = videoRef.current;
     if (!v || !autoPlay) return;
 
-    // Ensure inline & preload are set as attributes/properties
     v.playsInline = !!playsInline;
     v.preload = preload || "auto";
 
@@ -56,43 +54,37 @@ export default function VideoPlayer({
       setAutoplayBlocked(false);
       return;
     } catch {
-      // Fallback: force muted autoplay (required by most browsers)
+      // fallback below
     }
 
+    // Fallback: force muted autoplay (required by most browsers)
     try {
       v.muted = true;
       await v.play();
       setMuted(true);
       setAutoplayBlocked(true); // show "Tap to unmute"
     } catch {
-      // Still blocked — user can press play
-      setAutoplayBlocked(true);
+      setAutoplayBlocked(true); // user will press play
     }
   }, [autoPlay, mutedProp, playsInline, preload]);
 
-  // When src changes, force a clean reload and attempt autoplay
+  // Reload and attempt playback when src changes
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
     setAutoplayBlocked(false);
-
-    // Force the element to re-evaluate the new src
-    // (key={src} below also guarantees a remount, but this helps if React reuses)
     try {
       v.pause();
       v.load();
     } catch {}
-
     void tryPlay();
   }, [src, tryPlay]);
 
-  // Some browsers only allow play after metadata/canplay
   const handleLoadedMetadata = useCallback(() => {
     void tryPlay();
   }, [tryPlay]);
 
   const handleCanPlay = useCallback(() => {
-    // As soon as we can play, try again (covers iOS Safari)
     void tryPlay();
   }, [tryPlay]);
 
@@ -111,7 +103,7 @@ export default function VideoPlayer({
   return (
     <div className="relative w-full h-full bg-black">
       <video
-        key={src}                   // ← remount on source change
+        key={src}                   // remount on source change
         ref={videoRef}
         src={src}
         poster={poster}
