@@ -12,8 +12,9 @@ import YouTubeEmbed from "@/components/youtube-embed";
 type Channel = {
   id: number;
   name?: string | null;
-  logo_url?: string | null;           // poster only
-  youtube_channel_id?: string | null; // for ch21 live
+  slug?: string | null;              // used for freedom_school special case
+  logo_url?: string | null;          // poster only
+  youtube_channel_id?: string | null;// for ch21 live
   [k: string]: any;
 };
 
@@ -21,9 +22,9 @@ type Program = {
   id: string | number;
   channel_id: number;
   title: string | null;
-  mp4_url: string | null;             // full https OR storage key
-  start_time: string;                 // UTC (accepts "YYYY-MM-DD HH:mm:ss")
-  duration: number;                   // seconds
+  mp4_url: string | null;            // full https OR storage key OR bucket:key
+  start_time: string;                // UTC (accepts "YYYY-MM-DD HH:mm:ss")
+  duration: number;                  // seconds
 };
 
 /* ---------- constants ---------- */
@@ -48,31 +49,62 @@ function toUtcDate(val?: string | Date | null): Date | null {
 }
 const addSeconds = (d: Date, s: number) => new Date(d.getTime() + s * 1000);
 
-const bucketFor = (id: number) => `channel${id}`;
 const cleanKey = (k: string) =>
   k.trim().replace(/^\.?\//, "").replace(/\\/g, "/").replace(/\/{2,}/g, "/");
 
-function standbyUrl(channelId: number): string {
-  return `${PUB_ROOT}/${bucketFor(channelId)}/${STANDBY_FILE}`;
+function bucketFor(ch: Channel): string {
+  const slug = (ch.slug || "").toLowerCase().trim();
+  if (slug === "freedom-school" || slug === "freedom_school") return "freedom_school";
+  return `channel${Number(ch.id)}`; // channel1, channel2, ...
 }
 
-/** EXACT resolution:
+function standbyUrl(ch: Channel): string {
+  return `${PUB_ROOT}/${bucketFor(ch)}/${STANDBY_FILE}`;
+}
+
+/** URL resolver (PUBLIC buckets):
  * - If mp4_url is full https:// or starts with '/', use as-is.
- * - Else treat as a key in channel{ID}, also strip accidental 'channel{ID}/' prefix.
+ * - If "bucket:key" or "storage://bucket/key", build public URL for that bucket.
+ * - Else treat as a key in this channel’s bucket (strip accidental 'channel{id}/' or 'freedom_school/' prefixes).
  * - We DO NOT call supabase.storage.getPublicUrl.
  */
-function resolveMp4Src(p: Program, channelId: number): { src?: string; tried: string[] } {
+function resolveMp4Src(p: Program, ch: Channel): { src?: string; tried: string[] } {
   const tried: string[] = [];
   let raw = (p?.mp4_url || "").trim();
   if (!raw) return { tried };
 
+  // absolute URL or absolute path
   if (/^https?:\/\//i.test(raw) || raw.startsWith("/")) {
     tried.push(raw);
     return { src: raw, tried };
   }
 
-  raw = cleanKey(raw).replace(new RegExp(`^channel${channelId}/`, "i"), "");
-  const url = `${PUB_ROOT}/${bucketFor(channelId)}/${raw}`;
+  // bucket override: "bucket:key" OR "storage://bucket/key"
+  const m =
+    /^([a-z0-9_\-]+):(.+)$/i.exec(raw) ||
+    /^storage:\/\/([^/]+)\/(.+)$/i.exec(raw);
+  if (m) {
+    const b = m[1];
+    const key = cleanKey(m[2]);
+    const url = `${PUB_ROOT}/${b}/${key}`;
+    tried.push(url);
+    return { src: url, tried };
+  }
+
+  // relative → resolve against this channel’s bucket
+  const bucket = bucketFor(ch);
+  raw = cleanKey(raw);
+
+  // strip accidental "channel{id}/" or "freedom_school/" prefixes
+  const prefixes = [bucket.toLowerCase() + "/", "freedom_school/"];
+  for (const pre of prefixes) {
+    if (raw.toLowerCase().startsWith(pre)) {
+      raw = raw.slice(pre.length);
+      break;
+    }
+  }
+
+  const url = `${PUB_ROOT}/${bucket}/${raw}`;
   tried.push(url);
   return { src: url, tried };
 }
@@ -125,7 +157,7 @@ export default function WatchPage() {
   const pickAndPlay = useCallback(async () => {
     if (!channel) return;
 
-    // CH21 → YouTube Live (embed, never a blank MP4 src)
+    // CH21 → YouTube Live (embed)
     if (channel.id === CH21) {
       const yt = channel.youtube_channel_id || process.env.NEXT_PUBLIC_YT_CH21 || YT_FALLBACK;
       setActive({
@@ -175,7 +207,7 @@ export default function WatchPage() {
       setNextUp(nxt);
 
       if (current) {
-        const r = resolveMp4Src(current, channel.id);
+        const r = resolveMp4Src(current, channel);
         setActive(current);
         setTried(r.tried);
 
@@ -183,7 +215,7 @@ export default function WatchPage() {
           setSrc(r.src);
           setUsingStandby(false);
         } else {
-          setSrc(standbyUrl(channel.id));
+          setSrc(standbyUrl(channel));
           setUsingStandby(true);
         }
         playerKey.current += 1;
@@ -194,7 +226,7 @@ export default function WatchPage() {
       } else {
         // none active → standby until next
         setActive(null);
-        setSrc(standbyUrl(channel.id));
+        setSrc(standbyUrl(channel));
         setUsingStandby(true);
         schedule(nxt ? toUtcDate(nxt.start_time)! : null);
       }
@@ -231,8 +263,10 @@ export default function WatchPage() {
       </div>
     );
   } else if (isYT && ytId) {
-    content = <YouTubeEmbed channelId={ytId} title={active?.title || "Live"} muted />;
+    // 🔊 restore sound: do NOT force muted on YouTube
+    content = <YouTubeEmbed channelId={ytId} title={active?.title || "Live"} />;
   } else if (src) {
+    // 🔊 restore sound: do NOT force muted on HTML5 video
     content = (
       <VideoPlayer
         key={playerKey.current}
@@ -241,8 +275,8 @@ export default function WatchPage() {
         programTitle={active ? active.title || undefined : "Standby (waiting for next program)"}
         isStandby={usingStandby}
         onVideoEnded={() => void pickAndPlay()}
-        autoPlay={true}        // start immediately
-        muted={true}           // lets browsers autoplay; controls are still visible
+        autoPlay={false}       // allow user to click Play so audio isn't blocked
+        muted={false}          // 🔊 sound on
         playsInline
         preload="auto"
       />
@@ -294,10 +328,11 @@ export default function WatchPage() {
 
         {debug && (
           <div className="mt-2 text-xs bg-gray-900/70 border border-gray-700 rounded p-3 space-y-1">
-            <div><b>Bucket:</b> {bucketFor(idNum)}</div>
+            <div><b>Bucket:</b> {channel ? bucketFor(channel) : "—"}</div>
             <div className="truncate"><b>Playing Src:</b> {src || "—"}</div>
             <div><b>Using Standby:</b> {usingStandby ? "yes" : "no"}</div>
             <div><b>Poster (logo_url):</b> {poster || "—"}</div>
+            <div><b>Tried:</b> {tried.join("  |  ") || "—"}</div>
           </div>
         )}
       </div>
