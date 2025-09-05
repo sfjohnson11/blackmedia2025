@@ -1,106 +1,140 @@
 // components/video-player.tsx
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type Props = {
   src: string;
   poster?: string;
   programTitle?: string;
   isStandby?: boolean;
+  autoPlay?: boolean;      // default: false
+  muted?: boolean;         // default: false
+  playsInline?: boolean;   // default: true
+  preload?: "auto" | "metadata" | "none"; // default: "metadata"
   onVideoEnded?: () => void;
-  onError?: () => void;                  // used for standby fallback on runtime errors
-  autoPlay?: boolean;                    // default false (controls visible)
-  muted?: boolean;                       // default false
-  playsInline?: boolean;                 // default true
-  preload?: "auto" | "metadata" | "none"; // default "metadata"
+  onError?: () => void;
 };
 
 export default function VideoPlayer({
   src,
   poster,
   programTitle,
-  isStandby,
-  onVideoEnded,
-  onError,
+  isStandby = false,
   autoPlay = false,
-  muted = false,
+  muted: mutedProp = false,
   playsInline = true,
   preload = "metadata",
+  onVideoEnded,
+  onError,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [muted, setMuted] = useState<boolean>(!!mutedProp);
+  const [autoplayBlocked, setAutoplayBlocked] = useState(false);
+  const [ready, setReady] = useState(false);
 
+  // Try autoplay (with sound first if requested). If blocked, retry muted.
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video || !src) return;
+    const v = videoRef.current;
+    if (!v) return;
 
-    // ensure attributes before source attach
-    video.controls = true;
-    video.muted = muted;
-    (video as any).playsInline = playsInline;
-    (video as any).webkitPlaysInline = playsInline;
+    v.muted = !!mutedProp;
+    v.playsInline = playsInline;
+    v.preload = preload || "metadata";
 
-    let cleanupHls: (() => void) | null = null;
-
-    async function setup() {
-      const isHls = /\.m3u8($|\?)/i.test(src);
-
-      // if native HLS not supported, use hls.js
-      if (isHls && (video as any).canPlayType("application/vnd.apple.mpegurl") === "") {
-        const { default: Hls, Events } = await import("hls.js");
-        if (Hls.isSupported()) {
-          const hls = new Hls({ enableWorker: true });
-          hls.loadSource(src);
-          hls.attachMedia(video);
-          hls.on(Events.ERROR, (_ev: any, data: any) => {
-            if (data?.fatal && typeof onError === "function") onError();
-          });
-          cleanupHls = () => hls.destroy();
-        } else {
-          video.src = src; // fallback
-        }
-      } else {
-        video.src = src; // MP4 or native HLS
-      }
-
-      video.load();
-
-      if (autoPlay) {
-        try {
-          await video.play();
-        } catch {
-          // autoplay blocked → user can click big play; controls are visible
+    const tryPlay = async () => {
+      if (!autoPlay) return; // let user click play; keeps sound intact
+      try {
+        v.muted = !!mutedProp; // try user's preference first
+        await v.play();
+        setAutoplayBlocked(false);
+      } catch (_) {
+        if (!mutedProp) {
+          // retry muted for policy-compliant autoplay
+          try {
+            v.muted = true;
+            await v.play();
+            setMuted(true);
+            setAutoplayBlocked(true); // show "Tap to unmute"
+          } catch {
+            // give up; user will press play
+          }
         }
       }
-    }
+    };
 
-    setup();
+    // kick attempt when src changes
+    setReady(false);
+    const onCanPlay = () => setReady(true);
+
+    v.addEventListener("canplay", onCanPlay, { once: true });
+    void tryPlay();
 
     return () => {
-      if (cleanupHls) cleanupHls();
-      try {
-        video.pause();
-        video.removeAttribute("src");
-        video.load();
-      } catch {}
+      v.removeEventListener("canplay", onCanPlay);
+      // do not pause here; let React control via key/prop changes
     };
-  }, [src, autoPlay, muted, playsInline, onError]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [src, autoPlay, mutedProp, playsInline, preload]);
+
+  const handleUnmute = async () => {
+    const v = videoRef.current;
+    if (!v) return;
+    try {
+      v.muted = false;
+      setMuted(false);
+      setAutoplayBlocked(false);
+      v.volume = 1;
+      await v.play().catch(() => {});
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleError = () => {
+    onError?.();
+  };
 
   return (
-    <div className="w-full h-full bg-black flex items-center justify-center">
+    <div className="relative w-full h-full bg-black">
       <video
         ref={videoRef}
-        className="w-full h-full object-contain"
+        src={src}
         poster={poster}
         controls
+        // honor current mute state (can change after fallback)
         muted={muted}
+        // keep sound available when user hits play
         playsInline={playsInline}
         preload={preload}
+        className="w-full h-full object-contain bg-black"
         onEnded={onVideoEnded}
-        onError={onError}
-        controlsList="nodownload"
-        aria-label={programTitle || (isStandby ? "Standby" : "Video")}
+        onError={handleError}
       />
+
+      {/* “Tap to unmute” chip when policy forced us to start muted */}
+      {autoplayBlocked && muted && (
+        <button
+          onClick={handleUnmute}
+          className="absolute bottom-3 right-3 rounded-full bg-white/90 text-black text-xs font-semibold px-3 py-2 shadow"
+        >
+          Tap to unmute
+        </button>
+      )}
+
+      {/* Optional tiny label for standby */}
+      {isStandby && (
+        <div className="absolute top-3 left-3 text-[10px] uppercase tracking-wide bg-yellow-400 text-black px-2 py-1 rounded">
+          Standby
+        </div>
+      )}
+
+      {/* Optional program title */}
+      {programTitle && (
+        <div className="pointer-events-none absolute bottom-3 left-3 max-w-[70%] truncate text-white/90 text-sm drop-shadow">
+          {programTitle}
+        </div>
+      )}
     </div>
   );
 }
