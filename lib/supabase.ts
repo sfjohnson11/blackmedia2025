@@ -10,7 +10,7 @@ export const supabase = createClient(url, anon, {
   auth: { persistSession: false },
 });
 
-// Read-only: fetch a single channel by id or slug
+// Read-only: fetch a single channel by id or slug (NO image_url)
 export async function fetchChannelDetails(channelIdOrSlug: string | number) {
   const base = supabase
     .from("channels")
@@ -31,7 +31,7 @@ export async function fetchChannelDetails(channelIdOrSlug: string | number) {
 
 /**
  * If program.mp4_url is http(s) or starts with '/', return as-is.
- * Else return raw relative path (WATCH page resolves to public URL).
+ * Otherwise return the raw relative path; WATCH page will resolve to a public URL.
  */
 export function getVideoUrlForProgram(program: {
   mp4_url?: string | null;
