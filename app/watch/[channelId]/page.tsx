@@ -1,11 +1,4 @@
 // app/watch/[channelId]/page.tsx
-// Behavior:
-// • If ACTIVE (start_time <= now < start_time + duration): play program.
-// • If NO active: play STANDBY until next program starts.
-// • If ACTIVE but URL can't resolve or playback errors: try alt candidate(s), then STANDBY.
-// • Channel 21 => YouTube Live via channels.youtube_channel_id.
-// No extension gating. No forced lowercasing. Uses ONLY logo_url (no image_url).
-
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -39,7 +32,14 @@ type Program = {
 /* ---------- constants ---------- */
 const CH21_ID = 21;
 const YT_FALLBACK_CH21 = "UCMkW239dyAxDyOFDP0D6p2g";
-const STANDBY_OBJECT = "standby_blacktruthtv.mp4";
+
+// change this to your exact standby filename if different
+const STANDBY_NAMES = [
+  "standby_blacktruthtv.mp4",
+  "Standby_blacktruthtv.mp4",
+  "standby.mp4",
+  "Standby.mp4",
+];
 
 /* ---------- helpers ---------- */
 const cleanPath = (p: string) => p.replace(/^\.?\//, "");
@@ -55,26 +55,35 @@ function toUtcDate(val?: string | Date | null): Date | null {
 }
 const addSeconds = (d: Date, secs: number) => new Date(d.getTime() + secs * 1000);
 
-function bucketForChannel(ch: Channel | null): string | null {
-  if (!ch) return null;
-  if (ch.slug && ch.slug.trim()) return ch.slug.trim();
-  if (Number.isFinite(ch.id) && ch.id > 0) return `channel${ch.id}`;
-  return null;
+function bucketCandidates(ch: Channel | null): string[] {
+  if (!ch) return [];
+  const out = new Set<string>();
+  const slug = (ch.slug || "").trim();
+  if (slug) {
+    out.add(slug);
+    out.add(slug.toLowerCase());
+  }
+  if (Number.isFinite(ch.id) && ch.id > 0) {
+    out.add(`channel${ch.id}`);
+    out.add(`Channel${ch.id}`); // some setups used a capital C
+  }
+  return Array.from(out);
 }
 
 function publicUrl(bucket: string, objectPath: string): string | undefined {
   try {
     const { data } = supabase.storage.from(bucket).getPublicUrl(cleanPath(objectPath));
     return data?.publicUrl || undefined;
-  } catch { return undefined; }
+  } catch {
+    return undefined;
+  }
 }
 
 // Build candidate URLs for a program:
 // - absolute http(s) or "/" → use as-is
-// - "bucket:path" or "storage://bucket/path"
-// - relative → publicUrl(bucket, raw) AND if raw starts with "<bucket>/", also try stripped version
+// - "bucket:path" or "storage://bucket/path" → try exact + lowercased bucket
+// - relative → try across bucket candidates; if path starts with "<bucket>/", also try the stripped key
 function candidateUrlsForProgram(program: Program, channel: Channel | null): string[] {
-  const bucket = bucketForChannel(channel);
   const raw = (getVideoUrlForProgram(program) || "").trim();
   if (!raw) return [];
 
@@ -86,32 +95,41 @@ function candidateUrlsForProgram(program: Program, channel: Channel | null): str
   if (m) {
     const b = m[1];
     const p = m[2];
-    const u = publicUrl(b, p);
-    return u ? [u] : [];
+    const tries = [publicUrl(b, p), publicUrl(b.toLowerCase(), p)];
+    return tries.filter(Boolean) as string[];
   }
 
-  if (!bucket) return [];
+  const buckets = bucketCandidates(channel);
+  if (buckets.length === 0) return [];
+
   const rel = cleanPath(raw);
   const list: string[] = [];
 
-  const a = publicUrl(bucket, rel);
-  if (a) list.push(a);
+  for (const b of buckets) {
+    const a = publicUrl(b, rel);
+    if (a) list.push(a);
 
-  const esc = bucket.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const rx = new RegExp(`^${esc}/`, "i");
-  if (rx.test(rel)) {
-    const stripped = rel.replace(rx, "");
-    const b = publicUrl(bucket, stripped);
-    if (b && b !== a) list.push(b);
+    const esc = b.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const rx = new RegExp(`^${esc}/`, "i");
+    if (rx.test(rel)) {
+      const stripped = rel.replace(rx, "");
+      const b2 = publicUrl(b, stripped);
+      if (b2 && b2 !== a) list.push(b2);
+    }
   }
 
   return Array.from(new Set(list));
 }
 
 function resolveStandbyUrl(channel: Channel | null): string | undefined {
-  const bucket = bucketForChannel(channel);
-  if (!bucket) return undefined;
-  return publicUrl(bucket, STANDBY_OBJECT);
+  const buckets = bucketCandidates(channel);
+  for (const b of buckets) {
+    for (const name of STANDBY_NAMES) {
+      const u = publicUrl(b, name);
+      if (u) return u;
+    }
+  }
+  return undefined;
 }
 
 /* ---------- page ---------- */
@@ -122,6 +140,10 @@ export default function WatchPage() {
 
   const channelIdNum = useMemo(() => Number(channelId), [channelId]);
   const debugOn = (search?.get("debug") ?? "0") === "1";
+  const forcedSrc = search?.get("src") || undefined;
+  const forceAutoplay = (search?.get("autoplay") ?? "0") === "1";
+  const forceMuted = (search?.get("muted") ?? "0") === "1";
+  const poll = (search?.get("poll") ?? "0") === "1";
 
   const [channel, setChannel] = useState<Channel | null>(null);
   const [activeProgram, setActiveProgram] = useState<Program | null>(null);
@@ -138,7 +160,7 @@ export default function WatchPage() {
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const playerKeyRef = useRef(0);
 
-  // Load channel (NO image_url anywhere)
+  // Load channel
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -202,10 +224,11 @@ export default function WatchPage() {
       let active: Program | null = null;
       if (started && started.length) {
         for (const p of started as Program[]) {
-          if (!p.start_time || typeof p.duration !== "number" || p.duration <= 0) continue;
+          const dur = Number((p as any).duration);
+          if (!p.start_time || !Number.isFinite(dur) || dur <= 0) continue;
           const st = toUtcDate(p.start_time); if (!st) continue;
-          const en = addSeconds(st, p.duration);
-          if (now >= st && now < en) { active = p; break; }
+          const en = addSeconds(st, dur);
+          if (now >= st && now < en) { active = { ...p, duration: dur }; break; }
         }
       }
 
@@ -264,9 +287,20 @@ export default function WatchPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channelIdNum, channel]);
 
+  // optional polling while tab is visible
+  useEffect(() => {
+    if (!poll || !channel) return;
+    const id = setInterval(() => {
+      if (document.visibilityState === "visible") void pickAndResolve();
+    }, 60_000);
+    return () => clearInterval(id);
+  }, [poll, channel, pickAndResolve]);
+
   /* ---------- render ---------- */
   const isYouTube = !!activeProgram?.mp4_url?.toString().startsWith("youtube_channel:");
   const ytId = isYouTube ? String(activeProgram!.mp4_url).split(":")[1] : null;
+
+  const srcToPlay = forcedSrc || playingSrc;
 
   return (
     <div className="bg-black min-h-screen flex flex-col text-white">
@@ -290,21 +324,23 @@ export default function WatchPage() {
             <Loader2 className="h-10 w-10 animate-spin text-red-500 mb-2" />
             <p>Loading…</p>
           </div>
-        ) : isYouTube && ytId ? (
+        ) : isYouTube && ytId && !forcedSrc ? (
           <YouTubeEmbed channelId={ytId} title={activeProgram?.title || "Live"} muted />
-        ) : playingSrc ? (
+        ) : srcToPlay ? (
           <VideoPlayer
             key={playerKeyRef.current}
-            src={playingSrc}
+            src={srcToPlay}
             poster={poster}
             programTitle={
-              activeProgram
-                ? (usingStandby ? `${activeProgram.title || "Program"} (Standby playback)` : activeProgram.title || undefined)
-                : "Standby (waiting for next program)"
+              forcedSrc
+                ? "Forced playback (?src=)"
+                : activeProgram
+                  ? (usingStandby ? `${activeProgram.title || "Program"} (Standby playback)` : activeProgram.title || undefined)
+                  : "Standby (waiting for next program)"
             }
-            onVideoEnded={() => { void pickAndResolve(); }}
+            onVideoEnded={() => { if (!forcedSrc) void pickAndResolve(); }}
             onError={() => {
-              // If the current candidate fails at runtime, try next candidate; else fallback to standby
+              if (forcedSrc) return; // don't auto-switch when forcing a URL
               if (srcQueue.length > 0) {
                 const [nextSrc, ...rest] = srcQueue;
                 setPlayingSrc(nextSrc);
@@ -320,8 +356,8 @@ export default function WatchPage() {
                 }
               }
             }}
-            autoPlay={false}
-            muted={false}
+            autoPlay={forceAutoplay}
+            muted={forceMuted}
             playsInline
             preload="metadata"
           />
@@ -340,7 +376,7 @@ export default function WatchPage() {
             <p className="text-sm text-gray-400">
               Start: {(() => { const d = toUtcDate(activeProgram.start_time); return d ? d.toLocaleString() : "—"; })()}
               {" • "}Duration: {activeProgram.duration}s
-              {usingStandby && <span className="text-yellow-400"> • Fallback: Standby asset</span>}
+              {usingStandby && !forcedSrc && <span className="text-yellow-400"> • Fallback: Standby asset</span>}
             </p>
           </>
         )}
@@ -361,12 +397,13 @@ export default function WatchPage() {
 
         {debugOn && (
           <div className="mt-2 text-xs bg-gray-900/70 border border-gray-700 rounded p-3 space-y-1">
-            <div><b>Bucket:</b> {bucketForChannel(channel) || "—"}</div>
+            <div><b>Bucket candidates:</b> {bucketCandidates(channel).join(", ") || "—"}</div>
             <div><b>Active Program:</b> {activeProgram ? `${String(activeProgram.id)} • ${activeProgram.title || "—"}` : "— (none)"}</div>
-            <div className="truncate"><b>Playing Src:</b> {playingSrc || "—"}</div>
+            <div className="truncate"><b>Playing Src:</b> {srcToPlay || "—"}</div>
             <div><b>Using Standby:</b> {usingStandby ? "yes" : "no"}</div>
             <div><b>Poster (logo_url):</b> {poster || "—"}</div>
             {srcQueue.length > 0 && <div className="truncate"><b>Queued Candidates:</b> {srcQueue.join("  |  ")}</div>}
+            {forcedSrc && <div className="truncate"><b>Forced Src (?src=):</b> {forcedSrc}</div>}
           </div>
         )}
       </div>
