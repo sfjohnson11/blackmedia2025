@@ -9,7 +9,7 @@ const BRAND_LOGO_URL =
 
 export default function TopNav({
   channelName,
-  logoSrc, // optional per-page override if you ever want to pass one
+  logoSrc, // optional per-page override
 }: {
   channelName?: string;
   logoSrc?: string;
@@ -22,13 +22,11 @@ export default function TopNav({
         <div className="h-14 sm:h-16 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2">
             <div className="h-9 w-9 sm:h-10 sm:w-10 rounded-md overflow-hidden ring-1 ring-white/10 bg-black/30 flex items-center justify-center">
-              {/* plain <img> keeps things simple; no next/image config needed */}
               <img
                 src={finalLogo}
                 alt={`${BRAND_NAME} Logo`}
                 className="h-full w-full object-contain"
                 onError={(e) => {
-                  // hide image if broken so title still looks clean
                   (e.currentTarget as HTMLImageElement).style.display = "none";
                 }}
               />
