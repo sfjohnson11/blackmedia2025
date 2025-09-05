@@ -1,5 +1,4 @@
 // app/page.tsx
-import TopNav from "@/components/top-nav";
 import Link from "next/link";
 import { createClient } from "@supabase/supabase-js";
 
@@ -23,7 +22,7 @@ export default async function HomePage() {
 
   const { data, error } = await supabase
     .from("channels")
-    .select("id, name, slug, description, logo_url, youtube_is_live, is_active") // ← removed image_url
+    .select("id, name, slug, description, logo_url, youtube_is_live, is_active")
     .eq("is_active", true)
     .order("name", { ascending: true })
     .order("id", { ascending: true });
@@ -40,7 +39,8 @@ export default async function HomePage() {
 
   return (
     <div className="min-h-screen bg-black text-white">
-      <TopNav />
+      {/* Global TopNav comes from app/layout.tsx — no duplicate here */}
+
       <section className="px-4 md:px-10 py-8 md:py-10 border-b border-gray-800 bg-[radial-gradient(ellipse_at_top,rgba(239,68,68,0.15),rgba(0,0,0,0))]">
         <h1 className="text-3xl md:text-4xl font-extrabold">Black Truth TV</h1>
         <p className="text-gray-300 mt-2 max-w-2xl">
@@ -56,7 +56,7 @@ export default async function HomePage() {
         ) : (
           <div className="grid grid-flow-row gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
             {channels.map((ch) => {
-              const art = ch.logo_url || null; // ← use logo_url only
+              const art = ch.logo_url || null;
               return (
                 <Link
                   href={`/watch/${ch.id}`}
