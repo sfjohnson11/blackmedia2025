@@ -11,7 +11,6 @@ type ChannelRow = {
   title?: string | null;
   slug?: string | null;
   channel_number?: number | null;
-  // we intentionally do NOT assume image_url exists
   [key: string]: any;
 };
 
@@ -19,10 +18,33 @@ type ProgramRow = {
   id: string;
   title: string | null;
   channel_id: string | number;
-  start_time: string;     // ISO
-  duration: number | null; // seconds (null-safe)
+  start_time: string;       // can be "YYYY-MM-DD HH:mm:ss" or ISO
+  duration: number | null;  // seconds (null-safe)
   [key: string]: any;
 };
+
+/* ---------- time helpers (robust to both formats) ---------- */
+function toUtcDate(val?: string | Date | null): Date | null {
+  if (!val) return null;
+  if (val instanceof Date) return Number.isNaN(val.getTime()) ? null : val;
+  let s = String(val).trim();
+  // "YYYY-MM-DD HH:mm:ss[.sss]" (no tz) → treat as UTC
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?$/.test(s)) s = s.replace(' ', 'T') + 'Z';
+  // If no explicit tz (+/- or Z), force UTC
+  else if (!/[zZ]|[+\-]\d{2}:\d{2}$/.test(s)) s = s + 'Z';
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+const addSeconds = (d: Date, secs: number) => new Date(d.getTime() + secs * 1000);
+
+// For DBs that store start_time as TEXT "YYYY-MM-DD HH:mm:ss"
+function toDbTimestampStringUTC(d: Date) {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return (
+    `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}` +
+    ` ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`
+  );
+}
 
 function toStr(v: string | number | null | undefined) {
   return v == null ? '' : String(v);
@@ -32,10 +54,10 @@ function displayChannelName(ch: ChannelRow) {
   return ch.name || ch.title || `Channel ${toStr(ch.id)}`;
 }
 
-function fmtTime(iso?: string) {
-  if (!iso) return '';
+function fmtTime(isoish?: string) {
+  const d = toUtcDate(isoish);
+  if (!d) return '';
   try {
-    const d = new Date(iso);
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   } catch {
     return '';
@@ -43,17 +65,28 @@ function fmtTime(iso?: string) {
 }
 
 function isNow(p: ProgramRow, now: Date) {
-  const start = new Date(p.start_time);
-  const dur = (typeof p.duration === 'number' && p.duration > 0) ? p.duration : 1800; // default 30m
-  const end = new Date(start.getTime() + dur * 1000);
+  const start = toUtcDate(p.start_time);
+  if (!start) return false;
+  const dur =
+    typeof p.duration === 'number' && isFinite(p.duration) && p.duration > 0 ? p.duration : 1800;
+  const end = addSeconds(start, dur);
   return now >= start && now < end;
 }
 
 function byStartAsc(a: ProgramRow, b: ProgramRow) {
-  return new Date(a.start_time).getTime() - new Date(b.start_time).getTime();
+  const da = toUtcDate(a.start_time)?.getTime() ?? 0;
+  const db = toUtcDate(b.start_time)?.getTime() ?? 0;
+  return da - db;
 }
 
-export default function HorizontalGuide({ lookAheadHours = 6, lookBackHours = 6 }: { lookAheadHours?: number; lookBackHours?: number }) {
+/* ---------- component ---------- */
+export default function HorizontalGuide({
+  lookAheadHours = 6,
+  lookBackHours = 6,
+}: {
+  lookAheadHours?: number;
+  lookBackHours?: number;
+}) {
   const supabase = getSupabaseClient();
 
   const [channels, setChannels] = useState<ChannelRow[]>([]);
@@ -61,17 +94,22 @@ export default function HorizontalGuide({ lookAheadHours = 6, lookBackHours = 6 
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
-  const windowStart = useMemo(() => {
+  // Compute window (UTC)
+  const windowStartISO = useMemo(() => {
     const d = new Date();
     d.setHours(d.getHours() - lookBackHours);
     return d.toISOString();
   }, [lookBackHours]);
 
-  const windowEnd = useMemo(() => {
+  const windowEndISO = useMemo(() => {
     const d = new Date();
     d.setHours(d.getHours() + lookAheadHours);
     return d.toISOString();
   }, [lookAheadHours]);
+
+  // Also build DB text-format (UTC) in case start_time is stored as TEXT
+  const windowStartDB = useMemo(() => toDbTimestampStringUTC(new Date(windowStartISO)), [windowStartISO]);
+  const windowEndDB = useMemo(() => toDbTimestampStringUTC(new Date(windowEndISO)), [windowEndISO]);
 
   useEffect(() => {
     let cancelled = false;
@@ -80,36 +118,52 @@ export default function HorizontalGuide({ lookAheadHours = 6, lookBackHours = 6 
         setErr(null);
         setLoading(true);
 
-        // 1) Channels — very permissive select to avoid “missing column” problems
+        // 1) Channels — select * so we don't care about column drift
         const { data: chRows, error: chErr } = await supabase
           .from('channels')
           .select('*')
           .order('id', { ascending: true });
         if (chErr) throw new Error(chErr.message);
 
-        // 2) Programs window — one query, sorted ascending
-        const { data: progRows, error: prErr } = await supabase
+        // 2) Programs — try ISO window first
+        let progRows: ProgramRow[] = [];
+        const { data: prA, error: prErrA } = await supabase
           .from('programs')
           .select('id, title, channel_id, start_time, duration')
-          .gte('start_time', windowStart)
-          .lte('start_time', windowEnd)
+          .gte('start_time', windowStartISO)
+          .lte('start_time', windowEndISO)
           .order('start_time', { ascending: true });
 
-        if (prErr) throw new Error(prErr.message);
+        if (prErrA) throw new Error(prErrA.message);
+        progRows = (prA || []) as ProgramRow[];
+
+        // Fallback: if zero programs, try DB text format window (works if start_time is TEXT)
+        if (progRows.length === 0) {
+          const { data: prB, error: prErrB } = await supabase
+            .from('programs')
+            .select('id, title, channel_id, start_time, duration')
+            .gte('start_time', windowStartDB)
+            .lte('start_time', windowEndDB)
+            .order('start_time', { ascending: true });
+          if (prErrB) throw new Error(prErrB.message);
+          progRows = (prB || []) as ProgramRow[];
+        }
 
         if (cancelled) return;
         setChannels((chRows || []) as ChannelRow[]);
-        setPrograms((progRows || []) as ProgramRow[]);
+        setPrograms(progRows);
       } catch (e: any) {
         if (!cancelled) setErr(e?.message ?? 'Failed to load guide.');
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
-    return () => { cancelled = true; };
-  }, [supabase, windowStart, windowEnd]);
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase, windowStartISO, windowEndISO, windowStartDB, windowEndDB]);
 
-  // Group programs by channel_id (stringified to be robust)
+  // Group programs by channel_id
   const progsByChannel = useMemo(() => {
     const map = new Map<string, ProgramRow[]>();
     const sorted = [...programs].sort(byStartAsc);
@@ -126,8 +180,10 @@ export default function HorizontalGuide({ lookAheadHours = 6, lookBackHours = 6 
   return (
     <section className="mb-6">
       <div className="flex items-center justify-between mb-2">
-        <h2 className="text-xl font-semibold text-white">📺 What’s On (Now & Next)</h2>
-        <div className="text-xs text-slate-400">Window: {lookBackHours}h back → {lookAheadHours}h ahead</div>
+        <h2 className="text-xl font-semibold text-white">📺 What’s On (Now &amp; Next)</h2>
+        <div className="text-xs text-slate-400">
+          Window: {lookBackHours}h back → {lookAheadHours}h ahead
+        </div>
       </div>
 
       {loading ? (
@@ -142,6 +198,7 @@ export default function HorizontalGuide({ lookAheadHours = 6, lookBackHours = 6 
             {channels.map((ch) => {
               const chKey = toStr(ch.id);
               const list = progsByChannel.get(chKey) || [];
+
               // find current & next:
               let current: ProgramRow | undefined;
               let next: ProgramRow | undefined;
@@ -153,16 +210,20 @@ export default function HorizontalGuide({ lookAheadHours = 6, lookBackHours = 6 
                   next = list[i + 1];
                   break;
                 }
-                if (new Date(p.start_time) > now) {
-                  // we are between programs: no current, next is p
+                const pStart = toUtcDate(p.start_time);
+                if (pStart && pStart > now) {
+                  // between programs: no current, next is p
                   next = p;
                   break;
                 }
               }
 
-              // Fallback current: pick the last one that started before now
+              // Fallback current: last one that started before now (still robust)
               if (!current && list.length > 0) {
-                const before = list.filter(p => new Date(p.start_time) <= now);
+                const before = list.filter((p) => {
+                  const d = toUtcDate(p.start_time);
+                  return d ? d <= now : false;
+                });
                 if (before.length) current = before[before.length - 1];
               }
 
@@ -171,7 +232,9 @@ export default function HorizontalGuide({ lookAheadHours = 6, lookBackHours = 6 
                   {/* Channel cell */}
                   <div className="w-56 shrink-0 p-3 border-r border-slate-800">
                     <div className="text-sm text-slate-300">
-                      <div className="font-semibold text-white truncate">{displayChannelName(ch)}</div>
+                      <div className="font-semibold text-white truncate">
+                        {displayChannelName(ch)}
+                      </div>
                       <div className="text-xs text-slate-400">ID: {chKey}</div>
                     </div>
                     <div className="mt-2">
@@ -191,12 +254,21 @@ export default function HorizontalGuide({ lookAheadHours = 6, lookBackHours = 6 
                         <div className="text-xs uppercase tracking-wide text-sky-300 mb-1">Now</div>
                         {current ? (
                           <>
-                            <div className="text-sm font-semibold text-white truncate">{current.title || 'Untitled'}</div>
+                            <div className="text-sm font-semibold text-white truncate">
+                              {current.title || 'Untitled'}
+                            </div>
                             <div className="text-xs text-slate-400">
                               {fmtTime(current.start_time)}
-                              {typeof current.duration === 'number' && current.duration > 0
-                                ? ` – ${fmtTime(new Date(new Date(current.start_time).getTime() + current.duration * 1000).toISOString())}`
-                                : ''}
+                              {(() => {
+                                const st = toUtcDate(current!.start_time);
+                                const dur =
+                                  typeof current!.duration === 'number' && current!.duration > 0
+                                    ? current!.duration
+                                    : 1800;
+                                if (!st) return '';
+                                const en = addSeconds(st, dur);
+                                return ` – ${en.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+                              })()}
                             </div>
                           </>
                         ) : (
@@ -209,7 +281,9 @@ export default function HorizontalGuide({ lookAheadHours = 6, lookBackHours = 6 
                         <div className="text-xs uppercase tracking-wide text-amber-300 mb-1">Next</div>
                         {next ? (
                           <>
-                            <div className="text-sm font-semibold text-white truncate">{next.title || 'Upcoming program'}</div>
+                            <div className="text-sm font-semibold text-white truncate">
+                              {next.title || 'Upcoming program'}
+                            </div>
                             <div className="text-xs text-slate-400">
                               Starts {fmtTime(next.start_time)}
                             </div>
@@ -221,12 +295,23 @@ export default function HorizontalGuide({ lookAheadHours = 6, lookBackHours = 6 
 
                       {/* Optional: show one more upcoming in window */}
                       {list
-                        .filter(p => new Date(p.start_time) > (next ? new Date(next.start_time) : now))
+                        .filter((p) => {
+                          const ds = toUtcDate(p.start_time);
+                          const dn = next ? toUtcDate(next.start_time) : null;
+                          return ds && (!dn ? ds > now : ds > dn);
+                        })
                         .slice(0, 1)
                         .map((p) => (
-                          <div key={p.id} className="min-w-[240px] rounded-lg border border-slate-700 bg-slate-800 p-3">
-                            <div className="text-xs uppercase tracking-wide text-slate-300 mb-1">Later</div>
-                            <div className="text-sm font-semibold text-white truncate">{p.title || 'Program'}</div>
+                          <div
+                            key={p.id}
+                            className="min-w-[240px] rounded-lg border border-slate-700 bg-slate-800 p-3"
+                          >
+                            <div className="text-xs uppercase tracking-wide text-slate-300 mb-1">
+                              Later
+                            </div>
+                            <div className="text-sm font-semibold text-white truncate">
+                              {p.title || 'Program'}
+                            </div>
                             <div className="text-xs text-slate-400">Starts {fmtTime(p.start_time)}</div>
                           </div>
                         ))}
