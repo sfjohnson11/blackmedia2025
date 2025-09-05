@@ -12,7 +12,6 @@ type Channel = {
   slug?: string | null;
   description?: string | null;
   logo_url?: string | null;
-  image_url?: string | null;
   youtube_is_live?: boolean | null;
   is_active?: boolean | null;
 };
@@ -24,7 +23,7 @@ export default async function HomePage() {
 
   const { data, error } = await supabase
     .from("channels")
-    .select("id, name, slug, description, logo_url, image_url, youtube_is_live, is_active")
+    .select("id, name, slug, description, logo_url, youtube_is_live, is_active") // ← removed image_url
     .eq("is_active", true)
     .order("name", { ascending: true })
     .order("id", { ascending: true });
@@ -35,7 +34,6 @@ export default async function HomePage() {
     slug: r.slug ?? null,
     description: r.description ?? null,
     logo_url: r.logo_url ?? null,
-    image_url: r.image_url ?? null,
     youtube_is_live: r.youtube_is_live ?? null,
     is_active: r.is_active ?? null,
   }));
@@ -58,7 +56,7 @@ export default async function HomePage() {
         ) : (
           <div className="grid grid-flow-row gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
             {channels.map((ch) => {
-              const art = ch.logo_url || ch.image_url || null;
+              const art = ch.logo_url || null; // ← use logo_url only
               return (
                 <Link
                   href={`/watch/${ch.id}`}
