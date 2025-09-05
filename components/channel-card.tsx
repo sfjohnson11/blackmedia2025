@@ -9,13 +9,16 @@ interface ChannelCardProps {
 }
 
 export function ChannelCard({ channel }: ChannelCardProps) {
-  const cleanedName = cleanChannelName(channel.name);
   const idNum =
     typeof channel.id === "string" ? Number.parseInt(channel.id, 10) : (channel.id as number);
+
+  const cleanedName = cleanChannelName(channel.name ?? `Channel ${idNum}`);
   const needsPassword = PROTECTED_CHANNELS.has(idNum);
 
+  // Use logo_url only; clean fallback text
   const imageUrl =
-    channel.logo_url || `https://placehold.co/400x225?text=${encodeURIComponent(channel.name)}`;
+    channel.logo_url ||
+    `https://placehold.co/400x225?text=${encodeURIComponent(cleanedName)}`;
 
   return (
     <Link
@@ -48,7 +51,7 @@ export function ChannelCard({ channel }: ChannelCardProps) {
         <div className="p-3">
           <h3 className="font-bold text-white truncate">{cleanedName}</h3>
           <p className="text-xs text-gray-400 mt-1">
-            Channel {channel.id}
+            Channel {idNum}
             {needsPassword && (
               <span className="ml-2 inline-flex items-center">
                 <Lock className="h-3 w-3 text-red-500 mr-1" />
