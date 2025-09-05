@@ -1,15 +1,16 @@
 // components/youtube-embed.tsx
 "use client";
+
 type Props = {
   channelId: string;  // YouTube Channel ID
   title?: string;
-  live?: boolean;
   muted?: boolean;
 };
 
-export default function YouTubeEmbed({ channelId, title, live = true, muted = true }: Props) {
-  // For live 24/7 channels, YouTube auto-picks the live stream
-  const src = `https://www.youtube.com/embed/live_stream?channel=${encodeURIComponent(channelId)}&autoplay=1&mute=${muted ? "1" : "0"}`;
+export default function YouTubeEmbed({ channelId, title, muted = true }: Props) {
+  const src =
+    `https://www.youtube.com/embed/live_stream?channel=${encodeURIComponent(channelId)}` +
+    `&autoplay=1&controls=1&mute=${muted ? "1" : "0"}`;
 
   return (
     <iframe
