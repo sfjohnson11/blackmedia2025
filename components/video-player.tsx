@@ -10,7 +10,7 @@ type Props = {
   isStandby?: boolean;
   onVideoEnded?: () => void;
   onError?: () => void;                  // used for standby fallback on runtime errors
-  autoPlay?: boolean;                    // default false
+  autoPlay?: boolean;                    // default false (controls visible)
   muted?: boolean;                       // default false
   playsInline?: boolean;                 // default true
   preload?: "auto" | "metadata" | "none"; // default "metadata"
@@ -60,7 +60,7 @@ export default function VideoPlayer({
           video.src = src; // fallback
         }
       } else {
-        video.src = src;
+        video.src = src; // MP4 or native HLS
       }
 
       video.load();
@@ -69,7 +69,7 @@ export default function VideoPlayer({
         try {
           await video.play();
         } catch {
-          // autoplay blocked → user clicks big play
+          // autoplay blocked → user can click big play; controls are visible
         }
       }
     }
