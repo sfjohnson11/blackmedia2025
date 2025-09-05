@@ -5,6 +5,7 @@ import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 
+/* ---------- types ---------- */
 type ChannelRow = {
   id: number;
   name?: string | null;
@@ -30,10 +31,8 @@ function toUtcDate(val?: string | Date | null): Date | null {
   if (!val) return null;
   if (val instanceof Date) return Number.isNaN(val.getTime()) ? null : val;
   let s = String(val).trim();
-  // "YYYY-MM-DD HH:mm:ss[.sss]" (no tz) → treat as UTC
-  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?$/.test(s)) s = s.replace(" ", "T") + "Z";
-  // If no explicit tz (+/- or Z), force UTC
-  else if (!/[zZ]|[+\-]\d{2}:\d{2}$/.test(s)) s = s + "Z";
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?$/.test(s)) s = s.replace(" ", "T") + "Z"; // treat as UTC
+  else if (!/[zZ]|[+\-]\d{2}:\d{2}$/.test(s)) s = s + "Z"; // force UTC when tz missing
   const d = new Date(s);
   return Number.isNaN(d.getTime()) ? null : d;
 }
@@ -44,6 +43,7 @@ function toDbTimestampStringUTC(d: Date) {
          `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
 }
 
+/* ---------- layout constants ---------- */
 const PX_PER_MINUTE = 2;
 const ROW_HEIGHT = 64;
 const CHANNEL_COL_WIDTH = 220;
@@ -57,7 +57,7 @@ const artOf  = (ch: ChannelRow) => ch.logo_url || null;
 function computeBlockStyle(p: ProgramRow, winStart: Date, winEnd: Date) {
   const startD = toUtcDate(p.start_time);
   if (!startD) return null;
-  const dur = (typeof p.duration === "number" && p.duration > 0) ? p.duration : 1;
+  const dur = (typeof p.duration === "number" && isFinite(p.duration) && p.duration > 0) ? p.duration : 1;
   const start = startD.getTime();
   const end   = start + dur * 1000;
   const ws = winStart.getTime(), we = winEnd.getTime();
@@ -65,7 +65,7 @@ function computeBlockStyle(p: ProgramRow, winStart: Date, winEnd: Date) {
   if (ce <= ws || cs >= we) return null;
   const left  = ((cs - ws) / 60000) * PX_PER_MINUTE;
   const width = Math.max(0.5, ((ce - cs) / 60000) * PX_PER_MINUTE);
-  return { left, width, endMs: end };
+  return { left, width, endMs: end, startMs: start };
 }
 
 export default function TVGuideGrid() {
@@ -93,14 +93,16 @@ export default function TVGuideGrid() {
       try {
         setLoading(true); setErr(null);
 
-        // Channels: remove image_url to avoid DB errors
+        // Channels: include true OR null so you don't hide channels accidentally
         const { data: chRows, error: chErr } = await supabase
           .from("channels")
           .select("id, name, slug, description, logo_url, youtube_channel_id, youtube_is_live, is_active")
-          .eq("is_active", true);
+          .or("is_active.is.true,is_active.is.null")
+          .order("name", { ascending: true })
+          .order("id", { ascending: true });
         if (chErr) throw new Error(chErr.message);
 
-        // Programs within rolling window
+        // Programs within rolling window — ISO first
         const startISO = windowStart.toISOString();
         const endISO   = windowEnd.toISOString();
 
@@ -114,7 +116,7 @@ export default function TVGuideGrid() {
         if (prErrA) throw new Error(prErrA.message);
         progRows = (prA || []) as ProgramRow[];
 
-        // Fallback: if zero results, try DB TEXT timestamp window
+        // Fallback if ISO yields none — use DB TEXT window
         if (progRows.length === 0) {
           const startDB = toDbTimestampStringUTC(new Date(startISO));
           const endDB   = toDbTimestampStringUTC(new Date(endISO));
@@ -130,16 +132,7 @@ export default function TVGuideGrid() {
 
         if (cancelled) return;
 
-        // Stable order: Name A→Z, then ID
-        const ordered = (chRows ?? [])
-          .slice()
-          .sort((a: any, b: any) => {
-            const an = (a.name || "").localeCompare(b.name || "");
-            if (an !== 0) return an;
-            return a.id - b.id;
-          });
-
-        setChannels(ordered as ChannelRow[]);
+        setChannels((chRows ?? []) as ChannelRow[]);
         setPrograms(progRows);
       } catch (e: any) {
         if (!cancelled) setErr(e.message ?? "Failed to load guide.");
@@ -178,12 +171,20 @@ export default function TVGuideGrid() {
     return Math.max(0, Math.min(totalWidth, (ms / 60000) * PX_PER_MINUTE));
   }, [windowStart, totalWidth]);
 
+  const channelCount = channels.length;
+  const programCount = programs.length;
+
   return (
     <section className="space-y-3">
+      {/* Toolbar with Back link + counts */}
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-white">📺 Schedule (Last 6h → Next 72h)</h1>
+        <div className="flex items-center gap-3">
+          <Link href="/" className="text-sm text-sky-300 hover:underline">← Back to Home</Link>
+          <h1 className="text-xl font-semibold text-white">📺 Schedule (Last 6h → Next 72h)</h1>
+        </div>
         <div className="text-xs text-slate-400">
-          Window: {windowStart.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} –{" "}
+          Channels: {channelCount} • Programs in window: {programCount} • Window:&nbsp;
+          {windowStart.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} –{" "}
           {windowEnd.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
         </div>
       </div>
@@ -194,6 +195,10 @@ export default function TVGuideGrid() {
         <div className="rounded border border-red-500 bg-red-900/30 p-3 text-red-200">{err}</div>
       ) : channels.length === 0 ? (
         <div className="text-slate-400">No channels found.</div>
+      ) : programCount === 0 ? (
+        <div className="text-slate-400">
+          No programs in the current window. Try widening the window or check your <code>start_time</code> format.
+        </div>
       ) : (
         <div
           ref={scrollRef}
@@ -263,27 +268,33 @@ export default function TVGuideGrid() {
                     {ticks.map((t, i) => (
                       <div key={i} className="absolute top-0 h-full border-l border-slate-800/40" style={{ left: t.left }} />
                     ))}
-                    {progs.map((p) => {
-                      const pos = computeBlockStyle(p, windowStart, windowEnd);
-                      if (!pos) return null;
-                      const startD = toUtcDate(p.start_time);
-                      const endD = new Date(pos.endMs);
-                      return (
-                        <div
-                          key={p.id}
-                          className="absolute rounded-lg border border-slate-700 bg-slate-800/90 hover:bg-slate-700/90 transition-colors"
-                          style={{ left: pos.left, width: pos.width, top: 8, height: ROW_HEIGHT - 16 }}
-                          title={`${p.title ?? "Program"}\n${startD ? fmtHM(startD) : "—"} – ${fmtHM(endD)}`}
-                        >
-                          <div className="px-3 py-2 h-full flex flex-col justify-center">
-                            <div className="text-sm font-semibold text-white truncate">{p.title ?? "Untitled"}</div>
-                            <div className="text-[11px] text-slate-300">
-                              {startD ? fmtHM(startD) : "—"} – {fmtHM(endD)}
+                    {progs.length === 0 ? (
+                      <div className="absolute inset-0 flex items-center pl-3 text-[11px] text-slate-400">
+                        No programs for this channel in the current window.
+                      </div>
+                    ) : (
+                      progs.map((p) => {
+                        const pos = computeBlockStyle(p, windowStart, windowEnd);
+                        if (!pos) return null;
+                        const startD = new Date(pos.startMs);
+                        const endD = new Date(pos.endMs);
+                        return (
+                          <div
+                            key={p.id}
+                            className="absolute rounded-lg border border-slate-700 bg-slate-800/90 hover:bg-slate-700/90 transition-colors"
+                            style={{ left: pos.left, width: pos.width, top: 8, height: ROW_HEIGHT - 16 }}
+                            title={`${p.title ?? "Program"}\n${fmtHM(startD)} – ${fmtHM(endD)}`}
+                          >
+                            <div className="px-3 py-2 h-full flex flex-col justify-center">
+                              <div className="text-sm font-semibold text-white truncate">{p.title ?? "Untitled"}</div>
+                              <div className="text-[11px] text-slate-300">
+                                {fmtHM(startD)} – {fmtHM(endD)}
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      );
-                    })}
+                        );
+                      })
+                    )}
                   </div>
                 </div>
               );
