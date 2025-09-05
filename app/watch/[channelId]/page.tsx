@@ -31,6 +31,11 @@ const CH21 = 21;
 const YT_FALLBACK = "UCMkW239dyAxDyOFDP0D6p2g";
 const STANDBY_FILE = "standby_blacktruthtv.mp4";
 
+/* Build public root ONCE — no getPublicUrl calls */
+const PUB_ROOT =
+  (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "") +
+  "/storage/v1/object/public";
+
 /* ---------- helpers ---------- */
 function toUtcDate(val?: string | Date | null): Date | null {
   if (!val) return null;
@@ -44,29 +49,21 @@ function toUtcDate(val?: string | Date | null): Date | null {
 const addSeconds = (d: Date, s: number) => new Date(d.getTime() + s * 1000);
 
 const bucketFor = (id: number) => `channel${id}`;
-const cleanKey = (k: string) => k.trim().replace(/^\.?\//, "").replace(/\\/g, "/").replace(/\/{2,}/g, "/");
+const cleanKey = (k: string) =>
+  k.trim().replace(/^\.?\//, "").replace(/\\/g, "/").replace(/\/{2,}/g, "/");
 
-function publicUrl(bucket: string, key: string): string | undefined {
-  try {
-    const { data } = supabase.storage.from(bucket).getPublicUrl(cleanKey(key));
-    return data?.publicUrl || undefined;
-  } catch { return undefined; }
+function standbyUrl(channelId: number): string {
+  return `${PUB_ROOT}/${bucketFor(channelId)}/${STANDBY_FILE}`;
 }
 
-function standbyUrl(channelId: number): string | undefined {
-  const base = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "");
-  if (!base) return undefined;
-  return `${base}/storage/v1/object/public/${bucketFor(channelId)}/${STANDBY_FILE}`;
-}
-
-/** EXACT resolution you want:
+/** EXACT resolution:
  * - If mp4_url is full https:// or starts with '/', use as-is.
- * - Else treat it as a key in channel{ID}.
- * - If it starts with 'channel{ID}/', also try stripped version.
+ * - Else treat as a key in channel{ID}, also strip accidental 'channel{ID}/' prefix.
+ * - We DO NOT call supabase.storage.getPublicUrl.
  */
 function resolveMp4Src(p: Program, channelId: number): { src?: string; tried: string[] } {
   const tried: string[] = [];
-  const raw = (p?.mp4_url || "").trim();
+  let raw = (p?.mp4_url || "").trim();
   if (!raw) return { tried };
 
   if (/^https?:\/\//i.test(raw) || raw.startsWith("/")) {
@@ -74,22 +71,10 @@ function resolveMp4Src(p: Program, channelId: number): { src?: string; tried: st
     return { src: raw, tried };
   }
 
-  const bucket = bucketFor(channelId);
-  const key = cleanKey(raw);
-
-  const u1 = publicUrl(bucket, key);
-  tried.push(`${bucket}:${key}`);
-  if (u1) return { src: u1, tried };
-
-  const rx = new RegExp(`^channel${channelId}/`, "i");
-  if (rx.test(key)) {
-    const stripped = key.replace(rx, "");
-    const u2 = publicUrl(bucket, stripped);
-    tried.push(`${bucket}:${stripped}`);
-    if (u2) return { src: u2, tried };
-  }
-
-  return { tried };
+  raw = cleanKey(raw).replace(new RegExp(`^channel${channelId}/`, "i"), "");
+  const url = `${PUB_ROOT}/${bucketFor(channelId)}/${raw}`;
+  tried.push(url);
+  return { src: url, tried };
 }
 
 /* ---------- page ---------- */
