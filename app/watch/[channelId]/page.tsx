@@ -9,7 +9,7 @@ import VideoPlayer from "@/components/video-player";
 import YouTubeEmbed from "@/components/youtube-embed";
 
 /* ---------- minimal types ---------- */
-type ChannelRow = {
+type Channel = {
   id: number;
   name?: string | null;
   logo_url?: string | null;           // poster only
@@ -17,7 +17,7 @@ type ChannelRow = {
   [k: string]: any;
 };
 
-type ProgramRow = {
+type Program = {
   id: string | number;
   channel_id: number;
   title: string | null;
@@ -64,7 +64,7 @@ function standbyUrl(channelId: number): string | undefined {
  * - Else treat it as a key in channel{ID}.
  * - If it starts with 'channel{ID}/', also try stripped version.
  */
-function resolveMp4Src(p: ProgramRow, channelId: number): { src?: string; tried: string[] } {
+function resolveMp4Src(p: Program, channelId: number): { src?: string; tried: string[] } {
   const tried: string[] = [];
   const raw = (p?.mp4_url || "").trim();
   if (!raw) return { tried };
@@ -101,9 +101,9 @@ export default function WatchPage() {
 
   const idNum = useMemo(() => Number(channelId), [channelId]);
 
-  const [channel, setChannel] = useState<ChannelRow | null>(null);
-  const [active, setActive] = useState<ProgramRow | null>(null);
-  const [nextUp, setNextUp] = useState<ProgramRow | null>(null);
+  const [channel, setChannel] = useState<Channel | null>(null);
+  const [active, setActive] = useState<Program | null>(null);
+  const [nextUp, setNextUp] = useState<Program | null>(null);
 
   const [src, setSrc] = useState<string | undefined>(undefined);
   const [usingStandby, setUsingStandby] = useState(false);
@@ -116,12 +116,12 @@ export default function WatchPage() {
   const playerKey = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // load channel once
+  // load channel
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true); setErr(null);
-      const ch = await fetchChannelDetails(channelId!); // uses select("*") inside your lib
+      const ch = await fetchChannelDetails(channelId!); // lib fetch uses select("*")
       if (cancelled) return;
       if (!ch) { setErr("Channel not found."); setLoading(false); return; }
       setChannel({ id: Number((ch as any).id), ...ch });
@@ -140,7 +140,7 @@ export default function WatchPage() {
   const pickAndPlay = useCallback(async () => {
     if (!channel) return;
 
-    // Channel 21 → YouTube Live (no HLS)
+    // CH21 → YouTube Live (embed, never a blank MP4 src)
     if (channel.id === CH21) {
       const yt = channel.youtube_channel_id || process.env.NEXT_PUBLIC_YT_CH21 || YT_FALLBACK;
       setActive({
@@ -163,7 +163,6 @@ export default function WatchPage() {
     try {
       const now = new Date();
 
-      // fetch all programs for the channel (simple + deterministic)
       const { data, error } = await supabase
         .from("programs")
         .select("id, channel_id, title, mp4_url, start_time, duration")
@@ -171,10 +170,10 @@ export default function WatchPage() {
         .order("start_time", { ascending: true });
       if (error) throw new Error(error.message);
 
-      const list = (data || []) as ProgramRow[];
+      const list = (data || []) as Program[];
 
-      // strictly active window
-      let current: ProgramRow | null = null;
+      // find strict active
+      let current: Program | null = null;
       for (const p of list) {
         const d = Number((p as any).duration);
         if (!p.start_time || !Number.isFinite(d) || d <= 0) continue;
@@ -225,7 +224,7 @@ export default function WatchPage() {
     if (!channel || !idNum) return;
     void pickAndPlay();
 
-    // refresh every minute if tab visible
+    // refresh every minute if visible
     const iv = setInterval(() => {
       if (document.visibilityState === "visible") void pickAndPlay();
     }, 60_000);
@@ -252,15 +251,15 @@ export default function WatchPage() {
     content = (
       <VideoPlayer
         key={playerKey.current}
-        src={src}
-        poster={poster}
+        src={src}              // ← MP4 URL ONLY
+        poster={poster}        // ← Poster ONLY (never used as src)
         programTitle={active ? active.title || undefined : "Standby (waiting for next program)"}
         isStandby={usingStandby}
         onVideoEnded={() => void pickAndPlay()}
-        autoPlay={false}      // controls visible
-        muted={false}
+        autoPlay={true}        // start immediately
+        muted={true}           // lets browsers autoplay; controls are still visible
         playsInline
-        preload="metadata"
+        preload="auto"
       />
     );
   } else {
@@ -308,11 +307,10 @@ export default function WatchPage() {
           </div>
         )}
 
-        {(search?.get("debug") ?? "0") === "1" && (
+        {debug && (
           <div className="mt-2 text-xs bg-gray-900/70 border border-gray-700 rounded p-3 space-y-1">
             <div><b>Bucket:</b> {bucketFor(idNum)}</div>
             <div className="truncate"><b>Playing Src:</b> {src || "—"}</div>
-            {tried.length > 0 && <div className="truncate"><b>Tried:</b> {tried.join("  |  ")}</div>}
             <div><b>Using Standby:</b> {usingStandby ? "yes" : "no"}</div>
             <div><b>Poster (logo_url):</b> {poster || "—"}</div>
           </div>
