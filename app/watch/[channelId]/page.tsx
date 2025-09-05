@@ -38,7 +38,7 @@ function standbyProgram(channelKey: number | string): Program {
     id: STANDBY_PLACEHOLDER_ID,
     channel_id: channelKey,
     title: "Standby Programming",
-    mp4_url: STANDBY_FILE,              // relative; resolver will choose the right bucket
+    mp4_url: STANDBY_FILE,              // relative; resolver picks the right bucket
     start_time: nowUtc().toISOString(),
     duration: 300,
   } as any;
@@ -105,17 +105,37 @@ export default function WatchPage() {
   const fetchProgramsForChannel = useCallback(async (chId: number | string): Promise<Program[]> => {
     const sel = "id, channel_id, title, mp4_url, start_time, duration";
 
-    let q;
-    if (isNumeric(chId)) {
-      q = supabase.from("programs").select(sel).eq("channel_id", chId).order("start_time", { ascending: true });
-    } else {
-      q = supabase.from("programs").select(sel).eq("channel_id", String(chId)).order("start_time", { ascending: true });
+    // primary: exact match on channel_id type (number vs string)
+    const { data, error } = isNumeric(chId)
+      ? await supabase.from("programs").select(sel).eq("channel_id", chId).order("start_time", { ascending: true })
+      : await supabase.from("programs").select(sel).eq("channel_id", String(chId)).order("start_time", { ascending: true });
+
+    let rows = (data || []) as Program[];
+
+    // fallback: if nothing, scan a 48h window and keep rows that clearly belong
+    if (rows.length === 0) {
+      const start = new Date(Date.now() - 24 * 3600 * 1000);
+      const end   = new Date(Date.now() + 24 * 3600 * 1000);
+      const { data: win } = await supabase
+        .from("programs")
+        .select(sel)
+        .gte("start_time", start.toISOString())
+        .lte("start_time", end.toISOString())
+        .order("start_time", { ascending: true });
+
+      const chStr = String(chId).trim().toLowerCase();
+      rows = (win || []).filter((r: any) => {
+        const cid = String(r.channel_id ?? "").trim().toLowerCase();
+        if (cid === chStr) return true;
+        if (isNumeric(chId)) {
+          // also accept obvious bucket hints in mp4_url like "channel4/..."
+          const u = String(r.mp4_url || "").toLowerCase();
+          return u.startsWith(`channel${chId}/`) || u.includes(`/channel${chId}/`);
+        }
+        return false;
+      }) as Program[];
     }
 
-    const { data, error } = await q;
-    if (error) throw new Error(error.message);
-
-    const rows = (data || []) as Program[];
     rows.sort((a, b) => {
       const as = toUtcDate(a.start_time)?.getTime() ?? 0;
       const bs = toUtcDate(b.start_time)?.getTime() ?? 0;
