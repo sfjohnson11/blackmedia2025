@@ -30,10 +30,8 @@ export async function fetchChannelDetails(channelIdOrSlug: string | number) {
 }
 
 /**
- * Keep this deliberately simple:
- * - If program.mp4_url is http(s) or starts with '/', return as-is.
- * - If it's a storage-ish path (e.g., "shows/news/0900.mp4"), let the WATCH page resolve it.
- * - No DB writes, no schema assumptions.
+ * If program.mp4_url is http(s) or starts with '/', return as-is.
+ * Else return raw relative path (WATCH page resolves to public URL).
  */
 export function getVideoUrlForProgram(program: {
   mp4_url?: string | null;
@@ -41,5 +39,5 @@ export function getVideoUrlForProgram(program: {
   const raw = (program?.mp4_url || "").trim();
   if (!raw) return undefined;
   if (/^https?:\/\//i.test(raw) || raw.startsWith("/")) return raw;
-  return raw; // relative/storage path—WATCH page resolver will convert to public URL
+  return raw;
 }
