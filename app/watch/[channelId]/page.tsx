@@ -3,8 +3,8 @@
 
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { ChevronLeft, Loader2 } from "lucide-react";
+import { useParams, useSearchParams } from "next/navigation";
+import { Loader2 } from "lucide-react";
 
 import VideoPlayer from "../../../components/video-player";
 import YouTubeEmbed from "../../../components/youtube-embed";
@@ -13,18 +13,54 @@ import {
   fetchChannelDetails,
   getVideoUrlForProgram,
   STANDBY_PLACEHOLDER_ID,
-  toUtcDate,
-  addSeconds,
-  type Program,
-  type Channel,
 } from "../../../lib/supabase";
 
+// ---- time helpers (UTC-safe) ----
+function toUtcDate(val?: string | Date | null): Date | null {
+  if (!val) return null;
+  if (val instanceof Date) return Number.isNaN(val.getTime()) ? null : val;
+  let s = String(val).trim();
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?$/.test(s)) s = s.replace(" ", "T") + "Z";
+  else if (!/[zZ]|[+\-]\d{2}:\d{2}$/.test(s)) s = s + "Z";
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+const addSeconds = (d: Date, secs: number) => new Date(d.getTime() + secs * 1000);
+
+const SAFE_DEFAULT_SECS = 1800; // 30 min default if duration missing
+function programIsNow(p: { start_time: string; duration: number | null | undefined }, now = new Date()) {
+  const st = toUtcDate(p.start_time);
+  const dur = Number.isFinite(Number(p.duration)) && Number(p.duration)! > 0
+    ? Number(p.duration)!
+    : SAFE_DEFAULT_SECS;
+  if (!st) return false;
+  const en = addSeconds(st, dur);
+  return now.getTime() >= st.getTime() - 2000 && now.getTime() < en.getTime() + 2000;
+}
+
+// ---- constants & types ----
 const CH21_ID = 21;
 const STANDBY_FILE = "standby_blacktruthtv.mp4";
 
+type Channel = {
+  id: number | string;
+  name?: string | null;
+  logo_url?: string | null;
+  youtube_channel_id?: string | null;
+  [k: string]: any;
+};
+type Program = {
+  id: string | number;
+  channel_id: number | string;
+  title: string | null;
+  mp4_url: string | null;
+  start_time: string;
+  duration: number | null;
+  [k: string]: any;
+};
+
 export default function WatchPage() {
   const { channelId } = useParams<{ channelId: string }>();
-  const router = useRouter();
   const search = useSearchParams();
   const debugOn = (search?.get("debug") ?? "0") === "1";
 
@@ -38,7 +74,7 @@ export default function WatchPage() {
 
   const playerKey = useRef(0);
 
-  // Load channel details
+  // Load channel details once
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -46,14 +82,14 @@ export default function WatchPage() {
       setErr(null);
       const details = await fetchChannelDetails(channelId!);
       if (cancelled) return;
-      setChannel(details);
+      setChannel(details as any);
       if (!details) setErr("Channel not found.");
       setLoading(false);
     })();
     return () => { cancelled = true; };
   }, [channelId]);
 
-  /** Build a minimal standby Program that resolves via getVideoUrlForProgram */
+  // Standby row
   const standbyFor = useCallback((chId: number): Program => {
     const now = new Date();
     return {
@@ -63,18 +99,19 @@ export default function WatchPage() {
       mp4_url: `channel${chId}/${STANDBY_FILE}`,
       duration: 300,
       start_time: now.toISOString(),
-      poster_url: null,
-    };
+    } as Program;
   }, []);
 
-  /** Pick the active program (strict window); else fallback to standby. */
+  // Fetch current/next
   const fetchCurrentProgram = useCallback(async (chId: number) => {
     setLoading(true);
-    const now = new Date();
+    setErr(null);
     try {
+      const isYouTube = chId === CH21_ID;
+
       const { data, error } = await supabase
         .from("programs")
-        .select("id, channel_id, title, mp4_url, start_time, duration") // ← no description
+        .select("id, channel_id, title, mp4_url, start_time, duration")
         .eq("channel_id", chId)
         .order("start_time", { ascending: true });
 
@@ -82,22 +119,15 @@ export default function WatchPage() {
 
       const list = (data || []) as Program[];
 
-      // Find active program
       let active: Program | null = null;
       for (const p of list) {
-        const d = Number(p.duration);
-        if (!p.start_time || !Number.isFinite(d) || d <= 0) continue;
-        const st = toUtcDate(p.start_time);
-        if (!st) continue;
-        const en = addSeconds(st, d);
-        if (now >= st && now < en) {
+        if (p?.start_time && programIsNow(p, new Date())) {
           active = { ...p, channel_id: chId };
           break;
         }
       }
 
-      // Channel 21 → YouTube only (don’t pass MP4 to player)
-      if (chId === CH21_ID) {
+      if (isYouTube) {
         setCurrentProgram(null);
       } else {
         if (!active) active = standbyFor(chId);
@@ -113,12 +143,12 @@ export default function WatchPage() {
         });
       }
 
-      // Upcoming (next 6)
+      const nowIso = new Date().toISOString();
       const { data: up, error: upErr } = await supabase
         .from("programs")
-        .select("id, channel_id, title, mp4_url, start_time, duration") // ← no description
+        .select("id, channel_id, title, mp4_url, start_time, duration")
         .eq("channel_id", chId)
-        .gt("start_time", now.toISOString())
+        .gt("start_time", nowIso)
         .order("start_time", { ascending: true })
         .limit(6);
       if (!upErr && up) setUpcomingPrograms(up as Program[]);
@@ -142,32 +172,33 @@ export default function WatchPage() {
     return () => clearInterval(iv);
   }, [channelIdNum, fetchCurrentProgram]);
 
+  // Render prep
   const isYouTubeChannel =
     channel?.id === CH21_ID && (channel.youtube_channel_id || "").trim().length > 0;
 
   const videoSrc =
-    currentProgram && !isYouTubeChannel ? getVideoUrlForProgram(currentProgram) : undefined;
+    currentProgram && !isYouTubeChannel ? getVideoUrlForProgram(currentProgram as any) : undefined;
 
-  const posterSrc = currentProgram?.poster_url || channel?.logo_url || undefined;
+  const posterSrc = channel?.logo_url || undefined;
   const isStandby = currentProgram?.id === STANDBY_PLACEHOLDER_ID;
 
   // UI
   let content: ReactNode;
   if (err) {
     content = <p className="text-red-400 p-4 text-center">Error: {err}</p>;
-  } else if (loading && !currentProgram && !isYouTubeChannel) {
-    content = (
-      <div className="flex flex-col items-center justify-center h-full">
-        <Loader2 className="h-10 w-10 animate-spin text-red-500 mb-2" />
-        <p>Loading Channel...</p>
-      </div>
-    );
   } else if (isYouTubeChannel) {
     content = (
       <YouTubeEmbed
         channelId={channel!.youtube_channel_id as string}
         title={channel?.name ? `${channel.name} Live` : "Live"}
       />
+    );
+  } else if (loading && !currentProgram) {
+    content = (
+      <div className="flex flex-col items-center justify-center h-full">
+        <Loader2 className="h-10 w-10 animate-spin text-red-500 mb-2" />
+        <p>Loading Channel...</p>
+      </div>
     );
   } else if (currentProgram && videoSrc) {
     content = (
@@ -178,30 +209,23 @@ export default function WatchPage() {
         programTitle={currentProgram?.title || undefined}
         isStandby={isStandby}
         onVideoEnded={() => void fetchCurrentProgram(channelIdNum)}
-        autoPlay={true}   // tries sound-first; falls back to muted if blocked
+        autoPlay={true}
         muted={false}
         playsInline
         preload="auto"
       />
     );
   } else {
-    content = <p className="text-gray-400 p-4 text-center">Initializing channel...</p>;
+    content = (
+      <p className="text-gray-400 p-4 text-center">
+        Standby… waiting for next program.
+      </p>
+    );
   }
 
   return (
     <div className="bg-black min-h-screen flex flex-col text-white">
-      {/* header */}
-      <div className="p-4 flex items-center justify-between bg-gray-900/50 sticky top-0 z-10">
-        <button onClick={() => router.back()} className="p-2 rounded-full hover:bg-gray-700" aria-label="Go back">
-          <ChevronLeft className="h-6 w-6" />
-        </button>
-        <h1 className="text-xl font-semibold truncate px-2">
-          {channel?.name || `Channel ${channelId}`}
-        </h1>
-        <div className="w-10 h-10" />
-      </div>
-
-      {/* player */}
+      {/* player area */}
       <div className="w-full aspect-video bg-black flex items-center justify-center">
         {content}
       </div>
