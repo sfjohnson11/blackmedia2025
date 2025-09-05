@@ -1,43 +1,68 @@
-// lib/supabase.ts
-import { createClient } from "@supabase/supabase-js";
+// lib/supabase.ts (add or replace your existing resolver)
+import { supabase } from "./supabaseClient"; // or your local export
+// import type { Program } from "@/types";   // keep your existing Program type
 
-export const STANDBY_PLACEHOLDER_ID = "__standby__";
+const ROOT = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "");
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+function cleanKey(k: string) {
+  return k.trim().replace(/^\.?\//, "").replace(/\\/g, "/").replace(/\/{2,}/g, "/");
+}
 
-export const supabase = createClient(url, anon, {
-  auth: { persistSession: false },
-});
-
-// Read-only: fetch a single channel by id or slug (NO image_url)
-export async function fetchChannelDetails(channelIdOrSlug: string | number) {
-  const base = supabase
-    .from("channels")
-    .select(
-      "id, name, slug, description, logo_url, youtube_channel_id, youtube_is_live, is_active"
-    )
-    .limit(1);
-
-  const query =
-    typeof channelIdOrSlug === "number" || /^\d+$/.test(String(channelIdOrSlug))
-      ? base.eq("id", Number(channelIdOrSlug))
-      : base.eq("slug", String(channelIdOrSlug));
-
-  const { data, error } = await query.single();
-  if (error) return null;
-  return data;
+function buildPublicUrl(bucket: string, objectPath: string): string | undefined {
+  const key = cleanKey(objectPath);
+  if (ROOT) return `${ROOT}/storage/v1/object/public/${bucket}/${key}`;
+  try {
+    // fallback if env var is missing
+    const { data } = supabase.storage.from(bucket).getPublicUrl(key);
+    return data?.publicUrl || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
- * If program.mp4_url is http(s) or starts with '/', return as-is.
- * Otherwise return the raw relative path; WATCH page will resolve to a public URL.
+ * Resolves the playable video URL for a program.
+ * Accepts:
+ *  - absolute URLs                 → pass through
+ *  - "bucket:key"                  → public URL
+ *  - "storage://bucket/key"        → public URL
+ *  - "bucket/key" (pseudo path)    → public URL
+ *  - "filename.mp4"                → channel{channel_id}/filename.mp4
+ * Also strips accidental "channel{id}/" or "freedom_school/" prefixes.
  */
-export function getVideoUrlForProgram(program: {
-  mp4_url?: string | null;
-}): string | undefined {
-  const raw = (program?.mp4_url || "").trim();
+export function getVideoUrlForProgram(p: Program): string | undefined {
+  let raw = (p?.mp4_url || "").trim();
   if (!raw) return undefined;
+
+  // absolute URL or absolute path
   if (/^https?:\/\//i.test(raw) || raw.startsWith("/")) return raw;
-  return raw;
+
+  // storage://bucket/key
+  let m = /^storage:\/\/([^/]+)\/(.+)$/.exec(raw);
+  if (m) {
+    const [, bucket, key] = m;
+    return buildPublicUrl(bucket, key);
+  }
+
+  // bucket:key
+  m = /^([a-z0-9_\-]+):(.+)$/i.exec(raw);
+  if (m) {
+    const [, bucket, key] = m;
+    return buildPublicUrl(bucket, key);
+  }
+
+  // bucket/key (pseudo)
+  m = /^([a-z0-9_\-]+)\/(.+)$/i.exec(raw);
+  if (m) {
+    const [, bucket, key] = m;
+    return buildPublicUrl(bucket, key);
+  }
+
+  // relative filename → channel bucket
+  const bucket = `channel${Number(p.channel_id)}`;
+  let key = cleanKey(raw)
+    .replace(new RegExp(`^${bucket}/`, "i"), "")
+    .replace(/^freedom_school\//i, ""); // tolerate that prefix if someone typed it
+
+  return buildPublicUrl(bucket, key);
 }
