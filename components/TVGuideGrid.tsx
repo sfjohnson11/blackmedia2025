@@ -1,4 +1,3 @@
-// components/TVGuideGrid.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -12,20 +11,38 @@ type ChannelRow = {
   slug?: string | null;
   description?: string | null;
   logo_url?: string | null;
-  image_url?: string | null;
   youtube_channel_id?: string | null;
   youtube_is_live?: boolean | null;
   is_active?: boolean | null;
 };
 
 type ProgramRow = {
-  id: number;
-  channel_id: number;     // INTEGER
+  id: number | string;
+  channel_id: number | string;   // tolerate either
   title: string | null;
   mp4_url: string | null;
-  start_time: string;     // ISO
-  duration: number;       // SECONDS
+  start_time: string;            // ISO or "YYYY-MM-DD HH:mm:ss"
+  duration: number | null;       // seconds
 };
+
+/* ---------- time helpers (robust) ---------- */
+function toUtcDate(val?: string | Date | null): Date | null {
+  if (!val) return null;
+  if (val instanceof Date) return Number.isNaN(val.getTime()) ? null : val;
+  let s = String(val).trim();
+  // "YYYY-MM-DD HH:mm:ss[.sss]" (no tz) → treat as UTC
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?$/.test(s)) s = s.replace(" ", "T") + "Z";
+  // If no explicit tz (+/- or Z), force UTC
+  else if (!/[zZ]|[+\-]\d{2}:\d{2}$/.test(s)) s = s + "Z";
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+const addSeconds = (d: Date, secs: number) => new Date(d.getTime() + secs * 1000);
+const pad = (n: number) => String(n).padStart(2, "0");
+function toDbTimestampStringUTC(d: Date) {
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ` +
+         `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+}
 
 const PX_PER_MINUTE = 2;
 const ROW_HEIGHT = 64;
@@ -35,17 +52,20 @@ const NOW_LINE_COLOR = "rgba(255,99,99,0.9)";
 const hoursFromNow = (h: number) => new Date(Date.now() + h * 3600_000);
 const fmtHM = (d: Date) => d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 const nameOf = (ch: ChannelRow) => ch.name || `Channel ${ch.id}`;
-const artOf  = (ch: ChannelRow) => ch.logo_url || ch.image_url || null;
+const artOf  = (ch: ChannelRow) => ch.logo_url || null;
 
 function computeBlockStyle(p: ProgramRow, winStart: Date, winEnd: Date) {
-  const start = new Date(p.start_time).getTime();
-  const end   = start + Math.max(1, p.duration) * 1000;
+  const startD = toUtcDate(p.start_time);
+  if (!startD) return null;
+  const dur = (typeof p.duration === "number" && p.duration > 0) ? p.duration : 1;
+  const start = startD.getTime();
+  const end   = start + dur * 1000;
   const ws = winStart.getTime(), we = winEnd.getTime();
   const cs = Math.max(start, ws), ce = Math.min(end, we);
   if (ce <= ws || cs >= we) return null;
   const left  = ((cs - ws) / 60000) * PX_PER_MINUTE;
   const width = Math.max(0.5, ((ce - cs) / 60000) * PX_PER_MINUTE);
-  return { left, width };
+  return { left, width, endMs: end };
 }
 
 export default function TVGuideGrid() {
@@ -73,21 +93,40 @@ export default function TVGuideGrid() {
       try {
         setLoading(true); setErr(null);
 
-        // Channels: exact schema, active only
+        // Channels: remove image_url to avoid DB errors
         const { data: chRows, error: chErr } = await supabase
           .from("channels")
-          .select("id, name, slug, description, logo_url, image_url, youtube_channel_id, youtube_is_live, is_active")
+          .select("id, name, slug, description, logo_url, youtube_channel_id, youtube_is_live, is_active")
           .eq("is_active", true);
         if (chErr) throw new Error(chErr.message);
 
         // Programs within rolling window
-        const { data: progRows, error: prErr } = await supabase
+        const startISO = windowStart.toISOString();
+        const endISO   = windowEnd.toISOString();
+
+        let progRows: ProgramRow[] = [];
+        const { data: prA, error: prErrA } = await supabase
           .from("programs")
           .select("id, channel_id, title, mp4_url, start_time, duration")
-          .gte("start_time", windowStart.toISOString())
-          .lt("start_time", windowEnd.toISOString())
+          .gte("start_time", startISO)
+          .lt("start_time", endISO)
           .order("start_time", { ascending: true });
-        if (prErr) throw new Error(prErr.message);
+        if (prErrA) throw new Error(prErrA.message);
+        progRows = (prA || []) as ProgramRow[];
+
+        // Fallback: if zero results, try DB TEXT timestamp window
+        if (progRows.length === 0) {
+          const startDB = toDbTimestampStringUTC(new Date(startISO));
+          const endDB   = toDbTimestampStringUTC(new Date(endISO));
+          const { data: prB, error: prErrB } = await supabase
+            .from("programs")
+            .select("id, channel_id, title, mp4_url, start_time, duration")
+            .gte("start_time", startDB)
+            .lt("start_time", endDB)
+            .order("start_time", { ascending: true });
+          if (prErrB) throw new Error(prErrB.message);
+          progRows = (prB || []) as ProgramRow[];
+        }
 
         if (cancelled) return;
 
@@ -101,7 +140,7 @@ export default function TVGuideGrid() {
           });
 
         setChannels(ordered as ChannelRow[]);
-        setPrograms((progRows ?? []) as ProgramRow[]);
+        setPrograms(progRows);
       } catch (e: any) {
         if (!cancelled) setErr(e.message ?? "Failed to load guide.");
       } finally {
@@ -111,12 +150,13 @@ export default function TVGuideGrid() {
     return () => { cancelled = true; };
   }, [windowStart, windowEnd]);
 
-  // group by channel
+  // group by channel (normalize IDs to numbers for stable mapping)
   const byChannel = useMemo(() => {
     const map = new Map<number, ProgramRow[]>();
     for (const p of programs) {
-      if (!map.has(p.channel_id)) map.set(p.channel_id, []);
-      map.get(p.channel_id)!.push(p);
+      const cid = Number(p.channel_id);
+      if (!map.has(cid)) map.set(cid, []);
+      map.get(cid)!.push(p);
     }
     return map;
   }, [programs]);
@@ -226,18 +266,19 @@ export default function TVGuideGrid() {
                     {progs.map((p) => {
                       const pos = computeBlockStyle(p, windowStart, windowEnd);
                       if (!pos) return null;
-                      const endMs = new Date(p.start_time).getTime() + Math.max(1, p.duration) * 1000;
+                      const startD = toUtcDate(p.start_time);
+                      const endD = new Date(pos.endMs);
                       return (
                         <div
                           key={p.id}
                           className="absolute rounded-lg border border-slate-700 bg-slate-800/90 hover:bg-slate-700/90 transition-colors"
                           style={{ left: pos.left, width: pos.width, top: 8, height: ROW_HEIGHT - 16 }}
-                          title={`${p.title ?? "Program"}\n${fmtHM(new Date(p.start_time))} – ${fmtHM(new Date(endMs))}`}
+                          title={`${p.title ?? "Program"}\n${startD ? fmtHM(startD) : "—"} – ${fmtHM(endD)}`}
                         >
                           <div className="px-3 py-2 h-full flex flex-col justify-center">
                             <div className="text-sm font-semibold text-white truncate">{p.title ?? "Untitled"}</div>
                             <div className="text-[11px] text-slate-300">
-                              {fmtHM(new Date(p.start_time))} – {fmtHM(new Date(endMs))}
+                              {startD ? fmtHM(startD) : "—"} – {fmtHM(endD)}
                             </div>
                           </div>
                         </div>
