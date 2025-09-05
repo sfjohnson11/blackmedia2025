@@ -36,18 +36,23 @@ export function toUtcDate(val?: string | Date | null): Date | null {
 
   let s = String(val).trim();
 
-  // "YYYY-MM-DD HH:mm:ss" → ISO Z
-  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(s)) {
-    s = s.replace(" ", "T") + "Z";
+  // 1) "YYYY-MM-DD HH:mm:ssZ" or "YYYY-MM-DD HH:mm:ssz" → add T, keep Z
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?[zZ]$/.test(s)) {
+    s = s.replace(" ", "T").replace(/[zZ]$/, "Z");
   }
-  // ISO without tz → force Z
-  else if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(s)) {
-    s = s + "Z";
-  }
-  // "YYYY-MM-DD HH:mm:ss±HH[:MM]" → add T & normalize colon in offset if missing
+  // 2) "YYYY-MM-DD HH:mm:ss±HH:MM" or ±HHMM → add T, normalize offset colon
   else if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?[+\-]\d{2}:?\d{2}$/.test(s)) {
     s = s.replace(" ", "T").replace(/([+\-]\d{2})(\d{2})$/, "$1:$2");
   }
+  // 3) ISO without tz → force Z
+  else if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(s)) {
+    s = s + "Z";
+  }
+  // 4) "YYYY-MM-DD HH:mm:ss" (no tz) → T + Z
+  else if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(s)) {
+    s = s.replace(" ", "T") + "Z";
+  }
+  // Else assume already ISO-8601
 
   const d = new Date(s);
   return Number.isNaN(d.getTime()) ? null : d;
@@ -117,7 +122,7 @@ export function getVideoUrlForProgram(p: Program): string | undefined {
 /** Fetch one channel (by numeric id or slug) */
 export async function fetchChannelDetails(idOrSlug: string | number): Promise<Channel | null> {
   try {
-    // also normalize hyphen→underscore for your slug case
+    // normalize hyphen→underscore for your slug case
     const slugLike = String(idOrSlug).includes("-") ? String(idOrSlug).replace(/-/g, "_") : String(idOrSlug);
 
     const asNum = Number.parseInt(String(idOrSlug), 10);
