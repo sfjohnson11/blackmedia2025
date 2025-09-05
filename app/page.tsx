@@ -11,7 +11,7 @@ type Channel = {
   slug?: string | null;
   description?: string | null;
   logo_url?: string | null;
-  youtube_channel_id?: string | null; // ← added so Home reflects CH21 rule
+  youtube_channel_id?: string | null;
   youtube_is_live?: boolean | null;
   is_active?: boolean | null;
 };
@@ -26,7 +26,6 @@ export default async function HomePage() {
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
   const supabase = createClient(url, anon);
 
-  // Server-side fetch (no cache)
   const { data, error } = await supabase
     .from("channels")
     .select("id, name, slug, description, logo_url, youtube_channel_id, youtube_is_live, is_active")
@@ -44,7 +43,6 @@ export default async function HomePage() {
     is_active: r.is_active ?? null,
   }));
 
-  // client-side numeric sort (stable)
   const channelsSorted = [...channels].sort((a, b) => {
     const na = num(a.id), nb = num(b.id);
     if (na !== null && nb !== null) return na - nb;
@@ -70,25 +68,25 @@ export default async function HomePage() {
             {channelsSorted.map((ch) => {
               const art = ch.logo_url || null;
               const chNum = num(ch.id) ?? String(ch.id);
+              const hrefId = (ch.slug && ch.slug.trim().length > 0)
+                ? ch.slug!.trim()
+                : String(ch.id);
 
-              // Your rule: Channel 21 should render the YouTube embed when youtube_channel_id is present.
               const isCh21YouTube =
                 (num(ch.id) === 21) && !!(ch.youtube_channel_id || "").trim();
 
               return (
                 <Link
-                  href={`/watch/${encodeURIComponent(String(ch.id))}`}
+                  href={`/watch/${encodeURIComponent(hrefId)}`}
                   key={String(ch.id)}
                   className="group relative rounded-xl overflow-hidden border border-gray-800 hover:border-gray-600 transition-colors bg-gray-900"
                 >
-                  {/* channel number badge */}
                   <div className="absolute left-2 top-2 z-10">
                     <span className="inline-flex items-center rounded-md bg-black/70 px-2 py-0.5 text-[11px] font-semibold ring-1 ring-white/20">
                       Ch {chNum}
                     </span>
                   </div>
 
-                  {/* LIVE badge for CH21 when YouTube is configured */}
                   {isCh21YouTube && (
                     <div className="absolute right-2 top-2 z-10">
                       <span className="inline-flex items-center rounded bg-red-600 px-2 py-0.5 text-[10px] font-bold">
