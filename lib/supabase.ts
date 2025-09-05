@@ -1,25 +1,58 @@
 // lib/supabase.ts
-import type { Program, Channel } from "@/types";
-import { getSupabaseClient } from "@/utils/supabase/client";
+import { createClient } from "@supabase/supabase-js";
 
-// Use the same client util your app already uses
-export const supabase = getSupabaseClient();
+/** ── Minimal shared types (avoid '@/types' alias during build) ── */
+export type Program = {
+  id: string | number;
+  channel_id: number | string;
+  title?: string | null;
+  mp4_url?: string | null;
+  duration?: number | null;      // seconds
+  start_time?: string | null;    // ISO or "YYYY-MM-DD HH:mm:ss"
+  poster_url?: string | null;
+  [k: string]: any;
+};
 
-export const STANDBY_PLACEHOLDER_ID = "standby-placeholder";
+export type Channel = {
+  id: number | string;
+  name?: string | null;
+  slug?: string | null;
+  logo_url?: string | null;
+  youtube_channel_id?: string | null;
+  [k: string]: any;
+};
 
-const ROOT = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "");
+/** ── Supabase client (public anon) ── */
+const URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-/** normalize storage keys */
-function cleanKey(k: string) {
-  return k.trim().replace(/^\.?\//, "").replace(/\\/g, "/").replace(/\/{2,}/g, "/");
+if (!URL || !KEY) {
+  // Helpful error in dev; on Vercel, set these in Project → Settings → Environment Variables
+  // We don't throw here to avoid crashing static analysis at build time.
+  // Runtime calls will fail clearly if not set.
+  console.warn(
+    "[supabase] Missing NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY env vars."
+  );
 }
 
-/** Build a PUBLIC URL for a storage object, even if env is missing during build */
+export const supabase = createClient(URL || "", KEY || "");
+
+/** ── Constants ── */
+export const STANDBY_PLACEHOLDER_ID = "standby-placeholder";
+
+/** ── Helpers ── */
+const ROOT = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "");
+
+function cleanKey(k: string) {
+  return (k || "").trim().replace(/^\.?\//, "").replace(/\\/g, "/").replace(/\/{2,}/g, "/");
+}
+
+/** Build a PUBLIC URL for a storage object (works at build & runtime) */
 function buildPublicUrl(bucket: string, objectPath: string): string | undefined {
   const key = cleanKey(objectPath);
-  // Preferred: use the project URL from env
+  // Preferred: environment root (works on Vercel)
   if (ROOT) return `${ROOT}/storage/v1/object/public/${bucket}/${key}`;
-  // Fallback: let supabase client compose it (pure, no network)
+  // Fallback: compose via supabase client
   try {
     const { data } = supabase.storage.from(bucket).getPublicUrl(key);
     return data?.publicUrl || undefined;
@@ -28,8 +61,18 @@ function buildPublicUrl(bucket: string, objectPath: string): string | undefined 
   }
 }
 
-/**
- * Resolve a playable URL from a Program row (PUBLIC buckets).
+/** Parse both ISO and "YYYY-MM-DD HH:mm:ss" (UTC) */
+function toUtcDate(val?: string | Date | null): Date | null {
+  if (!val) return null;
+  if (val instanceof Date) return Number.isNaN(val.getTime()) ? null : val;
+  let s = String(val).trim();
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?$/.test(s)) s = s.replace(" ", "T") + "Z";
+  else if (!/[zZ]|[+\-]\d{2}:\d{2}$/.test(s)) s = s + "Z";
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** ── Public URL resolver for program videos (PUBLIC buckets) ──
  * Accepts:
  *  - Absolute URLs:                 https://...              → pass through
  *  - storage://bucket/key:          → public URL
@@ -66,27 +109,35 @@ export function getVideoUrlForProgram(p: Program): string | undefined {
     return buildPublicUrl(bucket, key);
   }
 
-  // relative filename → live in channel{channel_id}
+  // relative filename → lives in channel{channel_id}
   const bucket = `channel${Number(p.channel_id)}`;
   let key = cleanKey(raw)
     .replace(new RegExp(`^${bucket}/`, "i"), "")
-    .replace(/^freedom_school\//i, ""); // tolerate that prefix if someone typed it
+    .replace(/^freedom_school\//i, ""); // tolerate common prefix
 
   return buildPublicUrl(bucket, key);
 }
 
-/** Fetch one channel by id (number or string) or slug (string) */
+/** Fetch one channel by id (number) or slug (string) */
 export async function fetchChannelDetails(idOrSlug: string | number): Promise<Channel | null> {
   try {
-    // decide whether it's an id or a slug
     const asNum = typeof idOrSlug === "number" ? idOrSlug : Number.parseInt(String(idOrSlug), 10);
-
     if (!Number.isNaN(asNum)) {
-      const { data, error } = await supabase.from("channels").select("*").eq("id", asNum).limit(1).maybeSingle();
+      const { data, error } = await supabase
+        .from("channels")
+        .select("*")
+        .eq("id", asNum)
+        .limit(1)
+        .maybeSingle();
       if (error) throw error;
       return (data as Channel) ?? null;
     } else {
-      const { data, error } = await supabase.from("channels").select("*").eq("slug", String(idOrSlug)).limit(1).maybeSingle();
+      const { data, error } = await supabase
+        .from("channels")
+        .select("*")
+        .eq("slug", String(idOrSlug))
+        .limit(1)
+        .maybeSingle();
       if (error) throw error;
       return (data as Channel) ?? null;
     }
@@ -94,3 +145,9 @@ export async function fetchChannelDetails(idOrSlug: string | number): Promise<Ch
     return null;
   }
 }
+
+/** Small helpers you might already rely on elsewhere */
+export function addSeconds(d: Date, secs: number) {
+  return new Date(d.getTime() + secs * 1000);
+}
+export { toUtcDate };
