@@ -12,25 +12,16 @@ import {
   parseDurationSec,
   getVideoUrlForProgram,
   STANDBY_PLACEHOLDER_ID,
+  fetchChannelDetails,       // ← use the helper that supports id OR slug
+  type Channel as ChannelT,
+  type Program as ProgramT,
 } from "@/lib/supabase";
 
-/* ---------- schema ---------- */
-type Channel = {
-  id: number;
-  name: string | null;
-  slug?: string | null;
-  description?: string | null;
-  logo_url: string | null;
-  youtube_channel_id: string | null;
-  youtube_is_live?: boolean | null;
-  is_active?: boolean | null;
+/* Keep local minimal types to avoid import collisions if needed */
+type Channel = ChannelT & {
+  youtube_channel_id?: string | null;
 };
-
-type Program = {
-  id: string | number;
-  channel_id: number | string;
-  title: string | null;
-  mp4_url: string | null;
+type Program = ProgramT & {
   start_time: string;
   duration: number | string;
 };
@@ -38,9 +29,38 @@ type Program = {
 const CH21 = 21;
 const STANDBY_FILE = "standby_blacktruthtv.mp4";
 
-/* ---------- helpers ---------- */
 const nowUtc = () => new Date();
-const MIN_RECHECK_MS = 15_000; // guard against rapid reschedules
+const MIN_RECHECK_MS = 15_000;
+const POLL_MS = 30_000;
+
+const num = (v: unknown): number | null => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+
+const coerceChanLoose = (v: string | number | null | undefined): number | null => {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "number") return num(v);
+  const m = String(v).trim().match(/-?\d+/);
+  if (!m) return null;
+  const n = Number(m[0]);
+  return Number.isFinite(n) ? n : null;
+};
+
+const belongsToChannel = (p: Program, channelNum: number, rawId: string | number): boolean => {
+  const cid = coerceChanLoose(p.channel_id);
+  if (cid === channelNum) return true;
+  if (String(p.channel_id).trim() === String(rawId).trim()) return true;
+
+  const u = (p.mp4_url || "").toLowerCase().trim();
+  const needle = `channel${channelNum}`;
+  return (
+    u.startsWith(`${needle}/`) ||
+    u.startsWith(`${needle}:`) ||
+    u.includes(`/${needle}/`) ||
+    u.startsWith(`storage://${needle}/`)
+  );
+};
 
 function standbyProgram(channelId: number): Program {
   return {
@@ -53,21 +73,19 @@ function standbyProgram(channelId: number): Program {
   } as any;
 }
 
-/* ---------- page ---------- */
 export default function WatchPage() {
   const { channelId } = useParams<{ channelId: string }>();
   const search = useSearchParams();
-  const debug  = (search?.get("debug") ?? "0") === "1";
+  const debug = (search?.get("debug") ?? "0") === "1";
 
-  const idNum = useMemo(() => Number(channelId), [channelId]);
-  const idStr = useMemo(() => String(channelId), [channelId]);
-
+  const param = useMemo(() => String(channelId), [channelId]);
   const supabase = useMemo(
     () => createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!),
     []
   );
 
   const [channel, setChannel]           = useState<Channel | null>(null);
+  const [channelNum, setChannelNum]     = useState<number | null>(null);
   const [active, setActive]             = useState<Program | null>(null);
   const [nextUp, setNextUp]             = useState<Program | null>(null);
   const [videoSrc, setVideoSrc]         = useState<string | undefined>(undefined);
@@ -75,95 +93,128 @@ export default function WatchPage() {
   const [loading, setLoading]           = useState(true);
   const [err, setErr]                   = useState<string | null>(null);
 
+  const posterSrc = channel?.logo_url || undefined;
   const videoRef  = useRef<HTMLVideoElement | null>(null);
   const lastSrcRef = useRef<string | undefined>(undefined);
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const posterSrc = channel?.logo_url || undefined;
+  const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const [dbgRows, setDbgRows] = useState<
     { id: string | number; title: string | null; raw: string; startIso?: string; endIso?: string; duration: number; isNow: boolean; resolved?: string }[]
   >([]);
+  const [dbgMeta, setDbgMeta] = useState<{ primaryCount: number; fallbackCount: number; window: string } | null>(null);
 
-  useEffect(() => () => { if (refreshTimer.current) clearTimeout(refreshTimer.current); }, []);
+  useEffect(() => () => {
+    if (refreshTimer.current) clearTimeout(refreshTimer.current);
+    if (pollTimer.current) clearInterval(pollTimer.current);
+  }, []);
+
   const scheduleRefreshAt = useCallback((when: Date | null) => {
     if (refreshTimer.current) clearTimeout(refreshTimer.current);
     if (!when) return;
     const ms = when.getTime() - Date.now() + 1000;
     const delay = Math.max(ms, MIN_RECHECK_MS);
-    refreshTimer.current = setTimeout(() => { void pickAndPlay(); }, delay);
+    refreshTimer.current = setTimeout(() => { void pickAndPlay(false); }, delay);
   }, []);
 
-  // choose the last program with start <= now < end
-  function pickActive(list: Program[], now: Date): Program | null {
+  const pickActive = (list: Program[], now: Date): Program | null => {
     let candidate: Program | null = null;
     for (const p of list) {
       const st = toUtcDate(p.start_time); if (!st) continue;
-      const en = addSeconds(st, Math.max(60, parseDurationSec(p.duration) || 1800)); // min 60s
+      const en = addSeconds(st, Math.max(60, parseDurationSec(p.duration) || 1800));
       if (now >= st && now < en) candidate = p;
     }
     return candidate;
-  }
+  };
 
-  const fetchProgramsForChannel = useCallback(async (): Promise<Program[]> => {
-    // HARD-ROBUST: run TWO queries (INT and TEXT) and merge results.
+  const fetchProgramsForChannel = useCallback(async (chNum: number, rawId: string | number): Promise<Program[]> => {
     const sel = "id, channel_id, title, mp4_url, start_time, duration";
 
-    const [qNum, qStr] = await Promise.all([
-      supabase.from("programs").select(sel).eq("channel_id", idNum).order("start_time", { ascending: true }),
-      supabase.from("programs").select(sel).eq("channel_id", idStr).order("start_time", { ascending: true }),
-    ]);
+    // Try several precise keys first (covers INT/TEXT/slug)
+    const keys = Array.from(
+      new Set([
+        chNum,
+        String(chNum),
+        rawId,
+        String(rawId),
+      ])
+    );
 
-    if (qNum.error && qStr.error) throw new Error(qNum.error.message || qStr.error.message);
+    const results = await Promise.all(
+      keys.map((k) =>
+        supabase.from("programs").select(sel).eq("channel_id", k).order("start_time", { ascending: true })
+      )
+    );
 
-    const combined: Program[] = [...(qNum.data || []), ...(qStr.data || [])] as any;
+    let combined: Program[] = [];
+    for (const r of results) if (r.data) combined.push(...(r.data as any));
 
-    // de-dup by id+start_time
+    // de-dup and sort
     const seen = new Set<string>();
-    const dedup = combined.filter((r) => {
+    combined = combined.filter((r) => {
       const key = `${String(r.id)}|${r.start_time}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
-    });
-
-    // stable order
-    dedup.sort((a, b) => {
+    }).sort((a, b) => {
       const as = toUtcDate(a.start_time)?.getTime() ?? 0;
       const bs = toUtcDate(b.start_time)?.getTime() ?? 0;
       return as - bs;
     });
 
-    return dedup;
-  }, [idNum, idStr, supabase]);
+    if (combined.length > 0) {
+      setDbgMeta({ primaryCount: combined.length, fallbackCount: 0, window: "primary-only" });
+      return combined;
+    }
 
-  const pickAndPlay = useCallback(async () => {
-    if (!Number.isFinite(idNum)) return;
+    // Fallback: 48h window then filter by belongsToChannel
+    const start = new Date(Date.now() - 24 * 3600 * 1000);
+    const end   = new Date(Date.now() + 24 * 3600 * 1000);
+    const { data: win, error: winErr } = await supabase
+      .from("programs")
+      .select(sel)
+      .gte("start_time", start.toISOString())
+      .lte("start_time", end.toISOString())
+      .order("start_time", { ascending: true });
 
+    if (winErr) throw new Error(winErr.message);
+
+    const filtered = (win || []).filter((r: any) => belongsToChannel(r as Program, chNum, rawId)) as Program[];
+
+    filtered.sort((a, b) => {
+      const as = toUtcDate(a.start_time)?.getTime() ?? 0;
+      const bs = toUtcDate(b.start_time)?.getTime() ?? 0;
+      return as - bs;
+    });
+
+    setDbgMeta({ primaryCount: 0, fallbackCount: filtered.length, window: `${start.toISOString()} .. ${end.toISOString()}` });
+    return filtered;
+  }, [supabase]);
+
+  const pickAndPlay = useCallback(async (showLoading = true) => {
     try {
-      setLoading(true); setErr(null);
+      if (showLoading) setLoading(true);
+      setErr(null);
 
-      // CHANNEL
-      const { data: ch, error: chErr } = await supabase
-        .from("channels")
-        .select("id, name, slug, description, logo_url, youtube_channel_id, youtube_is_live, is_active")
-        .eq("id", idNum)
-        .single();
-      if (chErr) throw new Error(chErr.message);
+      // Resolve channel by id OR slug
+      const ch = await fetchChannelDetails(param);
+      if (!ch) throw new Error("Channel not found.");
       setChannel(ch as Channel);
 
-      // CH21 → YouTube embed when youtube_channel_id present
-      if (idNum === CH21 && (ch?.youtube_channel_id || "").trim()) {
+      // Numeric id (if channel.id is numeric)
+      const chNum = num((ch as any).id);
+      setChannelNum(chNum);
+
+      // CH21 → YouTube embed
+      if (chNum === CH21 && (ch as any)?.youtube_channel_id && String((ch as any).youtube_channel_id).trim()) {
         setActive(null); setNextUp(null); setVideoSrc(undefined); setUsingStandby(false);
-        lastSrcRef.current = undefined;
-        if (refreshTimer.current) clearTimeout(refreshTimer.current);
         setDbgRows([]);
-        setLoading(false);
+        if (showLoading) setLoading(false);
         return;
       }
 
-      // PROGRAMS (robust dual query)
-      const programs = await fetchProgramsForChannel();
+      // Programs
+      const programs = await fetchProgramsForChannel(chNum ?? -1, (ch as any).id);
       const now = nowUtc();
 
       // Debug rows
@@ -184,7 +235,6 @@ export default function WatchPage() {
       });
       setDbgRows(rows);
 
-      // ACTIVE & NEXT
       const current = pickActive(programs, now);
       const nxt = programs.find(p => {
         const st = toUtcDate(p.start_time);
@@ -210,10 +260,9 @@ export default function WatchPage() {
         const boundary = nxt && (toUtcDate(nxt.start_time) as Date) < en
           ? (toUtcDate(nxt.start_time) as Date)
           : en;
-        scheduleRefreshAt(boundary);
+        if (boundary) scheduleRefreshAt(boundary);
       } else {
-        // STANDBY until next
-        const sb = standbyProgram(idNum);
+        const sb = standbyProgram(chNum ?? 0);
         const sbSrc = getVideoUrlForProgram(sb) || sb.mp4_url || undefined;
         setActive(sb);
         setUsingStandby(true);
@@ -226,24 +275,27 @@ export default function WatchPage() {
           }, 0);
         }
 
-        scheduleRefreshAt(nxt ? (toUtcDate(nxt.start_time) as Date) : null);
+        if (nxt) scheduleRefreshAt(toUtcDate(nxt.start_time) as Date);
       }
     } catch (e: any) {
       setErr(e?.message || "Failed to load channel/programs.");
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [idNum, fetchProgramsForChannel, supabase]);
+  }, [param, fetchProgramsForChannel]);
 
-  // INITIAL ONLY
+  // initial + soft polling
   useEffect(() => {
-    if (!Number.isFinite(idNum)) return;
-    void pickAndPlay();
-  }, [idNum, pickAndPlay]);
+    void pickAndPlay(true);
+    if (pollTimer.current) clearInterval(pollTimer.current);
+    pollTimer.current = setInterval(() => {
+      if (document.visibilityState === "visible") void pickAndPlay(false);
+    }, POLL_MS);
+    return () => { if (pollTimer.current) clearInterval(pollTimer.current); };
+  }, [pickAndPlay]);
 
-  /* ---------- render ---------- */
-  const isYouTube = idNum === CH21 && (channel?.youtube_channel_id || "").trim().length > 0;
+  const isYouTube = channelNum === CH21 && !!(channel?.youtube_channel_id || "").trim();
 
   let content: ReactNode;
   if (err) {
@@ -258,20 +310,20 @@ export default function WatchPage() {
   } else if (active && videoSrc) {
     content = (
       <VideoPlayer
-        // @ts-expect-error: keep a ref for optional .load()
+        // @ts-expect-error: optional load via ref
         ref={videoRef}
         src={videoSrc}
-        poster={usingStandby ? (posterSrc || undefined) : undefined} // poster ONLY on standby
+        poster={posterSrc || undefined}
         isStandby={usingStandby}
         programTitle={active?.title || undefined}
         autoPlay={true}
         muted={true}
         playsInline={true}
         preload="auto"
-        onVideoEnded={() => void pickAndPlay()}
+        onVideoEnded={() => void pickAndPlay(false)}
         onError={() => {
-          if (!usingStandby) {
-            const sb = standbyProgram(idNum);
+          if (!usingStandby && channelNum != null) {
+            const sb = standbyProgram(channelNum);
             const sbSrc = getVideoUrlForProgram(sb) || sb.mp4_url || undefined;
             setActive(sb);
             setUsingStandby(true);
@@ -332,26 +384,16 @@ export default function WatchPage() {
         {debug && (
           <div className="mt-3 text-[11px] bg-gray-900/70 border border-gray-700 rounded p-2 space-y-2">
             <div><b>Now (UTC):</b> {nowUtc().toISOString()}</div>
-            {active ? (
-              <>
-                <div><b>Active:</b> {active.title || "(untitled)"} ({String(active.id)})</div>
-                <div><b>Active start (UTC):</b> {toUtcDate(active.start_time)?.toISOString() || "—"}</div>
-                <div>
-                  <b>Active end (UTC):</b>{" "}
-                  {(() => {
-                    const st = toUtcDate(active.start_time);
-                    const dur = Math.max(60, parseDurationSec(active.duration) || 1800);
-                    return st ? addSeconds(st, dur).toISOString() : "—";
-                  })()}
-                </div>
-                <div className="truncate"><b>Video Src:</b> {videoSrc || "—"}</div>
-                <div><b>Using Standby:</b> {usingStandby ? "yes" : "no"}</div>
-              </>
-            ) : <div><b>Active:</b> —</div>}
+
+            {dbgMeta && (
+              <div>
+                <b>Primary rows:</b> {dbgMeta.primaryCount} • <b>Fallback rows:</b> {dbgMeta.fallbackCount} • <b>Window:</b> {dbgMeta.window}
+              </div>
+            )}
 
             <div className="pt-2 border-t border-gray-800">
               <div className="font-semibold mb-1">Programs (parsed):</div>
-              {dbgRows.slice(0, 20).map(r => (
+              {dbgRows.slice(0, 24).map(r => (
                 <div key={String(r.id)} className="grid grid-cols-1 md:grid-cols-2 gap-1 mb-2">
                   <div><b>ID:</b> {String(r.id)} • <b>Title:</b> {r.title || "—"}</div>
                   <div className="truncate"><b>Src:</b> {r.resolved || "—"}</div>
