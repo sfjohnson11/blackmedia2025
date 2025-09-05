@@ -1,5 +1,4 @@
 // app/page.tsx
-import TopNav from "@/components/top-nav";
 import Link from "next/link";
 import { createClient } from "@supabase/supabase-js";
 
@@ -52,8 +51,6 @@ export default async function HomePage() {
 
   return (
     <div className="min-h-screen bg-black text-white">
-      <TopNav />
-
       <section className="px-4 md:px-10 py-8 md:py-10 border-b border-gray-800 bg-[radial-gradient(ellipse_at_top,rgba(239,68,68,0.15),rgba(0,0,0,0))]">
         <h1 className="text-3xl md:text-4xl font-extrabold">Black Truth TV</h1>
         <p className="text-gray-300 mt-2 max-w-2xl">
@@ -104,7 +101,6 @@ export default async function HomePage() {
                     <div className="text-base font-semibold truncate">
                       {ch.name ?? `Channel ${chNum}`}
                     </div>
-                    {/* show Channel number under the title */}
                     <div className="mt-0.5 text-xs text-gray-400">Channel {chNum}</div>
 
                     {ch.description ? (
