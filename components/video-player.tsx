@@ -1,17 +1,17 @@
 // components/video-player.tsx
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 type Props = {
   src: string;
   poster?: string;
   programTitle?: string;
   isStandby?: boolean;
-  autoPlay?: boolean;      // default false
+  autoPlay?: boolean;      // default true
   muted?: boolean;         // default false
   playsInline?: boolean;   // default true
-  preload?: "auto" | "metadata" | "none"; // default "metadata"
+  preload?: "auto" | "metadata" | "none"; // default "auto"
   onVideoEnded?: () => void;
   onError?: () => void;
 };
@@ -21,48 +21,80 @@ export default function VideoPlayer({
   poster,
   programTitle,
   isStandby = false,
-  autoPlay = true,     // try autoplay
+  autoPlay = true,            // enable autoplay by default
   muted: mutedProp = false,
   playsInline = true,
-  preload = "metadata",
+  preload = "auto",           // ← default to "auto" for faster start
   onVideoEnded,
   onError,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  // Keep a React state mirror of "muted" for the JSX attribute
   const [muted, setMuted] = useState<boolean>(!!mutedProp);
   const [autoplayBlocked, setAutoplayBlocked] = useState(false);
 
+  // If parent flips the muted prop, reflect it here too
+  useEffect(() => {
+    setMuted(!!mutedProp);
+    const v = videoRef.current;
+    if (v) v.muted = !!mutedProp;
+  }, [mutedProp]);
+
+  const tryPlay = useCallback(async () => {
+    const v = videoRef.current;
+    if (!v || !autoPlay) return;
+
+    // Ensure inline & preload are set as attributes/properties
+    v.playsInline = !!playsInline;
+    v.preload = preload || "auto";
+
+    // First attempt: respect incoming muted prop
+    try {
+      v.muted = !!mutedProp;
+      await v.play();
+      setAutoplayBlocked(false);
+      return;
+    } catch {
+      // Fallback: force muted autoplay (required by most browsers)
+    }
+
+    try {
+      v.muted = true;
+      await v.play();
+      setMuted(true);
+      setAutoplayBlocked(true); // show "Tap to unmute"
+    } catch {
+      // Still blocked — user can press play
+      setAutoplayBlocked(true);
+    }
+  }, [autoPlay, mutedProp, playsInline, preload]);
+
+  // When src changes, force a clean reload and attempt autoplay
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
+    setAutoplayBlocked(false);
 
-    v.muted = !!mutedProp;
-    v.playsInline = playsInline;
-    v.preload = preload || "metadata";
-
-    const tryPlay = async () => {
-      if (!autoPlay) return;
-      try {
-        v.muted = !!mutedProp;
-        await v.play();
-        setAutoplayBlocked(false);
-      } catch {
-        if (!mutedProp) {
-          try {
-            v.muted = true;
-            await v.play();
-            setMuted(true);
-            setAutoplayBlocked(true);
-          } catch {
-            // user will press play
-          }
-        }
-      }
-    };
+    // Force the element to re-evaluate the new src
+    // (key={src} below also guarantees a remount, but this helps if React reuses)
+    try {
+      v.pause();
+      v.load();
+    } catch {}
 
     void tryPlay();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [src, autoPlay, mutedProp, playsInline, preload]);
+  }, [src, tryPlay]);
+
+  // Some browsers only allow play after metadata/canplay
+  const handleLoadedMetadata = useCallback(() => {
+    void tryPlay();
+  }, [tryPlay]);
+
+  const handleCanPlay = useCallback(() => {
+    // As soon as we can play, try again (covers iOS Safari)
+    void tryPlay();
+  }, [tryPlay]);
 
   const handleUnmute = async () => {
     const v = videoRef.current;
@@ -79,6 +111,7 @@ export default function VideoPlayer({
   return (
     <div className="relative w-full h-full bg-black">
       <video
+        key={src}                   // ← remount on source change
         ref={videoRef}
         src={src}
         poster={poster}
@@ -87,6 +120,8 @@ export default function VideoPlayer({
         playsInline={playsInline}
         preload={preload}
         className="w-full h-full object-contain bg-black"
+        onLoadedMetadata={handleLoadedMetadata}
+        onCanPlay={handleCanPlay}
         onEnded={onVideoEnded}
         onError={onError}
       />
