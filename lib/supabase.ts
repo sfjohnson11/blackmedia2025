@@ -17,7 +17,7 @@ export type Program = {
 export type Channel = {
   id: number | string;
   name?: string | null;
-  slug?: string | null;
+  slug?: string | null;                 // e.g., "freedom-school", "construction-queen-tv"
   logo_url?: string | null;             // poster image shown in player
   youtube_channel_id?: string | null;   // used for CH21 YouTube live
   [k: string]: any;
@@ -102,11 +102,11 @@ function bucketNameForChannelId(channel_id: number | string): string {
   }
   const s = String(channel_id).trim().toLowerCase();
 
-  if (s === "freedom_school") return s;
-  if (s.startsWith("channel")) return s;
-  if (/^\d+$/.test(s)) return `channel${s}`; // string digits
+  if (s === "freedom_school") return s;     // special bucket
+  if (s.startsWith("channel")) return s;    // already bucket-like ("channel7")
+  if (/^\d+$/.test(s)) return `channel${s}`;// digits as string → numeric channel
 
-  // Fallback (rare): prefix channel + raw
+  // Fallback (rare): prefix
   return `channel${s}`;
 }
 
@@ -146,15 +146,15 @@ export function getVideoUrlForProgram(p: Program): string | undefined {
 
 /* ---------- Channels ---------- */
 
-/** Fetch one channel (by numeric id or slug). Hyphens normalized to underscores for slug. */
+/** Fetch one channel by numeric id, text id, or slug (hyphen/underscore tolerant) */
 export async function fetchChannelDetails(idOrSlug: string | number): Promise<Channel | null> {
-  try {
-    const slugLike = String(idOrSlug).includes("-")
-      ? String(idOrSlug).replace(/-/g, "_")
-      : String(idOrSlug);
+  const raw = String(idOrSlug).trim();
+  const slugAlt = raw.replace(/-/g, "_"); // in case you store underscores
 
-    const asNum = Number.parseInt(String(idOrSlug), 10);
-    if (!Number.isNaN(asNum)) {
+  try {
+    // 1) id = numeric (covers standard 1..N channels)
+    const asNum = Number(raw);
+    if (Number.isFinite(asNum)) {
       const { data, error } = await supabase
         .from("channels")
         .select("*")
@@ -162,17 +162,46 @@ export async function fetchChannelDetails(idOrSlug: string | number): Promise<Ch
         .limit(1)
         .maybeSingle();
       if (error) throw error;
-      return (data as Channel) ?? null;
-    } else {
+      if (data) return data as Channel;
+    }
+
+    // 2) id = text (covers '1' stored as text and any non-numeric id if present)
+    {
       const { data, error } = await supabase
         .from("channels")
         .select("*")
-        .eq("slug", slugLike)
+        .eq("id", raw)
         .limit(1)
         .maybeSingle();
       if (error) throw error;
-      return (data as Channel) ?? null;
+      if (data) return data as Channel;
     }
+
+    // 3) slug (exact hyphen form)
+    {
+      const { data, error } = await supabase
+        .from("channels")
+        .select("*")
+        .eq("slug", raw)
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      if (data) return data as Channel;
+    }
+
+    // 4) slug (underscore-normalized form)
+    if (slugAlt !== raw) {
+      const { data, error } = await supabase
+        .from("channels")
+        .select("*")
+        .eq("slug", slugAlt)
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      if (data) return data as Channel;
+    }
+
+    return null;
   } catch {
     return null;
   }
