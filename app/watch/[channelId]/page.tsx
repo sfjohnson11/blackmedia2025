@@ -60,8 +60,8 @@ export default function WatchPage() {
   const debug  = (search?.get("debug") ?? "0") === "1";
 
   const idNum = useMemo(() => Number(channelId), [channelId]);
+  const idStr = useMemo(() => String(channelId), [channelId]);
 
-  // Client supabase (same env vars as lib)
   const supabase = useMemo(
     () => createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!),
     []
@@ -99,11 +99,43 @@ export default function WatchPage() {
     let candidate: Program | null = null;
     for (const p of list) {
       const st = toUtcDate(p.start_time); if (!st) continue;
-      const en = addSeconds(st, parseDurationSec(p.duration) || 1800);
+      const en = addSeconds(st, Math.max(60, parseDurationSec(p.duration) || 1800)); // min 60s
       if (now >= st && now < en) candidate = p;
     }
     return candidate;
   }
+
+  const fetchProgramsForChannel = useCallback(async (): Promise<Program[]> => {
+    // HARD-ROBUST: run TWO queries (INT and TEXT) and merge results.
+    const sel = "id, channel_id, title, mp4_url, start_time, duration";
+
+    const [qNum, qStr] = await Promise.all([
+      supabase.from("programs").select(sel).eq("channel_id", idNum).order("start_time", { ascending: true }),
+      supabase.from("programs").select(sel).eq("channel_id", idStr).order("start_time", { ascending: true }),
+    ]);
+
+    if (qNum.error && qStr.error) throw new Error(qNum.error.message || qStr.error.message);
+
+    const combined: Program[] = [...(qNum.data || []), ...(qStr.data || [])] as any;
+
+    // de-dup by id+start_time
+    const seen = new Set<string>();
+    const dedup = combined.filter((r) => {
+      const key = `${String(r.id)}|${r.start_time}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    // stable order
+    dedup.sort((a, b) => {
+      const as = toUtcDate(a.start_time)?.getTime() ?? 0;
+      const bs = toUtcDate(b.start_time)?.getTime() ?? 0;
+      return as - bs;
+    });
+
+    return dedup;
+  }, [idNum, idStr, supabase]);
 
   const pickAndPlay = useCallback(async () => {
     if (!Number.isFinite(idNum)) return;
@@ -120,7 +152,7 @@ export default function WatchPage() {
       if (chErr) throw new Error(chErr.message);
       setChannel(ch as Channel);
 
-      // CH21 → YouTube embed when youtube_channel_id present (your stated rule)
+      // CH21 → YouTube embed when youtube_channel_id present
       if (idNum === CH21 && (ch?.youtube_channel_id || "").trim()) {
         setActive(null); setNextUp(null); setVideoSrc(undefined); setUsingStandby(false);
         lastSrcRef.current = undefined;
@@ -130,22 +162,14 @@ export default function WatchPage() {
         return;
       }
 
-      // PROGRAMS (handle number-vs-text schema drift)
-      const idStr = String(idNum);
-      const { data: list, error: pErr } = await supabase
-        .from("programs")
-        .select("id, channel_id, title, mp4_url, start_time, duration")
-        .or(`channel_id.eq.${idNum},channel_id.eq.${idStr}`)
-        .order("start_time", { ascending: true });
-      if (pErr) throw new Error(pErr.message);
-
-      const programs = (list || []) as Program[];
+      // PROGRAMS (robust dual query)
+      const programs = await fetchProgramsForChannel();
       const now = nowUtc();
 
-      // Build debug rows
+      // Debug rows
       const rows = programs.map(pr => {
         const st = toUtcDate(pr.start_time);
-        const dur = parseDurationSec(pr.duration) || 1800;
+        const dur = Math.max(60, parseDurationSec(pr.duration) || 1800);
         const en = st ? addSeconds(st, dur) : null;
         return {
           id: pr.id,
@@ -176,14 +200,13 @@ export default function WatchPage() {
         if (nextSrc && nextSrc !== lastSrcRef.current) {
           setVideoSrc(nextSrc);
           lastSrcRef.current = nextSrc;
-          // reload element if you use native video elsewhere
           setTimeout(() => {
             try { (videoRef.current as any)?.load?.(); } catch {}
           }, 0);
         }
 
         const st = toUtcDate(current.start_time)!;
-        const en = addSeconds(st, parseDurationSec(current.duration) || 1800);
+        const en = addSeconds(st, Math.max(60, parseDurationSec(current.duration) || 1800));
         const boundary = nxt && (toUtcDate(nxt.start_time) as Date) < en
           ? (toUtcDate(nxt.start_time) as Date)
           : en;
@@ -211,7 +234,7 @@ export default function WatchPage() {
       setLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [idNum, supabase]);
+  }, [idNum, fetchProgramsForChannel, supabase]);
 
   // INITIAL ONLY
   useEffect(() => {
@@ -235,7 +258,7 @@ export default function WatchPage() {
   } else if (active && videoSrc) {
     content = (
       <VideoPlayer
-        // @ts-expect-error: we also keep a ref for optional .load()
+        // @ts-expect-error: keep a ref for optional .load()
         ref={videoRef}
         src={videoSrc}
         poster={usingStandby ? (posterSrc || undefined) : undefined} // poster ONLY on standby
@@ -317,7 +340,7 @@ export default function WatchPage() {
                   <b>Active end (UTC):</b>{" "}
                   {(() => {
                     const st = toUtcDate(active.start_time);
-                    const dur = parseDurationSec(active.duration) || 1800;
+                    const dur = Math.max(60, parseDurationSec(active.duration) || 1800);
                     return st ? addSeconds(st, dur).toISOString() : "—";
                   })()}
                 </div>
@@ -328,7 +351,7 @@ export default function WatchPage() {
 
             <div className="pt-2 border-t border-gray-800">
               <div className="font-semibold mb-1">Programs (parsed):</div>
-              {dbgRows.slice(0, 16).map(r => (
+              {dbgRows.slice(0, 20).map(r => (
                 <div key={String(r.id)} className="grid grid-cols-1 md:grid-cols-2 gap-1 mb-2">
                   <div><b>ID:</b> {String(r.id)} • <b>Title:</b> {r.title || "—"}</div>
                   <div className="truncate"><b>Src:</b> {r.resolved || "—"}</div>
