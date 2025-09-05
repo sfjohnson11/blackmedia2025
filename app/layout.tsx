@@ -1,7 +1,7 @@
 // app/layout.tsx
 import "./globals.css";
 import type { ReactNode } from "react";
-import TopNav from "../components/top-nav";
+import TopNav from "../components/top-nav"; // <- single global navbar
 
 export const metadata = {
   title: "Black Truth TV",
