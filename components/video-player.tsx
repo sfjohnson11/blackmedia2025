@@ -9,7 +9,7 @@ type Props = {
   programTitle?: string;
   isStandby?: boolean;
   onVideoEnded?: () => void;
-  onError?: () => void;                  // 👈 added
+  onError?: () => void;                  // used for standby fallback on runtime errors
   autoPlay?: boolean;                    // default false
   muted?: boolean;                       // default false
   playsInline?: boolean;                 // default true
@@ -22,7 +22,7 @@ export default function VideoPlayer({
   programTitle,
   isStandby,
   onVideoEnded,
-  onError,                                // 👈 added
+  onError,
   autoPlay = false,
   muted = false,
   playsInline = true,
@@ -34,7 +34,7 @@ export default function VideoPlayer({
     const video = videoRef.current;
     if (!video || !src) return;
 
-    // Ensure attributes before source attach
+    // ensure attributes before source attach
     video.controls = true;
     video.muted = muted;
     (video as any).playsInline = playsInline;
@@ -45,13 +45,13 @@ export default function VideoPlayer({
     async function setup() {
       const isHls = /\.m3u8($|\?)/i.test(src);
 
+      // if native HLS not supported, use hls.js
       if (isHls && (video as any).canPlayType("application/vnd.apple.mpegurl") === "") {
         const { default: Hls, Events } = await import("hls.js");
         if (Hls.isSupported()) {
           const hls = new Hls({ enableWorker: true });
           hls.loadSource(src);
           hls.attachMedia(video);
-          // Forward fatal HLS errors to the onError handler so the page can swap to standby
           hls.on(Events.ERROR, (_ev: any, data: any) => {
             if (data?.fatal && typeof onError === "function") onError();
           });
@@ -60,17 +60,16 @@ export default function VideoPlayer({
           video.src = src; // fallback
         }
       } else {
-        video.src = src; // MP4 or native HLS
+        video.src = src;
       }
 
-      // Reload metadata so the big play button & timeline show up correctly
       video.load();
 
       if (autoPlay) {
         try {
           await video.play();
         } catch {
-          // If autoplay is blocked, user can click big play; controls are visible.
+          // autoplay blocked → user clicks big play
         }
       }
     }
@@ -85,7 +84,7 @@ export default function VideoPlayer({
         video.load();
       } catch {}
     };
-  }, [src, autoPlay, muted, playsInline, onError]); // 👈 include onError for correctness
+  }, [src, autoPlay, muted, playsInline, onError]);
 
   return (
     <div className="w-full h-full bg-black flex items-center justify-center">
@@ -98,7 +97,7 @@ export default function VideoPlayer({
         playsInline={playsInline}
         preload={preload}
         onEnded={onVideoEnded}
-        onError={onError}                 // 👈 wire native <video> errors too
+        onError={onError}
         controlsList="nodownload"
         aria-label={programTitle || (isStandby ? "Standby" : "Video")}
       />
