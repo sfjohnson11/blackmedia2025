@@ -6,13 +6,13 @@ import { useParams, useSearchParams } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 import YouTubeEmbed from "@/components/youtube-embed";
 
-/* ---------- your schema ---------- */
+/* ---------- schema (exactly your columns) ---------- */
 type Channel = {
   id: number;
   name: string | null;
   slug?: string | null;
   description?: string | null;
-  logo_url: string | null;            // poster only
+  logo_url: string | null;            // poster ONLY
   youtube_channel_id: string | null;  // CH21 live
   youtube_is_live?: boolean | null;
   is_active?: boolean | null;
@@ -23,8 +23,8 @@ type Program = {
   channel_id: number;
   title: string | null;
   mp4_url: string | null;             // VIDEO ONLY (absolute or storage key)
-  start_time: string;                 // ISO like 2025-09-05T12:34:56Z
-  duration: number | string;          // seconds (e.g., 7620 or "7620s")
+  start_time: string;                 // ISO like 2025-09-05T12:34:56Z (UTC)
+  duration: number | string;          // seconds or "7620s"
 };
 
 /* ---------- constants ---------- */
@@ -37,12 +37,18 @@ const nowUtc = () => new Date(new Date().toISOString());
 function toUtcDate(val?: string | Date | null): Date | null {
   if (!val) return null;
   if (val instanceof Date) return Number.isNaN(val.getTime()) ? null : val;
-  // Accept ISO with Z / +offset; if given without tz, force Z
+
   let s = String(val).trim();
-  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?(?:Z|[+\-]\d{2}:\d{2})?$/.test(s)) {
-    s = s.replace(" ", "T");
-  }
+
+  // Normalize "YYYY-MM-DD HH:mm:ssZ" → "YYYY-MM-DDTHH:mm:ssZ"
+  s = s.replace(
+    /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+\-]\d{2}:\d{2})?)$/,
+    "$1T$2"
+  );
+
+  // If ISO without tz, force Z (treat as UTC)
   if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(s)) s += "Z";
+
   const d = new Date(s);
   return Number.isNaN(d.getTime()) ? null : d;
 }
@@ -73,7 +79,7 @@ function resolveSrc(p: Program, channelId: number): string | undefined {
   let raw = (p?.mp4_url || "").trim();
   if (!raw) return undefined;
 
-  // absolute
+  // Absolute URL / absolute path
   if (/^https?:\/\//i.test(raw) || raw.startsWith("/")) return raw;
 
   raw = cleanKey(raw);
@@ -93,7 +99,7 @@ function resolveSrc(p: Program, channelId: number): string | undefined {
     if (rest) return fromBucket(first, rest);
   }
 
-  // relative → channel{ID}/key (strip accidental dup prefix)
+  // Relative → channel{ID}/key (strip accidental duplicate prefix)
   raw = raw.replace(new RegExp(`^channel${channelId}/`, "i"), "");
   return fromBucket(bucketFor(channelId), raw);
 }
@@ -122,39 +128,42 @@ export default function WatchPage() {
     []
   );
 
-  const [channel, setChannel]         = useState<Channel | null>(null);
-  const [active, setActive]           = useState<Program | null>(null);
-  const [nextUp, setNextUp]           = useState<Program | null>(null);
-  const [videoSrc, setVideoSrc]       = useState<string | undefined>(undefined);
+  const [channel, setChannel]           = useState<Channel | null>(null);
+  const [active, setActive]             = useState<Program | null>(null);
+  const [nextUp, setNextUp]             = useState<Program | null>(null);
+  const [videoSrc, setVideoSrc]         = useState<string | undefined>(undefined);
   const [usingStandby, setUsingStandby] = useState(false);
-  const [loading, setLoading]         = useState(true);
-  const [err, setErr]                 = useState<string | null>(null);
+  const [loading, setLoading]           = useState(true);
+  const [err, setErr]                   = useState<string | null>(null);
 
   // poster never used as video src
-  const posterSrc = channel?.logo_url || undefined;
-  const videoRef  = useRef<HTMLVideoElement | null>(null);
+  const posterSrc   = channel?.logo_url || undefined;
+  const videoRef    = useRef<HTMLVideoElement | null>(null);
+  const lastSrcRef  = useRef<string | undefined>(undefined);
+  const refreshTref = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // prevent unnecessary reloads (fixes the 20–30s restart)
-  const lastSrcRef = useRef<string | undefined>(undefined);
-
-  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => { if (refreshTimer.current) clearTimeout(refreshTimer.current); }, []);
+  useEffect(() => () => { if (refreshTref.current) clearTimeout(refreshTref.current); }, []);
   const scheduleRefreshAt = useCallback((when: Date | null) => {
-    if (refreshTimer.current) clearTimeout(refreshTimer.current);
+    if (refreshTref.current) clearTimeout(refreshTref.current);
     if (!when) return;
     const delay = Math.max(0, when.getTime() - Date.now() + 1000);
-    refreshTimer.current = setTimeout(() => { void pickAndPlay(); }, delay);
+    refreshTref.current = setTimeout(() => { void pickAndPlay(); }, delay);
   }, []);
 
-  // robust: choose the *last* program with start <= now < end
-  function pickActive(list: Program[], now: Date): Program | null {
-    let candidate: Program | null = null;
+  // Choose ACTIVE; if none, return most recent past program (prevents Standby lock)
+  function pickActive(list: Program[], now: Date, fallbackPast = false): Program | null {
+    let exact: Program | null = null;
+    let recentPast: Program | null = null;
+
     for (const p of list) {
       const st = toUtcDate(p.start_time); if (!st) continue;
-      const en = addSeconds(st, parseDurationSec(p.duration) || 1800);
-      if (now >= st && now < en) candidate = p; // keep walking; we want the latest one
+      const dur = parseDurationSec(p.duration) || 1800;
+      const en  = addSeconds(st, dur);
+
+      if (now >= st && now < en) exact = p;    // keep walking to get the latest active
+      if (st <= now) recentPast = p;           // keep last seen past
     }
-    return candidate;
+    return exact || (fallbackPast ? recentPast : null);
   }
 
   const pickAndPlay = useCallback(async () => {
@@ -163,7 +172,7 @@ export default function WatchPage() {
     try {
       setLoading(true); setErr(null);
 
-      // CHANNEL (correct columns)
+      // CHANNEL (exact columns)
       const { data: ch, error: chErr } = await supabase
         .from("channels")
         .select("id, name, slug, description, logo_url, youtube_channel_id, youtube_is_live, is_active")
@@ -184,7 +193,7 @@ export default function WatchPage() {
         return;
       }
 
-      // PROGRAMS — no time filters to avoid DB type issues
+      // PROGRAMS — order asc, no time filter (avoid DB text vs tz issues)
       const { data: list, error: pErr } = await supabase
         .from("programs")
         .select("id, channel_id, title, mp4_url, start_time, duration")
@@ -195,8 +204,8 @@ export default function WatchPage() {
       const programs = (list || []) as Program[];
       const now = nowUtc();
 
-      // ACTIVE & NEXT (UTC)
-      const current = pickActive(programs, now);
+      // ACTIVE (fallback to most recent past) & NEXT
+      const current = pickActive(programs, now, true);
       const nxt = programs.find(p => {
         const st = toUtcDate(p.start_time);
         return !!st && st > now;
@@ -211,10 +220,10 @@ export default function WatchPage() {
         if (nextSrc && nextSrc !== lastSrcRef.current) {
           setVideoSrc(nextSrc);
           lastSrcRef.current = nextSrc;
-          // load only when the actual src changed
-          setTimeout(() => videoRef.current?.load(), 0);
+          setTimeout(() => videoRef.current?.load(), 0); // load only when src changed
         }
 
+        // schedule at program end (or next start if earlier)
         const st = toUtcDate(current.start_time)!;
         const en = addSeconds(st, parseDurationSec(current.duration) || 1800);
         const boundary = nxt && (toUtcDate(nxt.start_time) as Date) < en
@@ -222,7 +231,7 @@ export default function WatchPage() {
           : en;
         scheduleRefreshAt(boundary);
       } else {
-        // STANDBY until next
+        // No past/active → standby until next
         const sb = standbyProgram(idNum);
         const sbSrc = resolveSrc(sb, idNum);
         setActive(sb);
@@ -244,14 +253,10 @@ export default function WatchPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [idNum, supabase]);
 
-  // Initial + gentle minute poll (won’t restart unless src changes)
+  // Initial only (no minute polling) — avoids periodic resets
   useEffect(() => {
     if (!Number.isFinite(idNum)) return;
     void pickAndPlay();
-    const iv = setInterval(() => {
-      if (document.visibilityState === "visible") void pickAndPlay();
-    }, 60_000);
-    return () => clearInterval(iv);
   }, [idNum, pickAndPlay]);
 
   /* ---------- render ---------- */
