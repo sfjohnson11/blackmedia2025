@@ -13,7 +13,31 @@ type Channel = {
   logo_url?: string | null;
   youtube_is_live?: boolean | null;
   is_active?: boolean | null;
+  channel_number?: number | null; // ← NEW
 };
+
+function numOrFallback(v: unknown): number | null {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+// Numeric sort value: prefer channel_number, else numeric id, else digits in id string, else MAX
+function channelOrderValue(ch: Channel): number {
+  const byNumber = numOrFallback(ch.channel_number);
+  if (byNumber !== null) return byNumber;
+
+  const byId = numOrFallback(ch.id);
+  if (byId !== null) return byId;
+
+  const m = String(ch.id).match(/\d+/);
+  return m ? Number(m[0]) : Number.MAX_SAFE_INTEGER;
+}
+
+function channelNumberLabel(ch: Channel): string {
+  const n =
+    ch.channel_number ?? (Number.isFinite(Number(ch.id)) ? Number(ch.id) : null);
+  return n !== null ? String(n) : String(ch.id);
+}
 
 export default async function HomePage() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -22,10 +46,10 @@ export default async function HomePage() {
 
   const { data, error } = await supabase
     .from("channels")
-    .select("id, name, slug, description, logo_url, youtube_is_live, is_active")
-    .eq("is_active", true)
-    .order("name", { ascending: true })
-    .order("id", { ascending: true });
+    .select(
+      "id, name, slug, description, logo_url, youtube_is_live, is_active, channel_number" // ← include channel_number
+    )
+    .eq("is_active", true);
 
   const channels: Channel[] = (data ?? []).map((r: any) => ({
     id: r.id,
@@ -35,11 +59,17 @@ export default async function HomePage() {
     logo_url: r.logo_url ?? null,
     youtube_is_live: r.youtube_is_live ?? null,
     is_active: r.is_active ?? null,
+    channel_number: r.channel_number ?? null,
   }));
+
+  // Sort numerically
+  const channelsSorted = [...channels].sort(
+    (a, b) => channelOrderValue(a) - channelOrderValue(b)
+  );
 
   return (
     <div className="min-h-screen bg-black text-white">
-      {/* Global TopNav comes from app/layout.tsx — no duplicate here */}
+      {/* Global TopNav comes from app/layout.tsx */}
 
       <section className="px-4 md:px-10 py-8 md:py-10 border-b border-gray-800 bg-[radial-gradient(ellipse_at_top,rgba(239,68,68,0.15),rgba(0,0,0,0))]">
         <h1 className="text-3xl md:text-4xl font-extrabold">Black Truth TV</h1>
@@ -51,24 +81,32 @@ export default async function HomePage() {
       <section className="px-4 md:px-10 py-6">
         {error ? (
           <div className="text-gray-300">Couldn’t load channels: {error.message}</div>
-        ) : channels.length === 0 ? (
+        ) : channelsSorted.length === 0 ? (
           <div className="text-gray-400">No channels available.</div>
         ) : (
           <div className="grid grid-flow-row gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-            {channels.map((ch) => {
+            {channelsSorted.map((ch) => {
               const art = ch.logo_url || null;
+              const chNum = channelNumberLabel(ch);
               return (
                 <Link
                   href={`/watch/${ch.id}`}
                   key={String(ch.id)}
-                  className="group rounded-xl overflow-hidden border border-gray-800 hover:border-gray-600 transition-colors bg-gray-900"
+                  className="group relative rounded-xl overflow-hidden border border-gray-800 hover:border-gray-600 transition-colors bg-gray-900"
                 >
+                  {/* Channel number badge (top-left) */}
+                  <div className="absolute left-2 top-2 z-10">
+                    <span className="inline-flex items-center rounded-md bg-black/70 px-2 py-0.5 text-[11px] font-semibold ring-1 ring-white/20">
+                      Ch {chNum}
+                    </span>
+                  </div>
+
                   <div className="aspect-video bg-black overflow-hidden">
                     {art ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
                         src={art}
-                        alt={ch.name ?? `Channel ${ch.id}`}
+                        alt={ch.name ?? `Channel ${chNum}`}
                         className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-300"
                         loading="lazy"
                       />
@@ -78,15 +116,21 @@ export default async function HomePage() {
                       </div>
                     )}
                   </div>
+
                   <div className="p-3">
                     <div className="text-base font-semibold truncate">
-                      {ch.name ?? `Channel ${ch.id}`}
+                      {ch.name ?? `Channel ${chNum}`}
                     </div>
+
+                    {/* Channel number inline under title */}
+                    <div className="mt-0.5 text-xs text-gray-400">Channel {chNum}</div>
+
                     {ch.description ? (
                       <div className="text-xs text-gray-400 line-clamp-2 mt-1">
                         {ch.description}
                       </div>
                     ) : null}
+
                     {ch.youtube_is_live ? (
                       <div className="mt-2 inline-flex items-center rounded bg-red-600/20 text-red-300 px-2 py-0.5 text-[11px]">
                         LIVE on YouTube
