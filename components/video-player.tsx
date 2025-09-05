@@ -21,10 +21,10 @@ export default function VideoPlayer({
   poster,
   programTitle,
   isStandby = false,
-  autoPlay = true,            // enable autoplay by default
+  autoPlay = true,
   muted: mutedProp = false,
   playsInline = true,
-  preload = "auto",           // faster start
+  preload = "auto",
   onVideoEnded,
   onError,
 }: Props) {
@@ -33,7 +33,7 @@ export default function VideoPlayer({
   const [muted, setMuted] = useState<boolean>(!!mutedProp);
   const [autoplayBlocked, setAutoplayBlocked] = useState(false);
 
-  // Reflect parent muted changes
+  // reflect parent muted changes
   useEffect(() => {
     setMuted(!!mutedProp);
     const v = videoRef.current;
@@ -47,46 +47,36 @@ export default function VideoPlayer({
     v.playsInline = !!playsInline;
     v.preload = preload || "auto";
 
-    // First attempt: respect incoming muted prop
     try {
       v.muted = !!mutedProp;
       await v.play();
       setAutoplayBlocked(false);
       return;
     } catch {
-      // fallback below
+      // fall back to muted autoplay
     }
 
-    // Fallback: force muted autoplay (required by most browsers)
     try {
       v.muted = true;
       await v.play();
       setMuted(true);
-      setAutoplayBlocked(true); // show "Tap to unmute"
+      setAutoplayBlocked(true);
     } catch {
-      setAutoplayBlocked(true); // user will press play
+      setAutoplayBlocked(true);
     }
   }, [autoPlay, mutedProp, playsInline, preload]);
 
-  // Reload and attempt playback when src changes
+  // reload & try play when src changes
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
     setAutoplayBlocked(false);
-    try {
-      v.pause();
-      v.load();
-    } catch {}
+    try { v.pause(); v.load(); } catch {}
     void tryPlay();
   }, [src, tryPlay]);
 
-  const handleLoadedMetadata = useCallback(() => {
-    void tryPlay();
-  }, [tryPlay]);
-
-  const handleCanPlay = useCallback(() => {
-    void tryPlay();
-  }, [tryPlay]);
+  const handleLoadedMetadata = useCallback(() => { void tryPlay(); }, [tryPlay]);
+  const handleCanPlay = useCallback(() => { void tryPlay(); }, [tryPlay]);
 
   const handleUnmute = async () => {
     const v = videoRef.current;
@@ -103,7 +93,7 @@ export default function VideoPlayer({
   return (
     <div className="relative w-full h-full bg-black">
       <video
-        key={src}                   // remount on source change
+        key={src}
         ref={videoRef}
         src={src}
         poster={poster}
