@@ -17,18 +17,7 @@ type Props = {
 };
 
 const VideoPlayer = forwardRef<HTMLVideoElement, Props>(function VideoPlayer(
-  {
-    src,
-    poster,
-    isStandby = false,
-    programTitle,
-    autoPlay = true,
-    muted = true,
-    playsInline = true,
-    preload = "auto",
-    onVideoEnded,
-    onError,
-  },
+  { src, poster, isStandby = false, programTitle, autoPlay = true, muted = true, playsInline = true, preload = "auto", onVideoEnded, onError },
   ref
 ) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
