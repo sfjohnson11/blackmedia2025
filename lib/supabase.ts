@@ -167,5 +167,4 @@ export async function fetchChannelDetails(
 
   return null;
 }
-
-}
+// --- EOF ---
