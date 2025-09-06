@@ -43,7 +43,7 @@ export default function WatchPage() {
   const search = useSearchParams();
   const debug = (search?.get("debug") ?? "0") === "1";
 
-  // NUMERIC-ONLY: require /watch/<number>
+  // Accept whatever the route passes (number or slug)
   const param = useMemo(() => String(channelId), [channelId]);
   const channelNum = useMemo(() => Number(param), [param]);
 
@@ -97,6 +97,7 @@ export default function WatchPage() {
     return null;
   };
 
+  // Program fetch by numeric channel id
   const fetchProgramsForChannel = useCallback(async (chId: number): Promise<Program[]> => {
     const sel = "id, channel_id, title, mp4_url, start_time, duration";
     const { data, error } = await supabase
@@ -126,24 +127,61 @@ export default function WatchPage() {
       if (showLoading) setLoading(true);
       setErr(null);
 
-      if (!Number.isFinite(channelNum)) {
-        throw new Error("Channel id must be numeric (e.g., /watch/1).");
+      // ---------- Robust channel resolution ----------
+      let resolvedChannelNum = Number.isFinite(channelNum) ? channelNum : NaN;
+
+      if (!Number.isFinite(resolvedChannelNum)) {
+        // 1) Try slug as-is (e.g., "resistance-tv")
+        let foundId: number | null = null;
+        {
+          const { data, error } = await supabase
+            .from("channels")
+            .select("id")
+            .eq("slug", param)
+            .maybeSingle();
+          if (error) console.warn("[watch] slug lookup error", error);
+          if (data?.id != null) foundId = Number(data.id);
+        }
+
+        // 2) Try underscore variant (e.g., "resistance_tv")
+        if (foundId == null && param.includes("-")) {
+          const alt = param.replace(/-/g, "_");
+          const { data } = await supabase
+            .from("channels")
+            .select("id")
+            .eq("slug", alt)
+            .maybeSingle();
+          if (data?.id != null) foundId = Number(data.id);
+        }
+
+        // 3) Try "channel7" pattern -> 7
+        if (foundId == null && /^channel\d+$/i.test(param)) {
+          const n = Number(param.replace(/[^0-9]/g, ""));
+          if (Number.isFinite(n)) foundId = n;
+        }
+
+        if (foundId == null || !Number.isFinite(foundId)) {
+          throw new Error(`Channel not found for "${param}". Try /watch/1, /watch/2, etc.`);
+        }
+        resolvedChannelNum = foundId;
       }
 
-      const ch = await fetchChannelDetails(channelNum);
+      // Fetch channel strictly by numeric id
+      const ch = await fetchChannelDetails(resolvedChannelNum);
       if (!ch) throw new Error("Channel not found.");
       setChannel(ch as Channel);
 
       // CH21 → YouTube embed if configured
       const ytId = (ch as any)?.youtube_channel_id ? String((ch as any).youtube_channel_id).trim() : "";
-      if (channelNum === CH21 && ytId) {
+      if (resolvedChannelNum === CH21 && ytId) {
         setActive(null); setNextUp(null); setVideoSrc(undefined); setUsingStandby(false);
         setDbgRows([]);
         if (showLoading) setLoading(false);
         return;
       }
 
-      const programs = await fetchProgramsForChannel(channelNum);
+      // Load programs for the resolved numeric id
+      const programs = await fetchProgramsForChannel(resolvedChannelNum);
       const now = nowUtc();
 
       const rows = programs.map(pr => {
@@ -186,7 +224,7 @@ export default function WatchPage() {
         const boundary = nxt ? (toUtcDate(nxt.start_time) as Date) : en;
         if (boundary) scheduleRefreshAt(boundary);
       } else {
-        const sb = standbyProgram(channelNum);
+        const sb = standbyProgram(resolvedChannelNum);
         const sbSrc = getVideoUrlForProgram(sb) || sb.mp4_url || undefined;
         setActive(sb);
         setUsingStandby(true);
@@ -205,7 +243,7 @@ export default function WatchPage() {
       if (showLoading) setLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [channelNum, fetchProgramsForChannel]);
+  }, [channelNum, param, fetchProgramsForChannel]);
 
   useEffect(() => {
     void pickAndPlay(true);
@@ -216,7 +254,7 @@ export default function WatchPage() {
     return () => { if (pollTimer.current) clearInterval(pollTimer.current); };
   }, [pickAndPlay]);
 
-  const isYouTube = channelNum === CH21 && !!(channel?.youtube_channel_id || "").trim();
+  const isYouTube = (channel?.id === CH21 || Number(channel?.id) === CH21) && !!(channel?.youtube_channel_id || "").trim();
 
   let content: ReactNode;
   if (err) {
@@ -244,7 +282,9 @@ export default function WatchPage() {
         onVideoEnded={() => void pickAndPlay(false)}
         onError={() => {
           if (!usingStandby) {
-            const sb = standbyProgram(channelNum);
+            // Use the last resolved numeric id (from the debug rows if needed)
+            const fallbackChannel = Number(channel?.id) || channelNum || 0;
+            const sb = standbyProgram(fallbackChannel);
             const sbSrc = getVideoUrlForProgram(sb) || sb.mp4_url || undefined;
             setActive(sb);
             setUsingStandby(true);
