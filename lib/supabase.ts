@@ -1,31 +1,27 @@
 // lib/supabase.ts
-import { createClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 /* ---------- Types ---------- */
 export type Program = {
-  id: string | number;
   channel_id: number | string;
   title?: string | null;
-  mp4_url?: string | null;              // relative filename OR bucket:key OR bucket/key OR storage://bucket/key OR full URL
-  duration?: number | string | null;    // seconds
-  start_time?: string | null;           // ISO-like; parsed as UTC
-  description?: string | null;
+  mp4_url?: string | null;          // filename OR bucket/key OR storage://bucket/key OR full URL
+  start_time?: string | null;       // UTC-ish string
+  duration?: number | string | null;
   [k: string]: any;
 };
 
 export type Channel = {
-  id: number | string;
+  id: string;                       // TEXT in your DB (e.g., "1","2","30","freedom_school")
   name?: string | null;
-  slug?: string | null;                 // display-only
+  slug?: string | null;
+  description?: string | null;
   logo_url?: string | null;
-  youtube_channel_id?: string | null;   // CH21 live
+  youtube_channel_id?: string | null;
+  youtube_is_live?: boolean | null;
+  is_active?: boolean | null;
   [k: string]: any;
 };
-
-/* ---------- Supabase client ---------- */
-const URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
-const KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
-export const supabase = createClient(URL, KEY);
 
 export const STANDBY_PLACEHOLDER_ID = "standby-placeholder";
 
@@ -33,37 +29,17 @@ export const STANDBY_PLACEHOLDER_ID = "standby-placeholder";
 export function toUtcDate(val?: string | Date | null): Date | null {
   if (!val) return null;
   if (val instanceof Date) return Number.isNaN(val.getTime()) ? null : val;
-
   let s = String(val).trim();
 
-  // "YYYY-MM-DD HH:mm:ss..." -> "YYYY-MM-DDTHH:mm:ss..."
   if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(s)) s = s.replace(" ", "T");
-
-  // Normalize Z or offsets (+00, +0000, +00:00, -05, -0500, -05:00)
-  if (/[zZ]$/.test(s)) {
-    s = s.replace(/[zZ]$/, "Z");
-  } else {
-    const off = /([+\-]\d{2})(:?)(\d{2})?$/.exec(s);
-    if (off) {
-      const hh = off[1];
-      const hasColon = off[2] === ":";
-      const mm = off[3] ?? "";
-      const norm = mm === "" ? `${hh}:00` : (hasColon ? `${hh}:${mm}` : `${hh}:${mm}`);
-      s = s.replace(/([+\-]\d{2})(:?)(\d{2})?$/, norm);
-      if (/\+00:00$/.test(s) || /\-00:00$/.test(s)) s = s.replace(/([+\-]00:00)$/, "Z");
-    } else if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(s)) {
-      s = s + "Z"; // bare ISO -> assume UTC
-    }
-  }
+  if (/[zZ]$/.test(s)) s = s.replace(/[zZ]$/, "Z");
+  else if (/([+\-]\d{2})(:?)(\d{2})?$/.test(s)) s = s.replace(/([+\-]\d{2})(:?)(\d{2})?$/, (_,$1,_,m3)=>`${$1}:${m3||"00"}`);
+  else if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(s)) s += "Z";
 
   const d = new Date(s);
   return Number.isNaN(d.getTime()) ? null : d;
 }
-
-export function addSeconds(d: Date, secs: number) {
-  return new Date(d.getTime() + secs * 1000);
-}
-
+export function addSeconds(d: Date, secs: number) { return new Date(d.getTime() + secs * 1000); }
 export function parseDurationSec(v: number | string | null | undefined): number {
   if (typeof v === "number" && Number.isFinite(v)) return Math.max(0, Math.round(v));
   if (v == null) return 0;
@@ -71,28 +47,20 @@ export function parseDurationSec(v: number | string | null | undefined): number 
   return Number.isFinite(n) ? Math.max(0, Math.round(n)) : 0;
 }
 
-/* ---------- Storage (PUBLIC buckets) ---------- */
+/* ---------- Storage URL builder (PUBLIC buckets) ---------- */
 const ROOT = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "");
-const cleanKey = (k: string) =>
-  (k || "").trim().replace(/^\.?\//, "").replace(/\\/g, "/").replace(/\/{2,}/g, "/");
+const cleanKey = (k: string) => (k || "").trim().replace(/^\.?\//, "").replace(/\\/g, "/").replace(/\/{2,}/g, "/");
 
-const buildPublicUrl = (bucket: string, objectPath: string): string | undefined => {
+function buildPublicUrl(bucket: string, objectPath: string): string | undefined {
   const key = cleanKey(objectPath);
-  if (ROOT) return `${ROOT}/storage/v1/object/public/${bucket}/${key}`;
-  try {
-    const { data } = supabase.storage.from(bucket).getPublicUrl(key);
-    return data?.publicUrl || undefined;
-  } catch {
-    return undefined;
-  }
-};
+  if (!ROOT) return undefined;
+  return `${ROOT}/storage/v1/object/public/${bucket}/${key}`;
+}
 
-function bucketNameForChannelId(channel_id: number | string): string {
-  if (typeof channel_id === "number" && Number.isFinite(channel_id)) return `channel${channel_id}`;
-  const s = String(channel_id).trim().toLowerCase();
-  if (/^\d+$/.test(s)) return `channel${s}`;
-  if (s.startsWith("channel")) return s;
-  return `channel${s}`;
+/** bucket name: channel1, channel2, … */
+function bucketForChannelId(channel_id: number | string): string {
+  const s = String(channel_id).trim();
+  return /^\d+$/.test(s) ? `channel${s}` : `channel${s}`; // you only use 1..30
 }
 
 /** Resolve playable URL from Program.mp4_url. */
@@ -101,70 +69,43 @@ export function getVideoUrlForProgram(p: Program): string | undefined {
   let raw = String(raw0).trim();
   if (!raw) return undefined;
 
-  // Full URL or root-relative
-  if (/^https?:\/\//i.test(raw) || raw.startsWith("/")) return raw;
-
-  // storage://bucket/key
-  let m = /^storage:\/\/([^/]+)\/(.+)$/.exec(raw);
+  if (/^https?:\/\//i.test(raw) || raw.startsWith("/")) return raw;        // absolute
+  let m = /^storage:\/\/([^/]+)\/(.+)$/.exec(raw);                         // storage://bucket/key
+  if (m) return buildPublicUrl(m[1], m[2]);
+  m = /^([a-z0-9_\-]+):(.+)$/i.exec(raw);                                  // bucket:key
+  if (m) return buildPublicUrl(m[1], m[2]);
+  m = /^([a-z0-9_\-]+)\/(.+)$/.exec(raw);                                  // bucket/key
   if (m) return buildPublicUrl(m[1], m[2]);
 
-  // bucket:key
-  m = /^([a-z0-9_\-]+):(.+)$/i.exec(raw);
-  if (m) return buildPublicUrl(m[1], m[2]);
-
-  // bucket/key
-  m = /^([a-z0-9_\-]+)\/(.+)$/.exec(raw);
-  if (m) return buildPublicUrl(m[1], m[2]);
-
-  // ✅ relative filename (e.g., "standby_blacktruthtv.mp4")
-  const bucket = bucketNameForChannelId(p.channel_id);
+  // filename only → use that channel's public bucket
+  const bucket = bucketForChannelId(p.channel_id);
   const key = cleanKey(raw).replace(/^channel[^/]+\/+/i, "");
   return buildPublicUrl(bucket, key);
 }
 
-/* ---------- Channels ---------- */
+/* ---------- Channels (id is TEXT) ---------- */
 export async function fetchChannelDetails(
-  supabaseClient: ReturnType<typeof createClient>,
-  id: number | string
+  supabase: SupabaseClient,
+  idOrSlug: string | number
 ): Promise<Channel | null> {
-  // Try numeric first
-  if (Number.isFinite(Number(id))) {
-    try {
-      const { data, error } = await supabaseClient
-        .from("channels")
-        .select("*")
-        .eq("id", Number(id))
-        .maybeSingle();
-      if (!error && data) return data as Channel;
-    } catch (e) {
-      console.warn("fetchChannelDetails numeric failed:", e);
-    }
-  }
-
-  // Try string match
+  const candidate = String(idOrSlug).trim().replace(/-/g, "_"); // allow slug use
   try {
-    const { data, error } = await supabaseClient
+    // match by channels.id (TEXT)
+    const { data, error } = await supabase
       .from("channels")
       .select("*")
-      .eq("id", String(id))
+      .eq("id", candidate)
       .maybeSingle();
     if (!error && data) return data as Channel;
-  } catch (e) {
-    console.warn("fetchChannelDetails string failed:", e);
-  }
 
-  // Optional: if you have a dedicated channel_number column
-  try {
-    const { data, error } = await supabaseClient
+    // fallback: by slug
+    const { data: bySlug } = await supabase
       .from("channels")
       .select("*")
-      .eq("channel_number", id)
+      .eq("slug", candidate)
       .maybeSingle();
-    if (!error && data) return data as Channel;
-  } catch (e) {
-    console.warn("fetchChannelDetails channel_number failed:", e);
+    return (bySlug as Channel) ?? null;
+  } catch {
+    return null;
   }
-
-  return null;
 }
-// --- EOF ---
