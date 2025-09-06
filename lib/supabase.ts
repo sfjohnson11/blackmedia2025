@@ -1,5 +1,6 @@
 // lib/supabase.ts
-import { createClient } from "@supabase/supabase-js";
+import { createBrowserClient, createServerClient } from "@supabase/ssr";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 /* ---------- Types ---------- */
 export type Program = {
@@ -22,12 +23,52 @@ export type Channel = {
   [k: string]: any;
 };
 
-/* ---------- Supabase client ---------- */
-const URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
-const KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
-export const supabase = createClient(URL, KEY);
-
 export const STANDBY_PLACEHOLDER_ID = "standby-placeholder";
+
+/* ---------- Supabase client (singleton; no duplicates) ---------- */
+const URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+
+let _browserClient: SupabaseClient | null = null;
+
+function getBrowserClient(): SupabaseClient {
+  if (_browserClient) return _browserClient;
+
+  _browserClient = createBrowserClient(URL, KEY, {
+    auth: {
+      storageKey: "sb-bttv-auth", // unique to Black Truth TV
+      persistSession: true,
+      detectSessionInUrl: true,
+    },
+  });
+
+  // Optional: warn if it ever gets created more than once
+  if (typeof window !== "undefined") {
+    (window as any).__SB_BTTV_CLIENTS__ = ((window as any).__SB_BTTV_CLIENTS__ || 0) + 1;
+    if ((window as any).__SB_BTTV_CLIENTS__ > 1) {
+      // eslint-disable-next-line no-console
+      console.warn("Supabase client created more than once in this app.");
+      // eslint-disable-next-line no-console
+      console.warn(new Error("Duplicate Supabase client").stack);
+    }
+  }
+
+  return _browserClient;
+}
+
+function getServerClient(): SupabaseClient {
+  // Minimal cookie adapter; expand if you manage auth cookies server-side
+  return createServerClient(URL, KEY, {
+    cookies: {
+      get: () => undefined,
+      set: () => {},
+      remove: () => {},
+    },
+  });
+}
+
+export const supabase: SupabaseClient =
+  typeof window === "undefined" ? getServerClient() : getBrowserClient();
 
 /* ---------- Time (UTC + seconds) ---------- */
 export function toUtcDate(val?: string | Date | null): Date | null {
@@ -82,7 +123,9 @@ const buildPublicUrl = (bucket: string, objectPath: string): string | undefined 
   try {
     const { data } = supabase.storage.from(bucket).getPublicUrl(key);
     return data?.publicUrl || undefined;
-  } catch { return undefined; }
+  } catch {
+    return undefined;
+  }
 };
 
 function bucketNameForChannelId(channel_id: number | string): string {
@@ -133,5 +176,7 @@ export async function fetchChannelDetails(id: string | number): Promise<Channel 
       .maybeSingle();
     if (error) throw error;
     return (data as Channel) ?? null;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
