@@ -6,9 +6,9 @@ export type Program = {
   id: string | number;
   channel_id: number | string;
   title?: string | null;
-  mp4_url?: string | null;
+  mp4_url?: string | null;              // relative filename OR bucket:key OR bucket/key OR storage://bucket/key OR full URL
   duration?: number | string | null;    // seconds
-  start_time?: string | null;           // ISO; parsed as UTC
+  start_time?: string | null;           // ISO-like; parsed as UTC
   description?: string | null;
   [k: string]: any;
 };
@@ -16,7 +16,7 @@ export type Program = {
 export type Channel = {
   id: number | string;
   name?: string | null;
-  slug?: string | null;
+  slug?: string | null;                 // display-only
   logo_url?: string | null;
   youtube_channel_id?: string | null;   // CH21 live
   [k: string]: any;
@@ -30,7 +30,6 @@ const KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
 let _client: SupabaseClient | null = null;
 
-/** Use this in ALL client code. Do not create other clients anywhere else. */
 export function getSupabase(): SupabaseClient {
   if (_client) return _client;
   _client = createClient(URL, KEY, {
@@ -40,10 +39,17 @@ export function getSupabase(): SupabaseClient {
       storageKey: "sb-bttv-auth",
     },
   });
+
+  // Guard: warn if created multiple times
+  if (typeof window !== "undefined") {
+    (window as any).__SB_BTTV_CLIENTS__ = ((window as any).__SB_BTTV_CLIENTS__ || 0) + 1;
+    if ((window as any).__SB_BTTV_CLIENTS__ > 1) {
+      console.warn("Supabase client created more than once. Check imports/providers.");
+    }
+  }
   return _client;
 }
 
-// Keep this named export to avoid changing other files
 export const supabase = getSupabase();
 
 /* ---------- Time (UTC + seconds) ---------- */
@@ -113,17 +119,22 @@ export function getVideoUrlForProgram(p: Program): string | undefined {
   let raw = String(raw0).trim();
   if (!raw) return undefined;
 
+  // Full URL or root-relative
   if (/^https?:\/\//i.test(raw) || raw.startsWith("/")) return raw;
 
+  // storage://bucket/key
   let m = /^storage:\/\/([^/]+)\/(.+)$/.exec(raw);
   if (m) return buildPublicUrl(m[1], m[2]);
 
+  // bucket:key
   m = /^([a-z0-9_\-]+):(.+)$/i.exec(raw);
   if (m) return buildPublicUrl(m[1], m[2]);
 
+  // bucket/key
   m = /^([a-z0-9_\-]+)\/(.+)$/.exec(raw);
   if (m) return buildPublicUrl(m[1], m[2]);
 
+  // relative filename -> use channel bucket; strip mistaken "channelX/" prefix
   const bucket = bucketNameForChannelId(p.channel_id);
   const key = cleanKey(raw).replace(/^channel[^/]+\/+/i, "");
   return buildPublicUrl(bucket, key);
@@ -141,6 +152,4 @@ export async function fetchChannelDetails(id: string | number): Promise<Channel 
       .limit(1)
       .maybeSingle();
     if (error) throw error;
-    return (data as Channel) ?? null;
-  } catch { return null; }
-}
+    return (data as
