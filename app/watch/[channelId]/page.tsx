@@ -22,10 +22,10 @@ type Program = ProgramT & { start_time: string; duration: number | string };
 
 const CH21 = 21;
 const STANDBY_FILE = "standby_blacktruthtv.mp4";
-
-const nowUtc = () => new Date();
 const MIN_RECHECK_MS = 15_000;
 const POLL_MS = 30_000;
+
+const nowUtc = () => new Date();
 
 function standbyProgram(channelId: number): Program {
   return {
@@ -43,9 +43,9 @@ export default function WatchPage() {
   const search = useSearchParams();
   const debug = (search?.get("debug") ?? "0") === "1";
 
-  // Accept whatever the route passes (number or slug)
+  // Accept number OR slug in the URL param
   const param = useMemo(() => String(channelId), [channelId]);
-  const channelNum = useMemo(() => Number(param), [param]);
+  const paramNum = useMemo(() => Number(param), [param]);
 
   const supabase = useMemo(
     () => createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!),
@@ -65,11 +65,6 @@ export default function WatchPage() {
   const lastSrcRef  = useRef<string | undefined>(undefined);
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollTimer    = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const [dbgRows, setDbgRows] = useState<
-    { id: string | number; title: string | null; raw: string; startIso?: string; endIso?: string; duration: number; isNow: boolean; resolved?: string }[]
-  >([]);
-  const [dbgMeta, setDbgMeta] = useState<{ count: number } | null>(null);
 
   useEffect(() => {
     return () => {
@@ -92,12 +87,11 @@ export default function WatchPage() {
       if (!st) continue;
       const dur = Math.max(60, parseDurationSec(p.duration) || 0);
       const en  = addSeconds(st, dur);
-      if (now >= st && now < en) return p; // first current program
+      if (now >= st && now < en) return p;
     }
     return null;
   };
 
-  // Program fetch by numeric channel id
   const fetchProgramsForChannel = useCallback(async (chId: number): Promise<Program[]> => {
     const sel = "id, channel_id, title, mp4_url, start_time, duration";
     const { data, error } = await supabase
@@ -106,100 +100,63 @@ export default function WatchPage() {
       .eq("channel_id", chId)
       .order("start_time", { ascending: true });
 
-    if (error) {
-      console.warn("[WATCH] programs fetch error", error);
-      setDbgMeta({ count: 0 });
-      return [];
-    }
-
+    if (error) return [];
     const rows = (data || []) as Program[];
     rows.sort((a, b) => {
       const as = toUtcDate(a.start_time)?.getTime() ?? 0;
       const bs = toUtcDate(b.start_time)?.getTime() ?? 0;
       return as - bs;
     });
-    setDbgMeta({ count: rows.length });
     return rows;
   }, [supabase]);
+
+  const resolveChannelNumericId = useCallback(async (): Promise<number> => {
+    if (Number.isFinite(paramNum)) return paramNum;
+
+    // 1) slug as-is
+    const s1 = await supabase.from("channels").select("id").eq("slug", param).maybeSingle();
+    if (!s1.error && s1.data?.id != null) return Number(s1.data.id);
+
+    // 2) slug with _ instead of -
+    if (param.includes("-")) {
+      const alt = param.replace(/-/g, "_");
+      const s2 = await supabase.from("channels").select("id").eq("slug", alt).maybeSingle();
+      if (!s2.error && s2.data?.id != null) return Number(s2.data.id);
+    }
+
+    // 3) "channel7" -> 7
+    if (/^channel\d+$/i.test(param)) {
+      const n = Number(param.replace(/[^0-9]/g, ""));
+      if (Number.isFinite(n)) return n;
+    }
+
+    throw new Error(`Channel not found for "${param}".`);
+  }, [param, paramNum, supabase]);
 
   const pickAndPlay = useCallback(async (showLoading = true) => {
     try {
       if (showLoading) setLoading(true);
       setErr(null);
 
-      // ---------- Robust channel resolution ----------
-      let resolvedChannelNum = Number.isFinite(channelNum) ? channelNum : NaN;
+      // Resolve numeric channel id from param (number or slug)
+      const resolvedId = await resolveChannelNumericId();
 
-      if (!Number.isFinite(resolvedChannelNum)) {
-        // 1) Try slug as-is (e.g., "resistance-tv")
-        let foundId: number | null = null;
-        {
-          const { data, error } = await supabase
-            .from("channels")
-            .select("id")
-            .eq("slug", param)
-            .maybeSingle();
-          if (error) console.warn("[watch] slug lookup error", error);
-          if (data?.id != null) foundId = Number(data.id);
-        }
-
-        // 2) Try underscore variant (e.g., "resistance_tv")
-        if (foundId == null && param.includes("-")) {
-          const alt = param.replace(/-/g, "_");
-          const { data } = await supabase
-            .from("channels")
-            .select("id")
-            .eq("slug", alt)
-            .maybeSingle();
-          if (data?.id != null) foundId = Number(data.id);
-        }
-
-        // 3) Try "channel7" pattern -> 7
-        if (foundId == null && /^channel\d+$/i.test(param)) {
-          const n = Number(param.replace(/[^0-9]/g, ""));
-          if (Number.isFinite(n)) foundId = n;
-        }
-
-        if (foundId == null || !Number.isFinite(foundId)) {
-          throw new Error(`Channel not found for "${param}". Try /watch/1, /watch/2, etc.`);
-        }
-        resolvedChannelNum = foundId;
-      }
-
-      // Fetch channel strictly by numeric id
-      const ch = await fetchChannelDetails(resolvedChannelNum);
+      // Load channel record
+      const ch = await fetchChannelDetails(resolvedId);
       if (!ch) throw new Error("Channel not found.");
       setChannel(ch as Channel);
 
-      // CH21 → YouTube embed if configured
+      // CH21 → YouTube if configured
       const ytId = (ch as any)?.youtube_channel_id ? String((ch as any).youtube_channel_id).trim() : "";
-      if (resolvedChannelNum === CH21 && ytId) {
+      if (resolvedId === CH21 && ytId) {
         setActive(null); setNextUp(null); setVideoSrc(undefined); setUsingStandby(false);
-        setDbgRows([]);
         if (showLoading) setLoading(false);
         return;
       }
 
-      // Load programs for the resolved numeric id
-      const programs = await fetchProgramsForChannel(resolvedChannelNum);
+      // Pull schedule
+      const programs = await fetchProgramsForChannel(resolvedId);
       const now = nowUtc();
-
-      const rows = programs.map(pr => {
-        const st = toUtcDate(pr.start_time);
-        const dur = Math.max(60, parseDurationSec(pr.duration) || 0);
-        const en  = st ? addSeconds(st, dur) : null;
-        return {
-          id: pr.id,
-          title: pr.title ?? null,
-          raw: pr.start_time,
-          startIso: st ? st.toISOString() : undefined,
-          endIso: en ? en.toISOString() : undefined,
-          duration: dur,
-          isNow: !!(st && en && now >= st && now < en),
-          resolved: getVideoUrlForProgram(pr),
-        };
-      });
-      setDbgRows(rows);
 
       const current = pickActive(programs, now);
       const nxt = programs.find(p => {
@@ -209,22 +166,24 @@ export default function WatchPage() {
       setNextUp(nxt);
 
       if (current) {
-        const nextSrc = getVideoUrlForProgram(current) || current.mp4_url || undefined;
+        const src = getVideoUrlForProgram(current) || current.mp4_url || undefined;
         setActive(current);
         setUsingStandby(false);
 
-        if (nextSrc && nextSrc !== lastSrcRef.current) {
-          setVideoSrc(nextSrc);
-          lastSrcRef.current = nextSrc;
+        if (src && src !== lastSrcRef.current) {
+          setVideoSrc(src);
+          lastSrcRef.current = src;
           setTimeout(() => { try { (videoRef.current as any)?.load?.(); } catch {} }, 0);
         }
 
+        // schedule boundary: end of current, or next start (whichever is earlier)
         const st = toUtcDate(current.start_time)!;
         const en = addSeconds(st, Math.max(60, parseDurationSec(current.duration) || 0));
-        const boundary = nxt ? (toUtcDate(nxt.start_time) as Date) : en;
+        const boundary = nxt && (toUtcDate(nxt.start_time) as Date) < en ? (toUtcDate(nxt.start_time) as Date) : en;
         if (boundary) scheduleRefreshAt(boundary);
       } else {
-        const sb = standbyProgram(resolvedChannelNum);
+        // No active → standby until next start
+        const sb = standbyProgram(resolvedId);
         const sbSrc = getVideoUrlForProgram(sb) || sb.mp4_url || undefined;
         setActive(sb);
         setUsingStandby(true);
@@ -243,7 +202,7 @@ export default function WatchPage() {
       if (showLoading) setLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [channelNum, param, fetchProgramsForChannel]);
+  }, [resolveChannelNumericId, fetchProgramsForChannel]);
 
   useEffect(() => {
     void pickAndPlay(true);
@@ -282,9 +241,8 @@ export default function WatchPage() {
         onVideoEnded={() => void pickAndPlay(false)}
         onError={() => {
           if (!usingStandby) {
-            // Use the last resolved numeric id (from the debug rows if needed)
-            const fallbackChannel = Number(channel?.id) || channelNum || 0;
-            const sb = standbyProgram(fallbackChannel);
+            const chNum = Number(channel?.id) || 0;
+            const sb = standbyProgram(chNum);
             const sbSrc = getVideoUrlForProgram(sb) || sb.mp4_url || undefined;
             setActive(sb);
             setUsingStandby(true);
@@ -321,11 +279,6 @@ export default function WatchPage() {
         {active && !isYouTube && (
           <>
             <h2 className="text-xl font-bold">{active.title || "Now Playing"}</h2>
-            {active.id !== STANDBY_PLACEHOLDER_ID && active.start_time && (
-              <p className="text-sm text-gray-400">
-                Start (local): {toUtcDate(active.start_time)?.toLocaleString()}
-              </p>
-            )}
             {usingStandby && <p className="text-amber-300 text-sm">Fallback: Standby asset</p>}
           </>
         )}
@@ -333,29 +286,13 @@ export default function WatchPage() {
         {nextUp && (
           <div className="text-sm text-gray-300">
             <span className="font-medium">Next:</span>{" "}
-            {nextUp.title || "Upcoming program"}{" "}
-            <span className="text-gray-400">
-              — {toUtcDate(nextUp.start_time)?.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZoneName: "short" })}
-            </span>
+            {nextUp.title || "Upcoming program"}
           </div>
         )}
 
         {debug && (
           <div className="mt-3 text-[11px] bg-gray-900/70 border border-gray-700 rounded p-2 space-y-2">
-            <div><b>Now (UTC):</b> {nowUtc().toISOString()}</div>
-            {dbgMeta && <div><b>Programs found:</b> {dbgMeta.count}</div>}
-            <div className="pt-2 border-t border-gray-800">
-              <div className="font-semibold mb-1">Programs (parsed):</div>
-              {dbgRows.slice(0, 20).map(r => (
-                <div key={String(r.id)} className="grid grid-cols-1 md:grid-cols-2 gap-1 mb-2">
-                  <div><b>ID:</b> {String(r.id)} • <b>Title:</b> {r.title || "—"}</div>
-                  <div className="truncate"><b>Src:</b> {r.resolved || "—"}</div>
-                  <div><b>Raw:</b> {r.raw}</div>
-                  <div><b>Start:</b> {r.startIso || "—"} • <b>End:</b> {r.endIso || "—"}</div>
-                  <div><b>Dur(s):</b> {r.duration} • <b>Active now?</b> {r.isNow ? "YES" : "no"}</div>
-                </div>
-              ))}
-            </div>
+            <div><b>Now (UTC):</b> {new Date().toISOString()}</div>
           </div>
         )}
       </div>
