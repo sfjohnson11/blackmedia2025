@@ -4,14 +4,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useSupabase } from "@/components/SupabaseProvider";
-import type { Program, Channel } from "@/lib/supabase";
+import type { Channel, Program } from "@/lib/supabase";
 import {
+  fetchChannelDetails,
+  fetchProgramsForChannel,
   toUtcDate,
   addSeconds,
   parseDurationSec,
   getVideoUrlForProgram,
-  fetchChannelDetails,
-  STANDBY_PLACEHOLDER_ID,
 } from "@/lib/supabase";
 
 const CH21 = 21;
@@ -25,50 +25,44 @@ export default function WatchPage({ params }: { params: { channelId: string } })
   const debug = (search?.get("debug") ?? "0") === "1";
 
   const rawParam = String(params.channelId || "");
-  const channelId = useMemo(() => {
+  const channelNum = useMemo(() => {
     if (!/^\d+$/.test(rawParam)) return null;
     const n = Number(rawParam.replace(/^0+/, "") || "0");
     return Number.isFinite(n) ? n : null;
   }, [rawParam]);
 
   const [channel, setChannel] = useState<Channel | null>(null);
-  const [active, setActive] = useState<Program | null>(null);
-  const [nextUp, setNextUp] = useState<Program | null>(null);
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
+  const [activeTitle, setActiveTitle] = useState<string | null>(null);
+  const [nextTitle, setNextTitle] = useState<string | null>(null);
+  const [nextStart, setNextStart] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        setErr(null); setVideoSrc(null); setActive(null); setNextUp(null);
+        setErr(null); setVideoSrc(null); setActiveTitle(null); setNextTitle(null); setNextStart(null);
 
-        if (channelId == null) throw new Error(`Channel id must be numeric (got "${rawParam}")`);
+        if (channelNum == null) throw new Error(`Channel id must be numeric (got "${rawParam}")`);
 
-        const ch = await fetchChannelDetails(supabase, channelId);
-        if (!ch) throw new Error(`Channel not found (channel_id=${channelId})`);
+        // Channels.id
+        const ch = await fetchChannelDetails(supabase, channelNum);
+        if (!ch) throw new Error(`Channel not found (id=${channelNum})`);
         if (cancelled) return;
         setChannel(ch);
 
-        // YouTube live special case
-        if (channelId === CH21 && (ch.youtube_channel_id || "").trim()) {
+        // CH21 -> YouTube Live
+        if (channelNum === CH21 && (ch.youtube_channel_id || "").trim()) {
           setVideoSrc(`https://www.youtube.com/embed/live_stream?channel=${ch.youtube_channel_id}&autoplay=1&mute=1`);
-          setActive(null); setNextUp(null);
+          setActiveTitle(null);
           return;
         }
 
-        // Fetch programs by numeric channel_id
-        const { data: rows, error } = await supabase
-          .from("programs")
-          .select("channel_id, title, mp4_url, start_time, duration")
-          .eq("channel_id", channelId)
-          .order("start_time", { ascending: true });
-        if (error) throw error;
-
+        // Programs.channel_id
+        const list = await fetchProgramsForChannel(supabase, channelNum);
         const now = new Date();
-        const list = (rows || []) as Program[];
 
-        // Pick current
         let current: Program | null = null;
         for (const p of list) {
           const st = toUtcDate(p.start_time);
@@ -78,34 +72,34 @@ export default function WatchPage({ params }: { params: { channelId: string } })
           if (now >= st && now < en) { current = p; break; }
         }
 
-        // Next
-        const upcoming = list.find(p => {
+        const upcoming = list.find((p) => {
           const st = toUtcDate(p.start_time);
           return !!st && st > now;
         }) || null;
-        setNextUp(upcoming || null);
 
-        // Choose source (program or standby)
+        setActiveTitle(current?.title ?? "Standby Programming");
+        setNextTitle(upcoming?.title ?? null);
+        setNextStart(upcoming?.start_time ?? null);
+
         const chosen: Program = current ?? {
-          channel_id: channelId,
+          channel_id: channelNum,
           title: "Standby Programming",
           mp4_url: STANDBY_FILE,
           start_time: now.toISOString(),
           duration: 3600,
         };
-        const resolvedSrc = srcOverride || getVideoUrlForProgram(chosen);
-        if (!resolvedSrc) throw new Error("No playable URL for program/standby");
 
-        setActive(current ?? chosen);
-        setVideoSrc(resolvedSrc);
+        const src = srcOverride || getVideoUrlForProgram(chosen);
+        if (!src) throw new Error("No playable URL for program/standby");
+        setVideoSrc(src);
       } catch (e: any) {
         if (!cancelled) setErr(e?.message || "Failed to load channel.");
       }
     })();
     return () => { cancelled = true; };
-  }, [supabase, channelId, rawParam, srcOverride]);
+  }, [supabase, rawParam, channelNum, srcOverride]);
 
-  const isYouTube = channelId === CH21 && !!(channel?.youtube_channel_id || "").trim();
+  const isYouTube = channelNum === CH21 && !!(channel?.youtube_channel_id || "").trim();
 
   return (
     <div className="bg-black min-h-screen text-white">
@@ -138,18 +132,18 @@ export default function WatchPage({ params }: { params: { channelId: string } })
       </div>
 
       <div className="p-4 space-y-1 text-sm">
-        {active && <div className="font-semibold">{active.title || "Now Playing"}</div>}
-        {nextUp && (
+        {activeTitle && <div className="font-semibold">{activeTitle}</div>}
+        {nextTitle && (
           <div className="text-white/60">
-            Next: {nextUp.title || "Upcoming"} —{" "}
-            {toUtcDate(nextUp.start_time)?.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            Next: {nextTitle} —{" "}
+            {toUtcDate(nextStart || "")?.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
           </div>
         )}
       </div>
 
       {debug && (
         <pre className="m-4 p-3 text-[11px] bg-zinc-900/70 border border-zinc-800 rounded overflow-auto">
-{JSON.stringify({ rawParam, channelId, videoSrc }, null, 2)}
+{JSON.stringify({ rawParam, channelNum, videoSrc }, null, 2)}
         </pre>
       )}
     </div>
