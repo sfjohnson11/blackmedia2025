@@ -32,7 +32,6 @@ const VideoPlayer = forwardRef<HTMLVideoElement, Props>(function VideoPlayer(
   ref
 ) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
-
   useImperativeHandle(ref, () => videoRef.current as HTMLVideoElement);
 
   return (
