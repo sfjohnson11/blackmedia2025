@@ -1,5 +1,4 @@
-// lib/supabase.ts
-import type { SupabaseClient } from "@supabase/supabase-js";
+import { createClient } from "@supabase/supabase-js";
 
 /* ---------- Types ---------- */
 export type Program = {
@@ -12,7 +11,7 @@ export type Program = {
 };
 
 export type Channel = {
-  id: string;                       // TEXT in your DB (e.g., "1","2","30","freedom_school")
+  id: string;                       // TEXT in DB (e.g., "1","2","30","freedom_school")
   name?: string | null;
   slug?: string | null;
   description?: string | null;
@@ -23,23 +22,46 @@ export type Channel = {
   [k: string]: any;
 };
 
+/* ---------- Supabase client ---------- */
+const URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+export const supabase = createClient(URL, KEY);
+
 export const STANDBY_PLACEHOLDER_ID = "standby-placeholder";
 
 /* ---------- Time (UTC + seconds) ---------- */
 export function toUtcDate(val?: string | Date | null): Date | null {
   if (!val) return null;
   if (val instanceof Date) return Number.isNaN(val.getTime()) ? null : val;
+
   let s = String(val).trim();
 
+  // "YYYY-MM-DD HH:mm:ss..." -> "YYYY-MM-DDTHH:mm:ss..."
   if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(s)) s = s.replace(" ", "T");
-  if (/[zZ]$/.test(s)) s = s.replace(/[zZ]$/, "Z");
-  else if (/([+\-]\d{2})(:?)(\d{2})?$/.test(s)) s = s.replace(/([+\-]\d{2})(:?)(\d{2})?$/, (_,$1,_,m3)=>`${$1}:${m3||"00"}`);
-  else if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(s)) s += "Z";
+
+  // Normalize Z or offsets (+00, +0000, +00:00, -05, -0500, -05:00)
+  if (/[zZ]$/.test(s)) {
+    s = s.replace(/[zZ]$/, "Z");
+  } else if (/([+\-]\d{2})(:?)(\d{2})?$/.test(s)) {
+    // FIXED: name params uniquely (no duplicate "_")
+    s = s.replace(
+      /([+\-]\d{2})(:?)(\d{2})?$/,
+      (_match: string, hours: string, _colon: string, minutes?: string) =>
+        `${hours}:${minutes ?? "00"}`
+    );
+    if (/\+00:00$/.test(s) || /\-00:00$/.test(s)) s = s.replace(/([+\-]00:00)$/, "Z");
+  } else if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(s)) {
+    s = s + "Z"; // bare ISO -> assume UTC
+  }
 
   const d = new Date(s);
   return Number.isNaN(d.getTime()) ? null : d;
 }
-export function addSeconds(d: Date, secs: number) { return new Date(d.getTime() + secs * 1000); }
+
+export function addSeconds(d: Date, secs: number) {
+  return new Date(d.getTime() + secs * 1000);
+}
+
 export function parseDurationSec(v: number | string | null | undefined): number {
   if (typeof v === "number" && Number.isFinite(v)) return Math.max(0, Math.round(v));
   if (v == null) return 0;
@@ -49,7 +71,8 @@ export function parseDurationSec(v: number | string | null | undefined): number 
 
 /* ---------- Storage URL builder (PUBLIC buckets) ---------- */
 const ROOT = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "");
-const cleanKey = (k: string) => (k || "").trim().replace(/^\.?\//, "").replace(/\\/g, "/").replace(/\/{2,}/g, "/");
+const cleanKey = (k: string) =>
+  (k || "").trim().replace(/^\.?\//, "").replace(/\\/g, "/").replace(/\/{2,}/g, "/");
 
 function buildPublicUrl(bucket: string, objectPath: string): string | undefined {
   const key = cleanKey(objectPath);
@@ -60,7 +83,7 @@ function buildPublicUrl(bucket: string, objectPath: string): string | undefined 
 /** bucket name: channel1, channel2, … */
 function bucketForChannelId(channel_id: number | string): string {
   const s = String(channel_id).trim();
-  return /^\d+$/.test(s) ? `channel${s}` : `channel${s}`; // you only use 1..30
+  return `channel${s}`; // you use 1..30 (numeric strings OK)
 }
 
 /** Resolve playable URL from Program.mp4_url. */
@@ -85,13 +108,13 @@ export function getVideoUrlForProgram(p: Program): string | undefined {
 
 /* ---------- Channels (id is TEXT) ---------- */
 export async function fetchChannelDetails(
-  supabase: SupabaseClient,
+  supabaseClient: ReturnType<typeof createClient>,
   idOrSlug: string | number
 ): Promise<Channel | null> {
   const candidate = String(idOrSlug).trim().replace(/-/g, "_"); // allow slug use
   try {
     // match by channels.id (TEXT)
-    const { data, error } = await supabase
+    const { data, error } = await supabaseClient
       .from("channels")
       .select("*")
       .eq("id", candidate)
@@ -99,7 +122,7 @@ export async function fetchChannelDetails(
     if (!error && data) return data as Channel;
 
     // fallback: by slug
-    const { data: bySlug } = await supabase
+    const { data: bySlug } = await supabaseClient
       .from("channels")
       .select("*")
       .eq("slug", candidate)
