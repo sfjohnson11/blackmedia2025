@@ -51,7 +51,6 @@ export default async function HomePage() {
 
   return (
     <main className="min-h-[80vh]">
-      {/* Hero (no per-page nav here) */}
       <section className="px-4 md:px-10 py-8 md:py-10 border-b border-gray-800 bg-[radial-gradient(ellipse_at_top,rgba(239,68,68,0.15),rgba(0,0,0,0))]">
         <h1 className="text-3xl md:text-4xl font-extrabold">Black Truth TV</h1>
         <p className="text-gray-300 mt-2 max-w-2xl">
@@ -59,7 +58,6 @@ export default async function HomePage() {
         </p>
       </section>
 
-      {/* Channel grid */}
       <section className="px-4 md:px-10 py-6">
         {error ? (
           <div className="text-gray-300">Couldn’t load channels: {error.message}</div>
@@ -70,10 +68,11 @@ export default async function HomePage() {
             {channelsSorted.map((ch) => {
               const art = ch.logo_url || null;
               const chNum = num(ch.id) ?? String(ch.id);
-              const hrefId = (ch.slug && ch.slug.trim())
-                ? ch.slug!.trim()
-                : String(ch.id);
-              const isCh21YouTube = (num(ch.id) === 21) && !!(ch.youtube_channel_id || "").trim();
+              // FORCE numeric link
+              const hrefId = String(Number(ch.id));
+
+              const isCh21YouTube =
+                (num(ch.id) === 21) && !!(ch.youtube_channel_id || "").trim();
 
               return (
                 <Link
