@@ -1,7 +1,7 @@
-// components/top-nav.tsx
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 
 const BRAND_NAME = "Black Truth TV";
 const BRAND_LOGO_URL =
@@ -9,19 +9,21 @@ const BRAND_LOGO_URL =
 
 export default function TopNav({
   channelName,
-  logoSrc, // optional per-page override
+  logoSrc,
 }: {
   channelName?: string;
   logoSrc?: string;
 }) {
+  const [open, setOpen] = useState(false);
   const finalLogo = (logoSrc && logoSrc.trim()) || BRAND_LOGO_URL;
 
   return (
-    <header className="sticky top-0 z-50 bg-gradient-to-b from-black/80 to-black/40 backdrop-blur supports-[backdrop-filter]:bg-black/60 border-b border-white/10">
+    <header className="sticky top-0 z-50 bg-black/70 backdrop-blur supports-[backdrop-filter]:bg-black/60 border-b border-white/10">
       <div className="mx-auto max-w-7xl px-3 sm:px-4">
         <div className="h-14 sm:h-16 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2">
             <div className="h-9 w-9 sm:h-10 sm:w-10 rounded-md overflow-hidden ring-1 ring-white/10 bg-black/30 flex items-center justify-center">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={finalLogo}
                 alt={`${BRAND_NAME} Logo`}
@@ -41,6 +43,7 @@ export default function TopNav({
             </div>
           </Link>
 
+          {/* Desktop nav */}
           <nav className="hidden md:flex items-center gap-6 text-sm">
             <Link href="/" className="hover:text-white/90 text-white/70">Home</Link>
             <Link href="/guide" className="hover:text-white/90 text-white/70">Guide</Link>
@@ -54,7 +57,36 @@ export default function TopNav({
               Donate
             </Link>
           </nav>
+
+          {/* Mobile menu button */}
+          <button
+            className="md:hidden inline-flex items-center justify-center h-9 w-9 rounded-md ring-1 ring-white/20 text-white/80"
+            onClick={() => setOpen((v) => !v)}
+            aria-label="Toggle menu"
+          >
+            ☰
+          </button>
         </div>
+
+        {/* Mobile nav drawer */}
+        {open && (
+          <div className="md:hidden pb-3">
+            <nav className="grid gap-2 text-sm">
+              <Link onClick={() => setOpen(false)} href="/" className="px-1 py-1.5 text-white/80 hover:text-white">Home</Link>
+              <Link onClick={() => setOpen(false)} href="/guide" className="px-1 py-1.5 text-white/80 hover:text-white">Guide</Link>
+              <Link onClick={() => setOpen(false)} href="/channels" className="px-1 py-1.5 text-white/80 hover:text-white">Channels</Link>
+              <Link onClick={() => setOpen(false)} href="/about" className="px-1 py-1.5 text-white/80 hover:text-white">About</Link>
+              <Link onClick={() => setOpen(false)} href="/contact" className="px-1 py-1.5 text-white/80 hover:text-white">Contact</Link>
+              <Link
+                onClick={() => setOpen(false)}
+                href="/donate"
+                className="mt-1 inline-flex w-max items-center rounded-full bg-amber-300 px-3 py-1 text-black font-semibold"
+              >
+                Donate
+              </Link>
+            </nav>
+          </div>
+        )}
       </div>
     </header>
   );
