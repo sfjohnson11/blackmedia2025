@@ -1,6 +1,4 @@
 // lib/supabase.ts
-// ✅ Pure helpers + types. No extra Supabase client is created here.
-
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 /* ---------- Types ---------- */
@@ -8,7 +6,7 @@ export type Program = {
   id: string | number;
   channel_id: number | string;
   title?: string | null;
-  mp4_url?: string | null;              // relative filename OR bucket:key OR bucket/key OR storage://bucket/key OR full URL
+  mp4_url?: string | null;              // relative filename, bucket:key, bucket/key, storage://bucket/key, or full URL
   duration?: number | string | null;    // seconds
   start_time?: string | null;           // ISO-like; parsed as UTC
   description?: string | null;
@@ -18,7 +16,7 @@ export type Program = {
 export type Channel = {
   id: number | string;
   name?: string | null;
-  slug?: string | null;                 // display-only
+  slug?: string | null;                 // display-only; not used for queries
   logo_url?: string | null;
   youtube_channel_id?: string | null;   // CH21 live
   [k: string]: any;
@@ -33,15 +31,9 @@ export function toUtcDate(val?: string | Date | null): Date | null {
 
   let s = String(val).trim();
 
-  // "YYYY-MM-DD HH:mm:ss..." -> "YYYY-MM-DDTHH:mm:ss..."
   if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(s)) s = s.replace(" ", "T");
-
-  // Normalize to Z (or keep provided offset)
-  if (/[zZ]$/.test(s)) {
-    s = s.replace(/[zZ]$/, "Z");
-  } else if (/^\d{4}-\d{2}-\d{2}T/.test(s) && !/[+\-]\d{2}:\d{2}$/.test(s)) {
-    s += "Z"; // bare ISO -> assume UTC
-  }
+  if (/[zZ]$/.test(s)) s = s.replace(/[zZ]$/, "Z");
+  else if (/^\d{4}-\d{2}-\d{2}T/.test(s) && !/[+\-]\d{2}:\d{2}$/.test(s)) s += "Z";
 
   const d = new Date(s);
   return Number.isNaN(d.getTime()) ? null : d;
@@ -52,7 +44,7 @@ export const addSeconds = (d: Date, secs: number) => new Date(d.getTime() + secs
 export function parseDurationSec(v: number | string | null | undefined): number {
   if (typeof v === "number" && Number.isFinite(v)) return Math.max(0, Math.round(v));
   if (v == null) return 0;
-  const n = Number(String(v).trim());
+  const n = Number(String(v).trim().match(/^\d+/)?.[0] ?? "0");
   return Number.isFinite(n) ? Math.max(0, Math.round(n)) : 0;
 }
 
@@ -60,16 +52,10 @@ export function parseDurationSec(v: number | string | null | undefined): number 
 const cleanKey = (k: string) =>
   (k || "").trim().replace(/^\.?\//, "").replace(/\\/g, "/").replace(/\/{2,}/g, "/");
 
-// Always ask Supabase to compute the correct public URL (handles CDN/custom domains)
-function buildPublicUrl(
-  client: SupabaseClient,
-  bucket: string,
-  objectPath: string
-): string | undefined {
+function buildPublicUrl(client: SupabaseClient, bucket: string, objectPath: string): string | undefined {
   try {
     const key = cleanKey(objectPath);
-    const { data, error } = client.storage.from(bucket).getPublicUrl(key);
-    if (error) return undefined;
+    const { data } = client.storage.from(bucket).getPublicUrl(key);
     return data?.publicUrl || undefined;
   } catch {
     return undefined;
@@ -88,33 +74,25 @@ export function getVideoUrlForProgram(client: SupabaseClient, p: Program): strin
   const raw = String(p?.mp4_url || "").trim();
   if (!raw) return undefined;
 
-  // Full URL or root-relative
   if (/^https?:\/\//i.test(raw) || raw.startsWith("/")) return raw;
 
-  // storage://bucket/key
   let m = /^storage:\/\/([^/]+)\/(.+)$/.exec(raw);
   if (m) return buildPublicUrl(client, m[1], m[2]);
 
-  // bucket:key
   m = /^([a-z0-9_\-]+):(.+)$/i.exec(raw);
   if (m) return buildPublicUrl(client, m[1], m[2]);
 
-  // bucket/key
   m = /^([a-z0-9_\-]+)\/(.+)$/.exec(raw);
   if (m) return buildPublicUrl(client, m[1], m[2]);
 
-  // relative filename -> use channel bucket; strip mistaken "channelX/" prefix
   const bucket = bucketNameForChannelId(p.channel_id);
   const key = cleanKey(raw).replace(/^channel[^/]+\/+/i, "");
   return buildPublicUrl(client, bucket, key);
 }
 
 /* ---------- Channels ---------- */
-/** Fetch one channel by numeric id. (Slug → id should be resolved by the caller.) */
-export async function fetchChannelDetails(
-  client: SupabaseClient,
-  id: number
-): Promise<Channel | null> {
+/** Fetch one channel by numeric id. (Slug → id is handled in the watch page.) */
+export async function fetchChannelDetails(client: SupabaseClient, id: number) {
   try {
     const { data, error } = await client
       .from("channels")
