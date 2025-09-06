@@ -1,27 +1,26 @@
 // lib/supabase/browserClient.ts
 "use client";
 
-import { createBrowserClient } from "@supabase/ssr";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-let _client: ReturnType<typeof createBrowserClient> | null = null;
+let _client: SupabaseClient | null = null;
 
 /** Always return the same Supabase browser client */
-export function getSupabaseBrowser() {
+export function getSupabaseBrowser(): SupabaseClient {
   if (_client) return _client;
 
-  _client = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      auth: {
-        storageKey: "sb-bttv-auth", // unique to Black Truth TV
-        persistSession: true,
-        detectSessionInUrl: true,
-      },
-    }
-  );
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-  // Debug guard: catch duplicate clients during dev
+  _client = createClient(url, key, {
+    auth: {
+      storageKey: "sb-bttv-auth",
+      persistSession: true,
+      detectSessionInUrl: true,
+      flowType: "pkce",
+    },
+  });
+
   if (typeof window !== "undefined" && process.env.NODE_ENV !== "production") {
     (window as any).__SB_BTTB_CLIENTS__ =
       ((window as any).__SB_BTTB_CLIENTS__ || 0) + 1;
