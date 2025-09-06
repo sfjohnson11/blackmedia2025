@@ -1,32 +1,21 @@
 // app/layout.tsx
 import "./globals.css";
-import type { Metadata } from "next";
-import TopNav from "@/components/top-nav";
+import { SupabaseProvider } from "@/components/SupabaseProvider";
 
-export const metadata: Metadata = {
+export const metadata = {
   title: "Black Truth TV",
-  description: "Streaming live and on-demand.",
+  description: "Multi-channel streaming network featuring news, culture, and education.",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <html lang="en" className="bg-black">
-      <head>
-        {/* Speed up first-byte from Supabase */}
-        <link
-          rel="preconnect"
-          href="https://msllqpnxwbugvkpnquwx.supabase.co"
-          crossOrigin=""
-        />
-        <link
-          rel="dns-prefetch"
-          href="https://msllqpnxwbugvkpnquwx.supabase.co"
-        />
-      </head>
-      <body className="bg-black text-white">
-        {/* Global nav on every page */}
-        <TopNav />
-        {children}
+      <body className="min-h-screen bg-black text-white">
+        <SupabaseProvider>{children}</SupabaseProvider>
       </body>
     </html>
   );
