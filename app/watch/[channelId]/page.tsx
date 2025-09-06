@@ -32,7 +32,7 @@ function standbyProgram(channelId: number): Program {
     id: STANDBY_PLACEHOLDER_ID,
     channel_id: channelId,
     title: "Standby Programming",
-    mp4_url: STANDBY_FILE, // relative; resolver picks the right bucket
+    mp4_url: STANDBY_FILE,
     start_time: nowUtc().toISOString(),
     duration: 300,
   } as any;
@@ -97,7 +97,6 @@ export default function WatchPage() {
     return null;
   };
 
-  // NUMERIC-ONLY program fetch
   const fetchProgramsForChannel = useCallback(async (chId: number): Promise<Program[]> => {
     const sel = "id, channel_id, title, mp4_url, start_time, duration";
     const { data, error } = await supabase
@@ -131,7 +130,6 @@ export default function WatchPage() {
         throw new Error("Channel id must be numeric (e.g., /watch/1).");
       }
 
-      // Fetch channel strictly by numeric id
       const ch = await fetchChannelDetails(channelNum);
       if (!ch) throw new Error("Channel not found.");
       setChannel(ch as Channel);
@@ -148,7 +146,6 @@ export default function WatchPage() {
       const programs = await fetchProgramsForChannel(channelNum);
       const now = nowUtc();
 
-      // Build debug rows
       const rows = programs.map(pr => {
         const st = toUtcDate(pr.start_time);
         const dur = Math.max(60, parseDurationSec(pr.duration) || 0);
