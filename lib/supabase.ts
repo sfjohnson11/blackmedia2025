@@ -29,21 +29,36 @@ export const supabase = createClient(URL, KEY);
 
 export const STANDBY_PLACEHOLDER_ID = "standby-placeholder";
 
-/* ---------- Time utils ---------- */
+/* ---------- Time utils (tolerant to Postgres +00, +0000, +00:00) ---------- */
 export function toUtcDate(val?: string | Date | null): Date | null {
   if (!val) return null;
   if (val instanceof Date) return Number.isNaN(val.getTime()) ? null : val;
 
   let s = String(val).trim();
-  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?[zZ]$/.test(s)) {
-    s = s.replace(" ", "T").replace(/[zZ]$/, "Z");
-  } else if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?[+\-]\d{2}:?\d{2}$/.test(s)) {
-    s = s.replace(" ", "T").replace(/([+\-]\d{2})(\d{2})$/, "$1:$2");
-  } else if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(s)) {
-    s = s + "Z";
-  } else if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(s)) {
-    s = s.replace(" ", "T") + "Z";
+
+  // Convert "YYYY-MM-DD HH:mm:ss..." to "YYYY-MM-DDTHH:mm:ss..."
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(s)) {
+    s = s.replace(" ", "T");
   }
+
+  // Normalize trailing Z/z
+  if (/[zZ]$/.test(s)) {
+    s = s.replace(/[zZ]$/, "Z");
+  } else {
+    // Handle offsets: +00, +0000, +00:00 (and negative variants)
+    const off = /([+\-]\d{2})(:?)(\d{2})?$/.exec(s);
+    if (off) {
+      const hh = off[1];
+      const hasColon = off[2] === ":";
+      const mm = off[3] ?? "";
+      const norm = mm === "" ? `${hh}:00` : (hasColon ? `${hh}:${mm}` : `${hh}:${mm}`);
+      s = s.replace(/([+\-]\d{2})(:?)(\d{2})?$/, norm);
+      if (/\+00:00$/.test(s) || /\-00:00$/.test(s)) s = s.replace(/([+\-]00:00)$/, "Z");
+    } else if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(s)) {
+      s = s + "Z"; // bare ISO -> assume UTC
+    }
+  }
+
   const d = new Date(s);
   return Number.isNaN(d.getTime()) ? null : d;
 }
@@ -81,7 +96,7 @@ function bucketNameForChannelId(channel_id: number | string): string {
   const s = String(channel_id).trim().toLowerCase();
   if (/^\d+$/.test(s)) return `channel${s}`;   // "3" -> channel3
   if (s.startsWith("channel")) return s;       // already bucket-like
-  return `channel${s}`;                         // safety fallback
+  return `channel${s}`;                         // safety fallback (rare)
 }
 
 /** Resolve playable URL from Program.mp4_url. */
