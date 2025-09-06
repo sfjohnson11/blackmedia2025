@@ -1,23 +1,27 @@
-// app/watch/[channelId]/page.tsx
 "use client";
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useSupabase } from "@/components/SupabaseProvider";
 import type { Program, Channel } from "@/lib/supabase";
-import { toUtcDate, addSeconds, parseDurationSec, getVideoUrlForProgram, fetchChannelDetails, STANDBY_PLACEHOLDER_ID } from "@/lib/supabase";
+import {
+  toUtcDate,
+  addSeconds,
+  parseDurationSec,
+  getVideoUrlForProgram,
+  fetchChannelDetails,
+  STANDBY_PLACEHOLDER_ID,
+} from "@/lib/supabase";
 
 const CH21 = 21;
-const STANDBY_FILE = "standby_blacktruthtv.mp4";
 
 export default function WatchPage({ params }: { params: { channelId: string } }) {
   const supabase = useSupabase();
   const search = useSearchParams();
   const debug = (search?.get("debug") ?? "0") === "1";
   const srcOverride = search?.get("src") || null;
-  const rawParam = String(params.channelId || "");
-  const norm = useMemo(() => rawParam.trim(), [rawParam]);
 
+  const rawParam = String(params.channelId || "");
   const [resolvedId, setResolvedId] = useState<number | null>(null);
   const [channel, setChannel] = useState<Channel | null>(null);
   const [active, setActive] = useState<Program | null>(null);
@@ -25,38 +29,39 @@ export default function WatchPage({ params }: { params: { channelId: string } })
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  const resolveNumericId = useCallback(async (): Promise<number> => {
-    if (/^\d+$/.test(norm)) return Number(norm.replace(/^0+/, "") || "0");
-    const slug = norm.replace(/-/g, "_");
-    const { data } = await supabase.from("channels").select("id, slug").eq("slug", slug).maybeSingle();
-    if (data?.id != null && Number.isFinite(Number(data.id))) return Number(data.id);
-    throw new Error(`Channel not found for "${norm}"`);
-  }, [norm, supabase]);
-
   useEffect(() => {
     let cancelled = false;
+
     (async () => {
       try {
-        setErr(null); setVideoSrc(null); setActive(null); setNextUp(null);
+        setErr(null);
+        setVideoSrc(null);
+        setActive(null);
+        setNextUp(null);
 
-        const id = await resolveNumericId();
-        if (cancelled) return;
+        // ✅ always numeric IDs
+        if (!/^\d+$/.test(rawParam)) {
+          throw new Error(`Channel id must be numeric (got "${rawParam}")`);
+        }
+        const id = Number(rawParam);
         setResolvedId(id);
 
-        const ch = await fetchChannelDetails(supabase, id);
+        // ✅ fetch channel details directly by id
+        const ch = await fetchChannelDetails(id);
         if (!ch) throw new Error(`Channel not found (id=${id})`);
         if (cancelled) return;
         setChannel(ch);
 
-        // YouTube special case
+        // ✅ YouTube special case
         const yt = (ch.youtube_channel_id || "").trim();
         if (id === CH21 && yt) {
-          setVideoSrc(`https://www.youtube.com/embed/live_stream?channel=${yt}&autoplay=1&mute=1`);
-          setActive(null); setNextUp(null);
+          setVideoSrc(
+            `https://www.youtube.com/embed/live_stream?channel=${yt}&autoplay=1&mute=1`
+          );
           return;
         }
 
-        // Programs strictly by numeric channel_id
+        // ✅ programs for this channel
         const { data: rows, error } = await supabase
           .from("programs")
           .select("id, channel_id, title, mp4_url, start_time, duration")
@@ -67,6 +72,7 @@ export default function WatchPage({ params }: { params: { channelId: string } })
         const now = new Date();
         const list = (rows || []) as Program[];
 
+        // find current program
         const current = (() => {
           for (const p of list) {
             const st = toUtcDate(p.start_time);
@@ -78,34 +84,42 @@ export default function WatchPage({ params }: { params: { channelId: string } })
           return null;
         })();
 
-        const upcoming = list.find(p => {
-          const st = toUtcDate(p.start_time);
-          return !!st && st > now;
-        }) || null;
+        // find next program
+        const upcoming =
+          list.find((p) => {
+            const st = toUtcDate(p.start_time);
+            return !!st && st > now;
+          }) || null;
         setNextUp(upcoming);
 
-        const chosen = current ?? {
+        // ✅ fallback standby file in each channel bucket
+        const chosen: Program = current ?? {
           id: STANDBY_PLACEHOLDER_ID,
           channel_id: id,
           title: "Standby Programming",
-          mp4_url: STANDBY_FILE,
+          mp4_url: `standby_blacktruthtv.mp4`, // relative path, resolved into channel bucket
           start_time: now.toISOString(),
           duration: 3600,
         };
 
-        const resolvedSrc = srcOverride || getVideoUrlForProgram(supabase, chosen);
-        if (!resolvedSrc) throw new Error("No playable URL found for program/standby");
+        const resolvedSrc = srcOverride || getVideoUrlForProgram(chosen);
+        if (!resolvedSrc)
+          throw new Error("No playable URL found for program/standby");
 
-        setActive(current ? current : (chosen as Program));
+        setActive(current ? current : chosen);
         setVideoSrc(resolvedSrc);
       } catch (e: any) {
         if (!cancelled) setErr(e?.message || "Failed to load channel.");
       }
     })();
-    return () => { cancelled = true; };
-  }, [resolveNumericId, supabase, srcOverride]);
 
-  const isYouTube = resolvedId === CH21 && !!(channel?.youtube_channel_id || "").trim();
+    return () => {
+      cancelled = true;
+    };
+  }, [rawParam, supabase, srcOverride]);
+
+  const isYouTube =
+    resolvedId === CH21 && !!(channel?.youtube_channel_id || "").trim();
 
   return (
     <div className="bg-black min-h-screen text-white">
@@ -128,7 +142,9 @@ export default function WatchPage({ params }: { params: { channelId: string } })
             muted
             playsInline
             controls
-            onError={() => setErr("Video failed to load (check storage URL/permissions/MIME).")}
+            onError={() =>
+              setErr("Video failed to load (check storage URL/permissions/MIME).")
+            }
           >
             <source src={videoSrc} type="video/mp4" />
           </video>
@@ -138,18 +154,23 @@ export default function WatchPage({ params }: { params: { channelId: string } })
       </div>
 
       <div className="p-4 space-y-1 text-sm">
-        {active && <div className="font-semibold">{active.title || "Now Playing"}</div>}
+        {active && (
+          <div className="font-semibold">{active.title || "Now Playing"}</div>
+        )}
         {nextUp && (
           <div className="text-white/60">
             Next: {nextUp.title || "Upcoming"} —{" "}
-            {toUtcDate(nextUp.start_time)?.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            {toUtcDate(nextUp.start_time)?.toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
           </div>
         )}
       </div>
 
       {debug && (
         <pre className="m-4 p-3 text-[11px] bg-zinc-900/70 border border-zinc-800 rounded overflow-auto">
-{JSON.stringify({ rawParam, resolvedId, videoSrc }, null, 2)}
+          {JSON.stringify({ rawParam, resolvedId, videoSrc }, null, 2)}
         </pre>
       )}
     </div>
