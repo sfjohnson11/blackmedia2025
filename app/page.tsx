@@ -22,7 +22,6 @@ function num(v: unknown): number | null {
 }
 
 export default async function HomePage() {
-  // Server-side Supabase client is fine here (read-only, anon key)
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
   const supabase = createClient(url, anon, { auth: { persistSession: false, autoRefreshToken: false } });
@@ -51,24 +50,8 @@ export default async function HomePage() {
   });
 
   return (
-    <div className="min-h-screen bg-black text-white">
-      {/* NAV BAR */}
-      <header className="sticky top-0 z-40 border-b border-white/10 bg-black/70 backdrop-blur">
-        <div className="mx-auto max-w-7xl px-4 md:px-6 h-14 flex items-center justify-between">
-          <Link href="/" className="font-extrabold tracking-tight text-lg md:text-xl">
-            Black Truth TV
-          </Link>
-          <nav className="flex items-center gap-4 text-sm">
-            <Link href="/" className="text-white/80 hover:text-white">Home</Link>
-            <Link href="/about" className="text-white/80 hover:text-white">About</Link>
-            <Link href="/watch/21" className="text-white/80 hover:text-white">Live</Link>
-            <Link href="/watch/1" className="text-white/80 hover:text-white">Channel 1</Link>
-            <Link href="/watch/3" className="text-white/80 hover:text-white">Channel 3</Link>
-          </nav>
-        </div>
-      </header>
-
-      {/* HERO */}
+    <main className="min-h-[80vh]">
+      {/* Hero (no per-page nav here) */}
       <section className="px-4 md:px-10 py-8 md:py-10 border-b border-gray-800 bg-[radial-gradient(ellipse_at_top,rgba(239,68,68,0.15),rgba(0,0,0,0))]">
         <h1 className="text-3xl md:text-4xl font-extrabold">Black Truth TV</h1>
         <p className="text-gray-300 mt-2 max-w-2xl">
@@ -76,7 +59,7 @@ export default async function HomePage() {
         </p>
       </section>
 
-      {/* CHANNEL GRID */}
+      {/* Channel grid */}
       <section className="px-4 md:px-10 py-6">
         {error ? (
           <div className="text-gray-300">Couldn’t load channels: {error.message}</div>
@@ -87,13 +70,10 @@ export default async function HomePage() {
             {channelsSorted.map((ch) => {
               const art = ch.logo_url || null;
               const chNum = num(ch.id) ?? String(ch.id);
-              const hrefId =
-                ch.slug && ch.slug.trim().length > 0
-                  ? ch.slug!.trim()
-                  : String(ch.id);
-
-              const isCh21YouTube =
-                (num(ch.id) === 21) && !!(ch.youtube_channel_id || "").trim();
+              const hrefId = (ch.slug && ch.slug.trim())
+                ? ch.slug!.trim()
+                : String(ch.id);
+              const isCh21YouTube = (num(ch.id) === 21) && !!(ch.youtube_channel_id || "").trim();
 
               return (
                 <Link
@@ -151,11 +131,6 @@ export default async function HomePage() {
           </div>
         )}
       </section>
-
-      {/* FOOTER */}
-      <footer className="px-4 md:px-10 py-10 text-xs text-white/60 border-t border-white/10">
-        © {new Date().getFullYear()} Black Truth TV
-      </footer>
-    </div>
+    </main>
   );
 }
