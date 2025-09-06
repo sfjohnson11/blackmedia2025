@@ -3,66 +3,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { createClient } from "@supabase/supabase-js";
+import { useSupabase } from "@/components/SupabaseProvider";
+import type { Channel, Program } from "@/lib/supabase";
+import { toUtcDate, addSeconds, parseDurationSec } from "@/lib/supabase";
 
-/* ---------- types (your columns) ---------- */
-type ChannelRow = {
-  id: number | string;
-  name: string | null;
-  slug?: string | null;
-  description?: string | null;
-  logo_url: string | null;
-  youtube_is_live?: boolean | null;
-  is_active?: boolean | null;
-};
-
-type ProgramRow = {
-  id: string | number;
-  title: string | null;
-  channel_id: number | string;
-  start_time: string;         // ISO Z or "YYYY-MM-DD HH:mm:ss[Z|±HH:MM]"
-  duration: number | string;  // seconds (e.g., 7620 or "7620s")
-};
-
-/* ---------- UTC time helpers (strict) ---------- */
+/* ---------- local helpers ---------- */
 const nowUtc = () => new Date(new Date().toISOString());
-const addSeconds = (d: Date, secs: number) => new Date(d.getTime() + secs * 1000);
-
-function toUtcDate(val?: string | Date | null): Date | null {
-  if (!val) return null;
-  if (val instanceof Date) return Number.isNaN(val.getTime()) ? null : val;
-
-  let s = String(val).trim();
-
-  // "YYYY-MM-DD HH:mm:ssZ" → T + Z
-  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?[zZ]$/.test(s)) {
-    s = s.replace(" ", "T").replace(/[zZ]$/, "Z");
-  }
-  // "YYYY-MM-DD HH:mm:ss±HH:MM" (or ±HHMM) → T + normalized offset
-  else if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?[+\-]\d{2}:?\d{2}$/.test(s)) {
-    s = s.replace(" ", "T").replace(/([+\-]\d{2})(\d{2})$/, "$1:$2");
-  }
-  // ISO without tz → force Z
-  else if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(s)) {
-    s += "Z";
-  }
-  // "YYYY-MM-DD HH:mm:ss" naive → treat as UTC
-  else if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(s)) {
-    s = s.replace(" ", "T") + "Z";
-  }
-
-  const d = new Date(s);
-  return Number.isNaN(d.getTime()) ? null : d;
-}
-
-function parseDurationSec(v: number | string | null | undefined): number {
-  if (typeof v === "number") return Number.isFinite(v) && v > 0 ? v : 0;
-  if (v == null) return 0;
-  const m = String(v).match(/^\s*(\d+)/);
-  if (!m) return 0;
-  const n = Number(m[1]);
-  return Number.isFinite(n) && n > 0 ? n : 0;
-}
 
 function toDbTimestampStringUTC(d: Date) {
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -71,11 +17,7 @@ function toDbTimestampStringUTC(d: Date) {
     ` ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`
   );
 }
-
-function toStr(v: string | number | null | undefined) {
-  return v == null ? "" : String(v);
-}
-
+const toStr = (v: string | number | null | undefined) => (v == null ? "" : String(v));
 function fmtTimeLocal(isoish?: string) {
   const d = toUtcDate(isoish);
   if (!d) return "";
@@ -84,7 +26,7 @@ function fmtTimeLocal(isoish?: string) {
   } catch { return ""; }
 }
 
-/* ---------- component (old “Now / Next (+Later)” guide) ---------- */
+/* ---------- component ---------- */
 export default function TVGuideGrid({
   lookAheadHours = 6,
   lookBackHours = 6,
@@ -92,16 +34,10 @@ export default function TVGuideGrid({
   lookAheadHours?: number;
   lookBackHours?: number;
 }) {
-  const supabase = useMemo(
-    () => createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    ),
-    []
-  );
+  const supabase = useSupabase();
 
-  const [channels, setChannels] = useState<ChannelRow[]>([]);
-  const [programs, setPrograms] = useState<ProgramRow[]>([]);
+  const [channels, setChannels] = useState<Channel[]>([]);
+  const [programs, setPrograms] = useState<Program[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
@@ -128,15 +64,16 @@ export default function TVGuideGrid({
         setErr(null);
         setLoading(true);
 
-        // Channels — minimal columns, ordered numerically by id
+        // Channels — active only, order numerically by id
         const { data: chRows, error: chErr } = await supabase
           .from("channels")
           .select("id, name, slug, description, logo_url, youtube_is_live, is_active")
+          .eq("is_active", true)
           .order("id", { ascending: true });
         if (chErr) throw new Error(chErr.message);
 
         // Programs in window (ISO first)
-        let progRows: ProgramRow[] = [];
+        let progRows: Program[] = [];
         const { data: prA, error: prErrA } = await supabase
           .from("programs")
           .select("id, title, channel_id, start_time, duration")
@@ -144,9 +81,9 @@ export default function TVGuideGrid({
           .lte("start_time", windowEndISO)
           .order("start_time", { ascending: true });
         if (prErrA) throw new Error(prErrA.message);
-        progRows = (prA || []) as ProgramRow[];
+        progRows = (prA || []) as Program[];
 
-        // Fallback to TEXT-window if needed
+        // Fallback to TEXT window if DB stores as text without timezone
         if (progRows.length === 0) {
           const { data: prB, error: prErrB } = await supabase
             .from("programs")
@@ -155,12 +92,12 @@ export default function TVGuideGrid({
             .lte("start_time", windowEndDB)
             .order("start_time", { ascending: true });
           if (prErrB) throw new Error(prErrB.message);
-          progRows = (prB || []) as ProgramRow[];
+          progRows = (prB || []) as Program[];
         }
 
         if (cancelled) return;
 
-        // Numeric sort for channels: 1,2,3,…10,11…
+        // Numeric-first ordering of channels
         const sortedChannels = [...(chRows || [])].sort((a, b) => {
           const na = Number(a.id), nb = Number(b.id);
           const fa = Number.isFinite(na), fb = Number.isFinite(nb);
@@ -168,7 +105,7 @@ export default function TVGuideGrid({
           return String(a.id).localeCompare(String(b.id), undefined, { numeric: true });
         });
 
-        setChannels(sortedChannels as ChannelRow[]);
+        setChannels(sortedChannels as Channel[]);
         setPrograms(progRows);
       } catch (e: any) {
         if (!cancelled) setErr(e?.message ?? "Failed to load guide.");
@@ -179,9 +116,9 @@ export default function TVGuideGrid({
     return () => { cancelled = true; };
   }, [supabase, windowStartISO, windowEndISO, windowStartDB, windowEndDB]);
 
-  // Group programs by channel_id
+  // Group programs by channel_id (sorted by start)
   const progsByChannel = useMemo(() => {
-    const map = new Map<string, ProgramRow[]>();
+    const map = new Map<string, Program[]>();
     const sorted = [...programs].sort((a, b) => {
       const da = toUtcDate(a.start_time)?.getTime() ?? 0;
       const db = toUtcDate(b.start_time)?.getTime() ?? 0;
@@ -220,8 +157,8 @@ export default function TVGuideGrid({
               const list = progsByChannel.get(chKey) || [];
 
               // find current & next
-              let current: ProgramRow | undefined;
-              let next: ProgramRow | undefined;
+              let current: Program | undefined;
+              let next: Program | undefined;
 
               for (let i = 0; i < list.length; i++) {
                 const p = list[i];
@@ -241,7 +178,7 @@ export default function TVGuideGrid({
                 }
               }
 
-              // fallback current: last one that started before now
+              // fallback: last one before now
               if (!current && list.length > 0) {
                 const before = list.filter(p => {
                   const d = toUtcDate(p.start_time);
@@ -249,6 +186,9 @@ export default function TVGuideGrid({
                 });
                 if (before.length) current = before[before.length - 1];
               }
+
+              // prefer slug in link if present, else numeric id
+              const hrefId = (ch.slug && ch.slug.trim()) ? ch.slug.trim() : chKey;
 
               return (
                 <div key={chKey} className="flex items-stretch">
@@ -262,7 +202,7 @@ export default function TVGuideGrid({
                     </div>
                     <div className="mt-2">
                       <Link
-                        href={`/watch/${encodeURIComponent(chKey)}`}
+                        href={`/watch/${encodeURIComponent(hrefId)}`}
                         className="inline-flex items-center rounded bg-amber-300 text-black hover:bg-amber-200 h-8 px-3 text-xs font-semibold"
                       >
                         Watch
@@ -314,7 +254,7 @@ export default function TVGuideGrid({
                         )}
                       </div>
 
-                      {/* Optional: show one more upcoming */}
+                      {/* Later (one more) */}
                       {list
                         .filter((p) => {
                           const ds = toUtcDate(p.start_time);
