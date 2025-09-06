@@ -9,12 +9,12 @@ export const metadata = {
 
 export default function AboutPage() {
   const exampleChannels = [
-    { id: 1, name: "Channel 1" },
-    { id: 2, name: "Channel 2" },
-    { id: 3, name: "Channel 3" },
-    { id: 4, name: "Channel 4" },
-    { id: 21, name: "Channel 21 (YouTube Live)" },
-    { id: 30, name: "Freedom School" }, // if your slug maps to 30
+    { channel_id: 1, name: "Channel 1" },
+    { channel_id: 2, name: "Channel 2" },
+    { channel_id: 3, name: "Channel 3" },
+    { channel_id: 4, name: "Channel 4" },
+    { channel_id: 21, name: "Channel 21 (YouTube Live)" },
+    { channel_id: 30, name: "Freedom School" }, // if your slug maps to 30
   ];
 
   return (
