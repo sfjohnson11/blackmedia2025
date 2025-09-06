@@ -125,17 +125,47 @@ export function getVideoUrlForProgram(p: Program): string | undefined {
 /* ---------- Channels ---------- */
 export async function fetchChannelDetails(
   supabaseClient: ReturnType<typeof createClient>,
-  id: number
+  id: number | string
 ): Promise<Channel | null> {
+  // Try numeric first
+  if (Number.isFinite(Number(id))) {
+    try {
+      const { data, error } = await supabaseClient
+        .from("channels")
+        .select("*")
+        .eq("id", Number(id))
+        .maybeSingle();
+      if (!error && data) return data as Channel;
+    } catch (e) {
+      console.warn("fetchChannelDetails numeric failed:", e);
+    }
+  }
+
+  // Try string match
   try {
     const { data, error } = await supabaseClient
       .from("channels")
       .select("*")
-      .eq("id", id)
+      .eq("id", String(id))
       .maybeSingle();
-    if (error) throw error;
-    return (data as Channel) ?? null;
-  } catch {
-    return null;
+    if (!error && data) return data as Channel;
+  } catch (e) {
+    console.warn("fetchChannelDetails string failed:", e);
   }
+
+  // Optional: if you have a dedicated channel_number column
+  try {
+    const { data, error } = await supabaseClient
+      .from("channels")
+      .select("*")
+      .eq("channel_number", id)
+      .maybeSingle();
+    if (!error && data) return data as Channel;
+  } catch (e) {
+    console.warn("fetchChannelDetails channel_number failed:", e);
+  }
+
+  return null;
+}
+
 }
