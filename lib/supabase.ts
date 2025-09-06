@@ -8,7 +8,7 @@ export type Program = {
   title?: string | null;
   mp4_url?: string | null;              // relative path, bucket:key, bucket/key, storage://bucket/key, or full URL
   duration?: number | string | null;    // seconds
-  start_time?: string | null;           // ISO-like string; normalized to UTC
+  start_time?: string | null;           // ISO-like; parsed as UTC
   description?: string | null;
   [k: string]: any;
 };
@@ -29,17 +29,13 @@ export const supabase = createClient(URL, KEY);
 
 export const STANDBY_PLACEHOLDER_ID = "standby-placeholder";
 
-/* ---------- Time utils (tolerant to Postgres +00/+0000/+00:00) ---------- */
+/* ---------- Time (UTC + seconds) ---------- */
 export function toUtcDate(val?: string | Date | null): Date | null {
   if (!val) return null;
   if (val instanceof Date) return Number.isNaN(val.getTime()) ? null : val;
 
   let s = String(val).trim();
-
-  // "YYYY-MM-DD HH:mm:ss..." -> "YYYY-MM-DDTHH:mm:ss..."
   if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(s)) s = s.replace(" ", "T");
-
-  // Normalize Z or offsets (+00, +0000, +00:00, -05, -0500, -05:00)
   if (/[zZ]$/.test(s)) {
     s = s.replace(/[zZ]$/, "Z");
   } else {
@@ -52,10 +48,9 @@ export function toUtcDate(val?: string | Date | null): Date | null {
       s = s.replace(/([+\-]\d{2})(:?)(\d{2})?$/, norm);
       if (/\+00:00$/.test(s) || /\-00:00$/.test(s)) s = s.replace(/([+\-]00:00)$/, "Z");
     } else if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(s)) {
-      s = s + "Z"; // bare ISO -> assume UTC
+      s = s + "Z";
     }
   }
-
   const d = new Date(s);
   return Number.isNaN(d.getTime()) ? null : d;
 }
@@ -64,6 +59,7 @@ export function addSeconds(d: Date, secs: number) {
   return new Date(d.getTime() + secs * 1000);
 }
 
+/** STRICT: expects seconds (number or numeric string). */
 export function parseDurationSec(v: number | string | null | undefined): number {
   if (typeof v === "number" && Number.isFinite(v)) return Math.max(0, Math.round(v));
   if (v == null) return 0;
@@ -71,7 +67,7 @@ export function parseDurationSec(v: number | string | null | undefined): number 
   return Number.isFinite(n) ? Math.max(0, Math.round(n)) : 0;
 }
 
-/* ---------- Storage URL helpers (PUBLIC buckets) ---------- */
+/* ---------- Storage (PUBLIC buckets) ---------- */
 const ROOT = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "");
 const cleanKey = (k: string) =>
   (k || "").trim().replace(/^\.?\//, "").replace(/\\/g, "/").replace(/\/{2,}/g, "/");
@@ -82,18 +78,15 @@ const buildPublicUrl = (bucket: string, objectPath: string): string | undefined 
   try {
     const { data } = supabase.storage.from(bucket).getPublicUrl(key);
     return data?.publicUrl || undefined;
-  } catch {
-    return undefined;
-  }
+  } catch { return undefined; }
 };
 
-/** channelN buckets (e.g., id 3 -> "channel3") */
 function bucketNameForChannelId(channel_id: number | string): string {
   if (typeof channel_id === "number" && Number.isFinite(channel_id)) return `channel${channel_id}`;
   const s = String(channel_id).trim().toLowerCase();
-  if (/^\d+$/.test(s)) return `channel${s}`;   // "3" -> channel3
-  if (s.startsWith("channel")) return s;       // already bucket-like
-  return `channel${s}`;                         // safety fallback (rare)
+  if (/^\d+$/.test(s)) return `channel${s}`;
+  if (s.startsWith("channel")) return s;
+  return `channel${s}`;
 }
 
 /** Resolve playable URL from Program.mp4_url. */
@@ -114,16 +107,14 @@ export function getVideoUrlForProgram(p: Program): string | undefined {
   if (m) return buildPublicUrl(m[1], m[2]);
 
   const bucket = bucketNameForChannelId(p.channel_id);
-  const key = cleanKey(raw).replace(/^channel[^/]+\/+/i, ""); // strip mistaken "channelX/" prefix
+  const key = cleanKey(raw).replace(/^channel[^/]+\/+/i, "");
   return buildPublicUrl(bucket, key);
 }
 
 /* ---------- Channels ---------- */
-/** Fetch channel strictly by numeric id (routing is numeric-only) */
 export async function fetchChannelDetails(id: string | number): Promise<Channel | null> {
   const asNum = Number(id);
   if (!Number.isFinite(asNum)) return null;
-
   try {
     const { data, error } = await supabase
       .from("channels")
@@ -131,10 +122,7 @@ export async function fetchChannelDetails(id: string | number): Promise<Channel 
       .eq("id", asNum)
       .limit(1)
       .maybeSingle();
-
     if (error) throw error;
     return (data as Channel) ?? null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
