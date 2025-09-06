@@ -65,9 +65,7 @@ export default async function HomePage() {
             {channelsSorted.map((ch) => {
               const art = ch.logo_url || null;
               const chNum = num(ch.id) ?? String(ch.id);
-              const hrefId = (ch.slug && ch.slug.trim().length > 0)
-                ? ch.slug!.trim()
-                : String(ch.id);
+              const hrefId = String(ch.id); // always numeric id in the URL
 
               const isCh21YouTube =
                 (num(ch.id) === 21) && !!(ch.youtube_channel_id || "").trim();
