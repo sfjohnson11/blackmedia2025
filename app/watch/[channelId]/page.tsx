@@ -43,7 +43,7 @@ export default function WatchPage() {
   const search = useSearchParams();
   const debug = (search?.get("debug") ?? "0") === "1";
 
-  // NUMERIC-ONLY: don't touch the param; require it to be a number
+  // NUMERIC-ONLY: require /watch/<number>
   const param = useMemo(() => String(channelId), [channelId]);
   const channelNum = useMemo(() => Number(param), [param]);
 
@@ -127,12 +127,11 @@ export default function WatchPage() {
       if (showLoading) setLoading(true);
       setErr(null);
 
-      // enforce numeric id in the URL
       if (!Number.isFinite(channelNum)) {
         throw new Error("Channel id must be numeric (e.g., /watch/1).");
       }
 
-      // fetch channel strictly by numeric id
+      // Fetch channel strictly by numeric id
       const ch = await fetchChannelDetails(channelNum);
       if (!ch) throw new Error("Channel not found.");
       setChannel(ch as Channel);
