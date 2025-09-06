@@ -8,19 +8,14 @@ import type { Channel, Program } from "@/lib/supabase";
 import { toUtcDate, addSeconds, parseDurationSec } from "@/lib/supabase";
 
 const nowUtc = () => new Date(new Date().toISOString());
-
+const toStr = (v: string | number | null | undefined) => (v == null ? "" : String(v));
 function toDbTimestampStringUTC(d: Date) {
   const pad = (n: number) => String(n).padStart(2, "0");
-  return (
-    `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}` +
-    ` ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`
-  );
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
 }
-const toStr = (v: string | number | null | undefined) => (v == null ? "" : String(v));
 function fmtTimeLocal(isoish?: string) {
   const d = toUtcDate(isoish);
-  if (!d) return "";
-  try { return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); } catch { return ""; }
+  return d ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
 }
 
 export default function TVGuideGrid({ lookAheadHours = 6, lookBackHours = 6 }: { lookAheadHours?: number; lookBackHours?: number; }) {
@@ -33,9 +28,8 @@ export default function TVGuideGrid({ lookAheadHours = 6, lookBackHours = 6 }: {
 
   const windowStartISO = useMemo(() => { const d = nowUtc(); d.setUTCHours(d.getUTCHours() - lookBackHours); return d.toISOString(); }, [lookBackHours]);
   const windowEndISO   = useMemo(() => { const d = nowUtc(); d.setUTCHours(d.getUTCHours() + lookAheadHours); return d.toISOString(); }, [lookAheadHours]);
-
-  const windowStartDB = useMemo(() => toDbTimestampStringUTC(new Date(windowStartISO)), [windowStartISO]);
-  const windowEndDB   = useMemo(() => toDbTimestampStringUTC(new Date(windowEndISO)),   [windowEndISO]);
+  const windowStartDB  = useMemo(() => toDbTimestampStringUTC(new Date(windowStartISO)), [windowStartISO]);
+  const windowEndDB    = useMemo(() => toDbTimestampStringUTC(new Date(windowEndISO)), [windowEndISO]);
 
   useEffect(() => {
     let cancelled = false;
@@ -43,10 +37,10 @@ export default function TVGuideGrid({ lookAheadHours = 6, lookBackHours = 6 }: {
       try {
         setErr(null); setLoading(true);
 
+        // NO is_active filter here
         const { data: chRows, error: chErr } = await supabase
           .from("channels")
-          .select("id, name, slug, description, logo_url, youtube_is_live, is_active")
-          .eq("is_active", true)
+          .select("id, name, slug, description, logo_url, youtube_channel_id, youtube_is_live")
           .order("id", { ascending: true });
         if (chErr) throw new Error(chErr.message);
 
@@ -73,14 +67,16 @@ export default function TVGuideGrid({ lookAheadHours = 6, lookBackHours = 6 }: {
 
         if (cancelled) return;
 
-        const sortedChannels = [...(chRows || [])].sort((a, b) => {
+        // Numeric-first channel sort
+        const chs = (chRows || []) as Channel[];
+        chs.sort((a, b) => {
           const na = Number(a.id), nb = Number(b.id);
           const fa = Number.isFinite(na), fb = Number.isFinite(nb);
           if (fa && fb) return na - nb;
           return String(a.id).localeCompare(String(b.id), undefined, { numeric: true });
         });
 
-        setChannels(sortedChannels as Channel[]);
+        setChannels(chs);
         setPrograms(progRows);
       } catch (e: any) {
         if (!cancelled) setErr(e?.message ?? "Failed to load guide.");
@@ -151,14 +147,13 @@ export default function TVGuideGrid({ lookAheadHours = 6, lookBackHours = 6 }: {
 
               return (
                 <div key={chKey} className="flex items-stretch">
-                  {/* Channel cell */}
-                  <div className="w-56 shrink-0 p-3 border-right border-slate-800">
+                  <div className="w-56 shrink-0 p-3 border-r border-slate-800">
                     <div className="text-sm text-slate-300">
                       <div className="font-semibold text-white truncate">{ch.name || `Channel ${chKey}`}</div>
                       <div className="text-xs text-slate-400">ID: {chKey}</div>
                     </div>
                     <div className="mt-2">
-                      {/* FORCE numeric link */}
+                      {/* FORCE numeric watch link */}
                       <Link
                         href={`/watch/${encodeURIComponent(String(Number(ch.id)))}`}
                         className="inline-flex items-center rounded bg-amber-300 text-black hover:bg-amber-200 h-8 px-3 text-xs font-semibold"
@@ -168,10 +163,8 @@ export default function TVGuideGrid({ lookAheadHours = 6, lookBackHours = 6 }: {
                     </div>
                   </div>
 
-                  {/* Programs cell */}
                   <div className="flex-1 p-3">
                     <div className="flex gap-3 overflow-x-auto">
-                      {/* Current */}
                       <div className="min-w-[260px] rounded-lg border border-slate-700 bg-slate-800 p-3">
                         <div className="text-xs uppercase tracking-wide text-sky-300 mb-1">Now</div>
                         {current ? (
@@ -193,7 +186,6 @@ export default function TVGuideGrid({ lookAheadHours = 6, lookBackHours = 6 }: {
                         )}
                       </div>
 
-                      {/* Next */}
                       <div className="min-w-[260px] rounded-lg border border-slate-700 bg-slate-800 p-3">
                         <div className="text-xs uppercase tracking-wide text-amber-300 mb-1">Next</div>
                         {next ? (
@@ -206,7 +198,6 @@ export default function TVGuideGrid({ lookAheadHours = 6, lookBackHours = 6 }: {
                         )}
                       </div>
 
-                      {/* Later (one more) */}
                       {list
                         .filter((p) => {
                           const ds = toUtcDate(p.start_time);
