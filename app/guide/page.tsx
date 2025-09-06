@@ -1,9 +1,10 @@
 // app/guide/page.tsx
+import Link from "next/link";
+import { Suspense } from "react";
+import TVGuideGrid from "@/components/TVGuideGrid";
+
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
-
-import Link from "next/link";
-import TVGuideGrid from "@/components/TVGuideGrid";
 
 export default function GuidePage() {
   return (
@@ -14,7 +15,17 @@ export default function GuidePage() {
             ← Back to Home
           </Link>
         </div>
-        <TVGuideGrid lookBackHours={6} lookAheadHours={6} />
+
+        <Suspense
+          fallback={
+            <div className="h-48 grid place-items-center text-white/70">
+              Loading guide…
+            </div>
+          }
+        >
+          {/* Adjust the window as you like */}
+          <TVGuideGrid lookBackHours={6} lookAheadHours={6} />
+        </Suspense>
       </main>
     </div>
   );
