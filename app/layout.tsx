@@ -1,21 +1,18 @@
 // app/layout.tsx
 import "./globals.css";
-import { SupabaseProvider } from "@/components/SupabaseProvider";
+import TopNav from "@/components/top-nav";
 
 export const metadata = {
   title: "Black Truth TV",
-  description: "Multi-channel streaming network featuring news, culture, and education.",
+  description: "Multi-channel streaming network.",
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className="bg-black">
       <body className="min-h-screen bg-black text-white">
-        <SupabaseProvider>{children}</SupabaseProvider>
+        <TopNav />
+        {children}
       </body>
     </html>
   );
