@@ -13,23 +13,23 @@ type Channel = {
   logo_url?: string | null;
   youtube_channel_id?: string | null;
   youtube_is_live?: boolean | null;
-  is_active?: boolean | null;
 };
 
-function num(v: unknown): number | null {
+const num = (v: unknown) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
-}
+};
 
 export default async function HomePage() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-  const supabase = createClient(url, anon, { auth: { persistSession: false, autoRefreshToken: false } });
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    { auth: { persistSession: false, autoRefreshToken: false } }
+  );
 
   const { data, error } = await supabase
     .from("channels")
-    .select("id, name, slug, description, logo_url, youtube_channel_id, youtube_is_live, is_active")
-    .eq("is_active", true)
+    .select("id, name, slug, description, logo_url, youtube_channel_id, youtube_is_live")
     .order("id", { ascending: true });
 
   const channels: Channel[] = (data ?? []).map((r: any) => ({
@@ -40,7 +40,6 @@ export default async function HomePage() {
     logo_url: r.logo_url ?? null,
     youtube_channel_id: r.youtube_channel_id ?? null,
     youtube_is_live: r.youtube_is_live ?? null,
-    is_active: r.is_active ?? null,
   }));
 
   const channelsSorted = [...channels].sort((a, b) => {
@@ -50,12 +49,10 @@ export default async function HomePage() {
   });
 
   return (
-    <main className="min-h-[80vh]">
+    <div className="min-h-screen bg-black text-white">
       <section className="px-4 md:px-10 py-8 md:py-10 border-b border-gray-800 bg-[radial-gradient(ellipse_at_top,rgba(239,68,68,0.15),rgba(0,0,0,0))]">
         <h1 className="text-3xl md:text-4xl font-extrabold">Black Truth TV</h1>
-        <p className="text-gray-300 mt-2 max-w-2xl">
-          Streaming live and on-demand. Choose a channel to start watching.
-        </p>
+        <p className="text-gray-300 mt-2 max-w-2xl">Streaming live and on-demand. Choose a channel to start watching.</p>
       </section>
 
       <section className="px-4 md:px-10 py-6">
@@ -70,9 +67,7 @@ export default async function HomePage() {
               const chNum = num(ch.id) ?? String(ch.id);
               // FORCE numeric link
               const hrefId = String(Number(ch.id));
-
-              const isCh21YouTube =
-                (num(ch.id) === 21) && !!(ch.youtube_channel_id || "").trim();
+              const isCh21YouTube = num(ch.id) === 21 && !!(ch.youtube_channel_id || "").trim();
 
               return (
                 <Link
@@ -85,7 +80,6 @@ export default async function HomePage() {
                       Ch {chNum}
                     </span>
                   </div>
-
                   {isCh21YouTube && (
                     <div className="absolute right-2 top-2 z-10">
                       <span className="inline-flex items-center rounded bg-red-600 px-2 py-0.5 text-[10px] font-bold">
@@ -93,7 +87,6 @@ export default async function HomePage() {
                       </span>
                     </div>
                   )}
-
                   <div className="aspect-video bg-black overflow-hidden">
                     {art ? (
                       // eslint-disable-next-line @next/next/no-img-element
@@ -109,19 +102,13 @@ export default async function HomePage() {
                       </div>
                     )}
                   </div>
-
                   <div className="p-3">
-                    <div className="text-base font-semibold truncate">
-                      {ch.name ?? `Channel ${chNum}`}
-                    </div>
+                    <div className="text-base font-semibold truncate">{ch.name ?? `Channel ${chNum}`}</div>
                     <div className="mt-0.5 text-xs text-gray-400">
                       Channel {chNum}{isCh21YouTube ? " • YouTube Live" : ""}
                     </div>
-
                     {ch.description ? (
-                      <div className="text-xs text-gray-400 line-clamp-2 mt-1">
-                        {ch.description}
-                      </div>
+                      <div className="text-xs text-gray-400 line-clamp-2 mt-1">{ch.description}</div>
                     ) : null}
                   </div>
                 </Link>
@@ -130,6 +117,6 @@ export default async function HomePage() {
           </div>
         )}
       </section>
-    </main>
+    </div>
   );
 }
