@@ -21,20 +21,21 @@ type Channel = ChannelT & { youtube_channel_id?: string | null };
 type Program = ProgramT & { start_time: string; duration: number | string };
 
 const CH21 = 21;
-const STANDBY_FILE = "standby_blacktruthtv.mp4";
+const STANDBY_FILE = "standby_blacktruthtv.mp4"; // this file is inside EACH channelN bucket
+
+const nowUtc = () => new Date();
 const MIN_RECHECK_MS = 15_000;
 const POLL_MS = 30_000;
 
-const nowUtc = () => new Date();
-
-function standbyProgram(channelId: number): Program {
+function channelStandbyProgram(channelId: number): Program {
+  // Creates a fake "program" pointing to that channel's standby file
   return {
     id: STANDBY_PLACEHOLDER_ID,
     channel_id: channelId,
-    title: "Standby Programming",
+    title: "Standby",
     mp4_url: STANDBY_FILE,
     start_time: nowUtc().toISOString(),
-    duration: 300,
+    duration: 24 * 3600, // long duration; we stay on it until we switch away
   } as any;
 }
 
@@ -43,7 +44,6 @@ export default function WatchPage() {
   const search = useSearchParams();
   const debug = (search?.get("debug") ?? "0") === "1";
 
-  // Accept number OR slug in the URL param
   const param = useMemo(() => String(channelId), [channelId]);
   const paramNum = useMemo(() => Number(param), [param]);
 
@@ -138,15 +138,15 @@ export default function WatchPage() {
       if (showLoading) setLoading(true);
       setErr(null);
 
-      // Resolve numeric channel id from param (number or slug)
+      // Resolve id (number or slug)
       const resolvedId = await resolveChannelNumericId();
 
-      // Load channel record
+      // Load channel
       const ch = await fetchChannelDetails(resolvedId);
       if (!ch) throw new Error("Channel not found.");
       setChannel(ch as Channel);
 
-      // CH21 → YouTube if configured
+      // CH21 -> YouTube always if configured
       const ytId = (ch as any)?.youtube_channel_id ? String((ch as any).youtube_channel_id).trim() : "";
       if (resolvedId === CH21 && ytId) {
         setActive(null); setNextUp(null); setVideoSrc(undefined); setUsingStandby(false);
@@ -154,7 +154,7 @@ export default function WatchPage() {
         return;
       }
 
-      // Pull schedule
+      // Pull full schedule and determine current + next
       const programs = await fetchProgramsForChannel(resolvedId);
       const now = nowUtc();
 
@@ -166,6 +166,7 @@ export default function WatchPage() {
       setNextUp(nxt);
 
       if (current) {
+        // Play the active program
         const src = getVideoUrlForProgram(current) || current.mp4_url || undefined;
         setActive(current);
         setUsingStandby(false);
@@ -176,15 +177,15 @@ export default function WatchPage() {
           setTimeout(() => { try { (videoRef.current as any)?.load?.(); } catch {} }, 0);
         }
 
-        // schedule boundary: end of current, or next start (whichever is earlier)
+        // When it ends (or when next starts sooner), refresh
         const st = toUtcDate(current.start_time)!;
         const en = addSeconds(st, Math.max(60, parseDurationSec(current.duration) || 0));
         const boundary = nxt && (toUtcDate(nxt.start_time) as Date) < en ? (toUtcDate(nxt.start_time) as Date) : en;
         if (boundary) scheduleRefreshAt(boundary);
       } else {
-        // No active → standby until next start
-        const sb = standbyProgram(resolvedId);
-        const sbSrc = getVideoUrlForProgram(sb) || sb.mp4_url || undefined;
+        // No active -> STAY on channel's standby file indefinitely
+        const sb = channelStandbyProgram(resolvedId);
+        const sbSrc = getVideoUrlForProgram(sb) || sb.mp4_url || undefined; // resolves to channelN/standby_blacktruthtv.mp4
         setActive(sb);
         setUsingStandby(true);
 
@@ -194,7 +195,9 @@ export default function WatchPage() {
           setTimeout(() => { try { (videoRef.current as any)?.load?.(); } catch {} }, 0);
         }
 
+        // If there is a future program, schedule a refresh at its start
         if (nxt) scheduleRefreshAt(toUtcDate(nxt.start_time) as Date);
+        // If there is no next, we just keep playing standby; the POLL keeps checking anyway.
       }
     } catch (e: any) {
       setErr(e?.message || "Failed to load channel/programs.");
@@ -207,6 +210,7 @@ export default function WatchPage() {
   useEffect(() => {
     void pickAndPlay(true);
     if (pollTimer.current) clearInterval(pollTimer.current);
+    // Keep polling; if a program becomes active while on standby, we'll switch
     pollTimer.current = setInterval(() => {
       if (document.visibilityState === "visible") void pickAndPlay(false);
     }, POLL_MS);
@@ -240,9 +244,10 @@ export default function WatchPage() {
         preload="auto"
         onVideoEnded={() => void pickAndPlay(false)}
         onError={() => {
+          // Any error -> fall back to that channel's standby and STAY there
           if (!usingStandby) {
-            const chNum = Number(channel?.id) || 0;
-            const sb = standbyProgram(chNum);
+            const chNum = Number(channel?.id) || paramNum || 0;
+            const sb = channelStandbyProgram(chNum);
             const sbSrc = getVideoUrlForProgram(sb) || sb.mp4_url || undefined;
             setActive(sb);
             setUsingStandby(true);
@@ -258,7 +263,7 @@ export default function WatchPage() {
   } else if (loading) {
     content = (
       <div className="flex flex-col items-center justify-center h-full">
-        <svg className="animate-spin h-10 w-10 text-red-500 mb-2" viewBox="0 0 24 24">
+        <svg className="animate-spin h-10 w-10 text-yellow-400 mb-2" viewBox="0 0 24 24">
           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
         </svg>
@@ -266,7 +271,7 @@ export default function WatchPage() {
       </div>
     );
   } else {
-    content = <p className="text-gray-400 p-4 text-center">Standby… waiting for next program.</p>;
+    content = <p className="text-gray-400 p-4 text-center">Standby…</p>;
   }
 
   return (
@@ -279,11 +284,11 @@ export default function WatchPage() {
         {active && !isYouTube && (
           <>
             <h2 className="text-xl font-bold">{active.title || "Now Playing"}</h2>
-            {usingStandby && <p className="text-amber-300 text-sm">Fallback: Standby asset</p>}
+            {usingStandby && <p className="text-amber-300 text-sm">Channel Standby</p>}
           </>
         )}
 
-        {nextUp && (
+        {nextUp && !usingStandby && (
           <div className="text-sm text-gray-300">
             <span className="font-medium">Next:</span>{" "}
             {nextUp.title || "Upcoming program"}
