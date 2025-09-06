@@ -1,3 +1,4 @@
+// app/page.tsx
 import Link from "next/link";
 import { createClient } from "@supabase/supabase-js";
 
@@ -5,7 +6,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 type Channel = {
-  id: number | string;
+  channel_id: number;
   name: string | null;
   slug?: string | null;
   description?: string | null;
@@ -14,24 +15,18 @@ type Channel = {
   youtube_is_live?: boolean | null;
 };
 
-function num(v: unknown): number | null {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-}
-
 export default async function HomePage() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
   const supabase = createClient(url, anon);
 
-  // 🔹 no more "is_active"
   const { data, error } = await supabase
     .from("channels")
-    .select("id, name, slug, description, logo_url, youtube_channel_id, youtube_is_live")
-    .order("id", { ascending: true });
+    .select("channel_id, name, slug, description, logo_url, youtube_channel_id, youtube_is_live")
+    .order("channel_id", { ascending: true });
 
   const channels: Channel[] = (data ?? []).map((r: any) => ({
-    id: r.id,
+    channel_id: Number(r.channel_id),
     name: r.name ?? null,
     slug: r.slug ?? null,
     description: r.description ?? null,
@@ -39,12 +34,6 @@ export default async function HomePage() {
     youtube_channel_id: r.youtube_channel_id ?? null,
     youtube_is_live: r.youtube_is_live ?? null,
   }));
-
-  const channelsSorted = [...channels].sort((a, b) => {
-    const na = num(a.id), nb = num(b.id);
-    if (na !== null && nb !== null) return na - nb;
-    return String(a.id).localeCompare(String(b.id), undefined, { numeric: true });
-  });
 
   return (
     <div className="min-h-screen bg-black text-white">
@@ -58,27 +47,24 @@ export default async function HomePage() {
       <section className="px-4 md:px-10 py-6">
         {error ? (
           <div className="text-gray-300">Couldn’t load channels: {error.message}</div>
-        ) : channelsSorted.length === 0 ? (
+        ) : channels.length === 0 ? (
           <div className="text-gray-400">No channels available.</div>
         ) : (
           <div className="grid grid-flow-row gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-            {channelsSorted.map((ch) => {
+            {channels.map((ch) => {
               const art = ch.logo_url || null;
-              const chNum = num(ch.id) ?? String(ch.id);
-              const hrefId = String(ch.id); // always numeric id in the URL
-
               const isCh21YouTube =
-                (num(ch.id) === 21) && !!(ch.youtube_channel_id || "").trim();
+                ch.channel_id === 21 && !!(ch.youtube_channel_id || "").trim();
 
               return (
                 <Link
-                  href={`/watch/${encodeURIComponent(hrefId)}`}
-                  key={String(ch.id)}
+                  href={`/watch/${ch.channel_id}`}
+                  key={ch.channel_id}
                   className="group relative rounded-xl overflow-hidden border border-gray-800 hover:border-gray-600 transition-colors bg-gray-900"
                 >
                   <div className="absolute left-2 top-2 z-10">
                     <span className="inline-flex items-center rounded-md bg-black/70 px-2 py-0.5 text-[11px] font-semibold ring-1 ring-white/20">
-                      Ch {chNum}
+                      Ch {ch.channel_id}
                     </span>
                   </div>
 
@@ -92,9 +78,10 @@ export default async function HomePage() {
 
                   <div className="aspect-video bg-black overflow-hidden">
                     {art ? (
+                      // eslint-disable-next-line @next/next/no-img-element
                       <img
                         src={art}
-                        alt={ch.name ?? `Channel ${chNum}`}
+                        alt={ch.name ?? `Channel ${ch.channel_id}`}
                         className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-300"
                         loading="lazy"
                       />
@@ -107,10 +94,10 @@ export default async function HomePage() {
 
                   <div className="p-3">
                     <div className="text-base font-semibold truncate">
-                      {ch.name ?? `Channel ${chNum}`}
+                      {ch.name ?? `Channel ${ch.channel_id}`}
                     </div>
                     <div className="mt-0.5 text-xs text-gray-400">
-                      Channel {chNum}{isCh21YouTube ? " • YouTube Live" : ""}
+                      Channel {ch.channel_id}{isCh21YouTube ? " • YouTube Live" : ""}
                     </div>
 
                     {ch.description ? (
