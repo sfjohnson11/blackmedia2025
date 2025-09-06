@@ -16,9 +16,9 @@ export type Program = {
 export type Channel = {
   id: number | string;
   name?: string | null;
-  slug?: string | null;                 // display-only in your app
+  slug?: string | null;                 // display-only
   logo_url?: string | null;
-  youtube_channel_id?: string | null;   // used for CH21 live
+  youtube_channel_id?: string | null;   // CH21 live
   [k: string]: any;
 };
 
@@ -29,23 +29,20 @@ export const supabase = createClient(URL, KEY);
 
 export const STANDBY_PLACEHOLDER_ID = "standby-placeholder";
 
-/* ---------- Time utils (tolerant to Postgres +00, +0000, +00:00) ---------- */
+/* ---------- Time utils (tolerant to Postgres +00/+0000/+00:00) ---------- */
 export function toUtcDate(val?: string | Date | null): Date | null {
   if (!val) return null;
   if (val instanceof Date) return Number.isNaN(val.getTime()) ? null : val;
 
   let s = String(val).trim();
 
-  // Convert "YYYY-MM-DD HH:mm:ss..." to "YYYY-MM-DDTHH:mm:ss..."
-  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(s)) {
-    s = s.replace(" ", "T");
-  }
+  // "YYYY-MM-DD HH:mm:ss..." -> "YYYY-MM-DDTHH:mm:ss..."
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(s)) s = s.replace(" ", "T");
 
-  // Normalize trailing Z/z
+  // Normalize Z or offsets (+00, +0000, +00:00, -05, -0500, -05:00)
   if (/[zZ]$/.test(s)) {
     s = s.replace(/[zZ]$/, "Z");
   } else {
-    // Handle offsets: +00, +0000, +00:00 (and negative variants)
     const off = /([+\-]\d{2})(:?)(\d{2})?$/.exec(s);
     if (off) {
       const hh = off[1];
@@ -117,7 +114,7 @@ export function getVideoUrlForProgram(p: Program): string | undefined {
   if (m) return buildPublicUrl(m[1], m[2]);
 
   const bucket = bucketNameForChannelId(p.channel_id);
-  const key = cleanKey(raw).replace(/^channel[^/]+\/+/i, ""); // strip accidental "channelX/" prefix
+  const key = cleanKey(raw).replace(/^channel[^/]+\/+/i, ""); // strip mistaken "channelX/" prefix
   return buildPublicUrl(bucket, key);
 }
 
