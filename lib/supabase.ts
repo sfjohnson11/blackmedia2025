@@ -6,7 +6,7 @@ export type Program = {
   id: string | number;
   channel_id: number | string;
   title?: string | null;
-  mp4_url?: string | null;              // relative path, bucket:key, bucket/key, storage://bucket/key, or full URL
+  mp4_url?: string | null;              // relative filename OR bucket:key OR bucket/key OR storage://bucket/key OR full URL
   duration?: number | string | null;    // seconds
   start_time?: string | null;           // ISO-like; parsed as UTC
   description?: string | null;
@@ -35,7 +35,11 @@ export function toUtcDate(val?: string | Date | null): Date | null {
   if (val instanceof Date) return Number.isNaN(val.getTime()) ? null : val;
 
   let s = String(val).trim();
+
+  // "YYYY-MM-DD HH:mm:ss..." -> "YYYY-MM-DDTHH:mm:ss..."
   if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(s)) s = s.replace(" ", "T");
+
+  // Normalize Z or offsets (+00, +0000, +00:00, -05, -0500, -05:00)
   if (/[zZ]$/.test(s)) {
     s = s.replace(/[zZ]$/, "Z");
   } else {
@@ -48,9 +52,10 @@ export function toUtcDate(val?: string | Date | null): Date | null {
       s = s.replace(/([+\-]\d{2})(:?)(\d{2})?$/, norm);
       if (/\+00:00$/.test(s) || /\-00:00$/.test(s)) s = s.replace(/([+\-]00:00)$/, "Z");
     } else if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(s)) {
-      s = s + "Z";
+      s = s + "Z"; // bare ISO -> assume UTC
     }
   }
+
   const d = new Date(s);
   return Number.isNaN(d.getTime()) ? null : d;
 }
@@ -59,7 +64,6 @@ export function addSeconds(d: Date, secs: number) {
   return new Date(d.getTime() + secs * 1000);
 }
 
-/** STRICT: expects seconds (number or numeric string). */
 export function parseDurationSec(v: number | string | null | undefined): number {
   if (typeof v === "number" && Number.isFinite(v)) return Math.max(0, Math.round(v));
   if (v == null) return 0;
@@ -95,17 +99,22 @@ export function getVideoUrlForProgram(p: Program): string | undefined {
   let raw = String(raw0).trim();
   if (!raw) return undefined;
 
+  // Full URL or root-relative
   if (/^https?:\/\//i.test(raw) || raw.startsWith("/")) return raw;
 
+  // storage://bucket/key
   let m = /^storage:\/\/([^/]+)\/(.+)$/.exec(raw);
   if (m) return buildPublicUrl(m[1], m[2]);
 
+  // bucket:key
   m = /^([a-z0-9_\-]+):(.+)$/i.exec(raw);
   if (m) return buildPublicUrl(m[1], m[2]);
 
+  // bucket/key
   m = /^([a-z0-9_\-]+)\/(.+)$/.exec(raw);
   if (m) return buildPublicUrl(m[1], m[2]);
 
+  // relative filename -> use channel bucket; strip mistaken "channelX/" prefix
   const bucket = bucketNameForChannelId(p.channel_id);
   const key = cleanKey(raw).replace(/^channel[^/]+\/+/i, "");
   return buildPublicUrl(bucket, key);
