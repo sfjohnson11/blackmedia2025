@@ -7,7 +7,6 @@ import { useSupabase } from "@/components/SupabaseProvider";
 import type { Channel, Program } from "@/lib/supabase";
 import { toUtcDate, addSeconds, parseDurationSec } from "@/lib/supabase";
 
-/* ---------- local helpers ---------- */
 const nowUtc = () => new Date(new Date().toISOString());
 
 function toDbTimestampStringUTC(d: Date) {
@@ -21,19 +20,10 @@ const toStr = (v: string | number | null | undefined) => (v == null ? "" : Strin
 function fmtTimeLocal(isoish?: string) {
   const d = toUtcDate(isoish);
   if (!d) return "";
-  try {
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  } catch { return ""; }
+  try { return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); } catch { return ""; }
 }
 
-/* ---------- component ---------- */
-export default function TVGuideGrid({
-  lookAheadHours = 6,
-  lookBackHours = 6,
-}: {
-  lookAheadHours?: number;
-  lookBackHours?: number;
-}) {
+export default function TVGuideGrid({ lookAheadHours = 6, lookBackHours = 6 }: { lookAheadHours?: number; lookBackHours?: number; }) {
   const supabase = useSupabase();
 
   const [channels, setChannels] = useState<Channel[]>([]);
@@ -41,18 +31,8 @@ export default function TVGuideGrid({
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
-  // Window (UTC)
-  const windowStartISO = useMemo(() => {
-    const d = nowUtc();
-    d.setUTCHours(d.getUTCHours() - lookBackHours);
-    return d.toISOString();
-  }, [lookBackHours]);
-
-  const windowEndISO = useMemo(() => {
-    const d = nowUtc();
-    d.setUTCHours(d.getUTCHours() + lookAheadHours);
-    return d.toISOString();
-  }, [lookAheadHours]);
+  const windowStartISO = useMemo(() => { const d = nowUtc(); d.setUTCHours(d.getUTCHours() - lookBackHours); return d.toISOString(); }, [lookBackHours]);
+  const windowEndISO   = useMemo(() => { const d = nowUtc(); d.setUTCHours(d.getUTCHours() + lookAheadHours); return d.toISOString(); }, [lookAheadHours]);
 
   const windowStartDB = useMemo(() => toDbTimestampStringUTC(new Date(windowStartISO)), [windowStartISO]);
   const windowEndDB   = useMemo(() => toDbTimestampStringUTC(new Date(windowEndISO)),   [windowEndISO]);
@@ -61,10 +41,8 @@ export default function TVGuideGrid({
     let cancelled = false;
     (async () => {
       try {
-        setErr(null);
-        setLoading(true);
+        setErr(null); setLoading(true);
 
-        // Channels — active only, order numerically by id
         const { data: chRows, error: chErr } = await supabase
           .from("channels")
           .select("id, name, slug, description, logo_url, youtube_is_live, is_active")
@@ -72,7 +50,6 @@ export default function TVGuideGrid({
           .order("id", { ascending: true });
         if (chErr) throw new Error(chErr.message);
 
-        // Programs in window (ISO first)
         let progRows: Program[] = [];
         const { data: prA, error: prErrA } = await supabase
           .from("programs")
@@ -83,7 +60,6 @@ export default function TVGuideGrid({
         if (prErrA) throw new Error(prErrA.message);
         progRows = (prA || []) as Program[];
 
-        // Fallback to TEXT window if DB stores as text without timezone
         if (progRows.length === 0) {
           const { data: prB, error: prErrB } = await supabase
             .from("programs")
@@ -97,7 +73,6 @@ export default function TVGuideGrid({
 
         if (cancelled) return;
 
-        // Numeric-first ordering of channels
         const sortedChannels = [...(chRows || [])].sort((a, b) => {
           const na = Number(a.id), nb = Number(b.id);
           const fa = Number.isFinite(na), fb = Number.isFinite(nb);
@@ -116,7 +91,6 @@ export default function TVGuideGrid({
     return () => { cancelled = true; };
   }, [supabase, windowStartISO, windowEndISO, windowStartDB, windowEndDB]);
 
-  // Group programs by channel_id (sorted by start)
   const progsByChannel = useMemo(() => {
     const map = new Map<string, Program[]>();
     const sorted = [...programs].sort((a, b) => {
@@ -138,9 +112,7 @@ export default function TVGuideGrid({
     <section className="mb-6">
       <div className="flex items-center justify-between mb-2">
         <h2 className="text-xl font-semibold text-white">📺 What’s On (Now &amp; Next)</h2>
-        <div className="text-xs text-slate-400">
-          Window: {lookBackHours}h back → {lookAheadHours}h ahead
-        </div>
+        <div className="text-xs text-slate-400">Window: {lookBackHours}h back → {lookAheadHours}h ahead</div>
       </div>
 
       {loading ? (
@@ -156,7 +128,6 @@ export default function TVGuideGrid({
               const chKey = toStr(ch.id);
               const list = progsByChannel.get(chKey) || [];
 
-              // find current & next
               let current: Program | undefined;
               let next: Program | undefined;
 
@@ -166,19 +137,10 @@ export default function TVGuideGrid({
                 const dur = parseDurationSec(p.duration) || 1800;
                 if (!st) continue;
                 const en = addSeconds(st, dur);
-
-                if (now >= st && now < en) {
-                  current = p;
-                  next = list[i + 1];
-                  break;
-                }
-                if (st > now) {
-                  next = p; // between shows
-                  break;
-                }
+                if (now >= st && now < en) { current = p; next = list[i + 1]; break; }
+                if (st > now) { next = p; break; }
               }
 
-              // fallback: last one before now
               if (!current && list.length > 0) {
                 const before = list.filter(p => {
                   const d = toUtcDate(p.start_time);
@@ -187,22 +149,18 @@ export default function TVGuideGrid({
                 if (before.length) current = before[before.length - 1];
               }
 
-              // prefer slug in link if present, else numeric id
-              const hrefId = (ch.slug && ch.slug.trim()) ? ch.slug.trim() : chKey;
-
               return (
                 <div key={chKey} className="flex items-stretch">
                   {/* Channel cell */}
-                  <div className="w-56 shrink-0 p-3 border-r border-slate-800">
+                  <div className="w-56 shrink-0 p-3 border-right border-slate-800">
                     <div className="text-sm text-slate-300">
-                      <div className="font-semibold text-white truncate">
-                        {ch.name || `Channel ${chKey}`}
-                      </div>
+                      <div className="font-semibold text-white truncate">{ch.name || `Channel ${chKey}`}</div>
                       <div className="text-xs text-slate-400">ID: {chKey}</div>
                     </div>
                     <div className="mt-2">
+                      {/* FORCE numeric link */}
                       <Link
-                        href={`/watch/${encodeURIComponent(hrefId)}`}
+                        href={`/watch/${encodeURIComponent(String(Number(ch.id)))}`}
                         className="inline-flex items-center rounded bg-amber-300 text-black hover:bg-amber-200 h-8 px-3 text-xs font-semibold"
                       >
                         Watch
@@ -218,9 +176,7 @@ export default function TVGuideGrid({
                         <div className="text-xs uppercase tracking-wide text-sky-300 mb-1">Now</div>
                         {current ? (
                           <>
-                            <div className="text-sm font-semibold text-white truncate">
-                              {current.title || "Untitled"}
-                            </div>
+                            <div className="text-sm font-semibold text-white truncate">{current.title || "Untitled"}</div>
                             <div className="text-xs text-slate-400">
                               {fmtTimeLocal(current.start_time)}
                               {(() => {
@@ -242,12 +198,8 @@ export default function TVGuideGrid({
                         <div className="text-xs uppercase tracking-wide text-amber-300 mb-1">Next</div>
                         {next ? (
                           <>
-                            <div className="text-sm font-semibold text-white truncate">
-                              {next.title || "Upcoming program"}
-                            </div>
-                            <div className="text-xs text-slate-400">
-                              Starts {fmtTimeLocal(next.start_time)}
-                            </div>
+                            <div className="text-sm font-semibold text-white truncate">{next.title || "Upcoming program"}</div>
+                            <div className="text-xs text-slate-400">Starts {fmtTimeLocal(next.start_time)}</div>
                           </>
                         ) : (
                           <div className="text-sm text-slate-400">No upcoming program in window.</div>
@@ -263,16 +215,9 @@ export default function TVGuideGrid({
                         })
                         .slice(0, 1)
                         .map((p) => (
-                          <div
-                            key={String(p.id)}
-                            className="min-w-[240px] rounded-lg border border-slate-700 bg-slate-800 p-3"
-                          >
-                            <div className="text-xs uppercase tracking-wide text-slate-300 mb-1">
-                              Later
-                            </div>
-                            <div className="text-sm font-semibold text-white truncate">
-                              {p.title || "Program"}
-                            </div>
+                          <div key={String(p.id)} className="min-w-[240px] rounded-lg border border-slate-700 bg-slate-800 p-3">
+                            <div className="text-xs uppercase tracking-wide text-slate-300 mb-1">Later</div>
+                            <div className="text-sm font-semibold text-white truncate">{p.title || "Program"}</div>
                             <div className="text-xs text-slate-400">Starts {fmtTimeLocal(p.start_time)}</div>
                           </div>
                         ))}
