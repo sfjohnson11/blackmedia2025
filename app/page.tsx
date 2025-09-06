@@ -1,4 +1,3 @@
-// app/page.tsx
 import Link from "next/link";
 import { createClient } from "@supabase/supabase-js";
 
@@ -15,18 +14,17 @@ type Channel = {
   youtube_is_live?: boolean | null;
 };
 
-const num = (v: unknown) => {
+function num(v: unknown): number | null {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
-};
+}
 
 export default async function HomePage() {
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { auth: { persistSession: false, autoRefreshToken: false } }
-  );
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+  const supabase = createClient(url, anon);
 
+  // 🔹 no more "is_active"
   const { data, error } = await supabase
     .from("channels")
     .select("id, name, slug, description, logo_url, youtube_channel_id, youtube_is_live")
@@ -52,7 +50,9 @@ export default async function HomePage() {
     <div className="min-h-screen bg-black text-white">
       <section className="px-4 md:px-10 py-8 md:py-10 border-b border-gray-800 bg-[radial-gradient(ellipse_at_top,rgba(239,68,68,0.15),rgba(0,0,0,0))]">
         <h1 className="text-3xl md:text-4xl font-extrabold">Black Truth TV</h1>
-        <p className="text-gray-300 mt-2 max-w-2xl">Streaming live and on-demand. Choose a channel to start watching.</p>
+        <p className="text-gray-300 mt-2 max-w-2xl">
+          Streaming live and on-demand. Choose a channel to start watching.
+        </p>
       </section>
 
       <section className="px-4 md:px-10 py-6">
@@ -61,13 +61,16 @@ export default async function HomePage() {
         ) : channelsSorted.length === 0 ? (
           <div className="text-gray-400">No channels available.</div>
         ) : (
-          <div className="mx-auto max-w-7xl grid grid-flow-row gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+          <div className="grid grid-flow-row gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
             {channelsSorted.map((ch) => {
               const art = ch.logo_url || null;
               const chNum = num(ch.id) ?? String(ch.id);
-              // FORCE numeric link
-              const hrefId = String(Number(ch.id));
-              const isCh21YouTube = num(ch.id) === 21 && !!(ch.youtube_channel_id || "").trim();
+              const hrefId = (ch.slug && ch.slug.trim().length > 0)
+                ? ch.slug!.trim()
+                : String(ch.id);
+
+              const isCh21YouTube =
+                (num(ch.id) === 21) && !!(ch.youtube_channel_id || "").trim();
 
               return (
                 <Link
@@ -80,6 +83,7 @@ export default async function HomePage() {
                       Ch {chNum}
                     </span>
                   </div>
+
                   {isCh21YouTube && (
                     <div className="absolute right-2 top-2 z-10">
                       <span className="inline-flex items-center rounded bg-red-600 px-2 py-0.5 text-[10px] font-bold">
@@ -87,9 +91,9 @@ export default async function HomePage() {
                       </span>
                     </div>
                   )}
+
                   <div className="aspect-video bg-black overflow-hidden">
                     {art ? (
-                      // eslint-disable-next-line @next/next/no-img-element
                       <img
                         src={art}
                         alt={ch.name ?? `Channel ${chNum}`}
@@ -102,13 +106,19 @@ export default async function HomePage() {
                       </div>
                     )}
                   </div>
+
                   <div className="p-3">
-                    <div className="text-base font-semibold truncate">{ch.name ?? `Channel ${chNum}`}</div>
+                    <div className="text-base font-semibold truncate">
+                      {ch.name ?? `Channel ${chNum}`}
+                    </div>
                     <div className="mt-0.5 text-xs text-gray-400">
                       Channel {chNum}{isCh21YouTube ? " • YouTube Live" : ""}
                     </div>
+
                     {ch.description ? (
-                      <div className="text-xs text-gray-400 line-clamp-2 mt-1">{ch.description}</div>
+                      <div className="text-xs text-gray-400 line-clamp-2 mt-1">
+                        {ch.description}
+                      </div>
                     ) : null}
                   </div>
                 </Link>
