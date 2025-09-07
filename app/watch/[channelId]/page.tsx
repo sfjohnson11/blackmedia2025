@@ -16,25 +16,34 @@ import {
 } from "@/lib/supabase";
 
 const CH21 = 21;
-const POLL_MS = 30_000;
-const DRIFT_S = 5;
+const POLL_MS = 60_000;        // slower poll to avoid thrash
+const DRIFT_S = 3;             // small tolerance only at start
+const MIN_ADV_MS = 800;        // min timer gap for auto-advance
 
 function secs(v: unknown) {
   const n = Number(v ?? 0);
   return Number.isFinite(n) ? Math.max(1, Math.round(n)) : 1;
 }
-
-function withBuster(url?: string | null) {
-  if (!url) return url ?? null;
-  try {
-    const u = new URL(url, typeof window !== "undefined" ? window.location.origin : "https://x");
-    u.searchParams.set("t", String(Date.now()));
-    return u.toString();
-  } catch {
-    // relative path
-    const sep = url.includes("?") ? "&" : "?";
-    return `${url}${sep}t=${Date.now()}`;
+function programKey(p?: Program | null) {
+  if (!p) return "";
+  return `${p.channel_id}|${p.start_time}|${secs(p.duration)}|${p.mp4_url ?? ""}`;
+}
+function withBuster(url: string) {
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}t=${Date.now()}`;
+}
+function uniqueQueue(items: Program[], take = 4) {
+  const seen = new Set<string>();
+  const out: Program[] = [];
+  for (const p of items) {
+    const k = `${p.channel_id}|${p.start_time}|${p.title ?? ""}`;
+    if (!seen.has(k)) {
+      seen.add(k);
+      out.push(p);
+      if (out.length >= take) break;
+    }
   }
+  return out;
 }
 
 export default function WatchPage({ params }: { params: { channelId: string } }) {
@@ -44,15 +53,15 @@ export default function WatchPage({ params }: { params: { channelId: string } })
   const [channelId, setChannelId] = useState<number | null>(null);
   const [channel, setChannel] = useState<Channel | null>(null);
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
-
   const [activeTitle, setActiveTitle] = useState<string | null>(null);
-  const [queue, setQueue] = useState<Program[]>([]); // current + next few
+  const [queue, setQueue] = useState<Program[]>([]);
   const [err, setErr] = useState<string | null>(null);
 
+  const currentKeyRef = useRef<string>("");   // last program we loaded
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // numeric-only id
+  // numeric channel id only
   useEffect(() => {
     const s = String(params.channelId || "").trim();
     if (!/^\d+$/.test(s)) {
@@ -64,7 +73,7 @@ export default function WatchPage({ params }: { params: { channelId: string } })
     setChannelId(Number.isFinite(n) ? n : null);
   }, [params.channelId]);
 
-  // clear timers on unmount
+  // clear timers
   useEffect(() => {
     return () => {
       if (refreshTimer.current) clearTimeout(refreshTimer.current);
@@ -80,47 +89,44 @@ export default function WatchPage({ params }: { params: { channelId: string } })
     });
 
     let current: Program | null = null;
-    let startIdx = -1;
+    let idxCurrent = -1;
 
     for (let i = 0; i < list.length; i++) {
       const p = list[i];
       const st = toUtcDate(p.start_time);
       if (!st) continue;
       const startTol = addSeconds(st, -DRIFT_S);
-      const endTol = addSeconds(addSeconds(st, secs(p.duration)), DRIFT_S);
-      if (now >= startTol && now < endTol) {
+      const end = addSeconds(st, secs(p.duration));
+      // Tight end: once now >= end, it's over
+      if (now >= startTol && now < end) {
         current = p;
-        startIdx = i;
+        idxCurrent = i;
         break;
       }
-      if (st > now && startIdx === -1) {
-        // between shows; previous becomes "current" for continuity
-        startIdx = Math.max(0, i - 1);
-        current = list[startIdx] ?? null;
+      if (!current && st > now) {
+        // between shows: treat previous as current (if any), so we always show something
+        idxCurrent = Math.max(0, i - 1);
+        current = list[idxCurrent] ?? null;
         break;
       }
     }
-
     if (!current && list.length) {
-      // if still nothing, use last before now so we never look “empty”
+      // last before now
       const before = list.filter((p) => {
         const d = toUtcDate(p.start_time);
         return d ? d <= now : false;
       });
       if (before.length) {
         current = before[before.length - 1];
-        startIdx = list.indexOf(current);
+        idxCurrent = list.indexOf(current);
       }
     }
 
-    // Build queue: current + next 3
+    // queue = current + next few (deduped)
     const q: Program[] = [];
     if (current) q.push(current);
-    const start = startIdx >= 0 ? startIdx + 1 : 0;
-    for (let i = start; i < list.length && q.length < 4; i++) {
-      q.push(list[i]);
-    }
-    return q;
+    for (let i = Math.max(0, idxCurrent) + 1; i < list.length; i++) q.push(list[i]);
+    return uniqueQueue(q, 4);
   }
 
   async function headOK(url?: string | null) {
@@ -133,24 +139,20 @@ export default function WatchPage({ params }: { params: { channelId: string } })
     }
   }
 
-  function scheduleAutoAdvance(q: Program[]) {
+  function scheduleAutoAdvance(cur?: Program | null) {
     if (refreshTimer.current) clearTimeout(refreshTimer.current);
-    if (!q.length) return;
-    const now = new Date();
-    const cur = q[0];
+    if (!cur) return;
     const st = toUtcDate(cur.start_time);
     if (!st) return;
     const end = addSeconds(st, secs(cur.duration));
-    const ms = Math.max(500, end.getTime() - now.getTime() + DRIFT_S * 1000);
+    const ms = Math.max(MIN_ADV_MS, end.getTime() - Date.now() + 300); // small cushion
     refreshTimer.current = setTimeout(() => {
-      // re-evaluate right at (or just after) expected end
-      pickAndPlay();
+      pickAndPlay(); // re-evaluate right after expected end
     }, ms);
   }
 
   async function pickAndPlay() {
     if (channelId == null) return;
-
     try {
       setErr(null);
 
@@ -159,15 +161,17 @@ export default function WatchPage({ params }: { params: { channelId: string } })
       if (!ch) throw new Error(`Channel not found (id=${channelId})`);
       setChannel(ch);
 
-      // 2) CH21 YouTube
+      // 2) CH21 YouTube (no flicker)
       const ytId = (ch.youtube_channel_id || "").trim();
       if (channelId === CH21 && ytId) {
         const url = `https://www.youtube.com/embed/live_stream?channel=${encodeURIComponent(
           ytId
         )}&autoplay=0&mute=0&playsinline=1`;
-        setVideoSrc(url);
         setActiveTitle("YouTube Live");
         setQueue([]);
+        if (videoSrc !== url) setVideoSrc(url); // only update if changed
+        currentKeyRef.current = "yt-live";
+        if (refreshTimer.current) clearTimeout(refreshTimer.current);
         return;
       }
 
@@ -180,26 +184,31 @@ export default function WatchPage({ params }: { params: { channelId: string } })
       const current = q[0] || null;
       setActiveTitle(current?.title ?? "Standby Programming");
 
-      // 4) Decide source
+      // 4) Build src — only bust cache when we switch program
       const override = search?.get("src") || null;
-      const standby = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/channel${channelId}/standby_blacktruthtv.mp4`;
-      const candidate = override || (current ? getVideoUrlForProgram(current) : null) || standby;
+      const standbyBase = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/channel${channelId}/standby_blacktruthtv.mp4`;
 
-      const busted = withBuster(candidate);
-      const bustedStandby = withBuster(standby);
+      const chosen = override || (current ? getVideoUrlForProgram(current) : null) || standbyBase;
+      const nextKey = programKey(current) || `standby|${channelId}`;
 
-      const ok = await headOK(busted);
-      const okStandby = await headOK(bustedStandby);
-      setVideoSrc(ok ? busted! : okStandby ? bustedStandby! : bustedStandby!);
+      // Only update the video element if the program actually changed
+      if (currentKeyRef.current !== nextKey) {
+        const candidate = chosen === standbyBase ? withBuster(chosen) : withBuster(chosen);
+        const ok = await headOK(candidate);
+        const fallback = withBuster(standbyBase);
+        const okStandby = await headOK(fallback);
+        setVideoSrc(ok ? candidate : okStandby ? fallback : fallback);
+        currentKeyRef.current = nextKey;
+      }
 
-      // 5) Auto-advance timer (handles 2-min clips)
-      scheduleAutoAdvance(q);
+      // 5) Auto-advance exactly at end (handles 2-min shows)
+      scheduleAutoAdvance(current);
     } catch (e: any) {
       setErr(e?.message || "Failed to load channel.");
     }
   }
 
-  // initial + polling
+  // initial + slow polling (visible tab only)
   useEffect(() => {
     if (channelId == null) return;
     pickAndPlay();
@@ -210,8 +219,6 @@ export default function WatchPage({ params }: { params: { channelId: string } })
   }, [channelId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const isYouTube = channelId === CH21 && !!(channel?.youtube_channel_id || "").trim();
-
-  // format helper
   const fmt = (s?: string | null) => {
     const d = s ? toUtcDate(s) : null;
     return d
@@ -233,23 +240,24 @@ export default function WatchPage({ params }: { params: { channelId: string } })
           />
         ) : videoSrc ? (
           <VideoPlayer
-            key={videoSrc}
+            key={videoSrc}                   // reloads only when src truly changes
             src={videoSrc}
             poster={channel?.logo_url || undefined}
             logoUrl={channel?.logo_url || undefined}
             isStandby={activeTitle === "Standby Programming"}
             programTitle={activeTitle || undefined}
             onError={() => {
-              // hard fallback to standby + burst cache
+              // fallback once per failure, with buster
               if (channelId != null) {
                 const s = withBuster(
                   `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/channel${channelId}/standby_blacktruthtv.mp4`
                 );
-                if (s && s !== videoSrc) setVideoSrc(s);
+                if (s !== videoSrc) setVideoSrc(s);
+                currentKeyRef.current = `standby|${channelId}`;
               }
             }}
             onVideoEnded={() => {
-              // immediate advance when file ends
+              // advance immediately when a file ends
               pickAndPlay();
             }}
           />
@@ -258,9 +266,13 @@ export default function WatchPage({ params }: { params: { channelId: string } })
         )}
       </div>
 
-      {/* Now/Next list under player — shows up to 4 items */}
+      {/* Local time + Now/Next list */}
       <div className="p-4 text-sm">
+        <div className="text-white/50 mb-1">
+          Local time: {new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZoneName: "short" })}
+        </div>
         <div className="font-semibold mb-2">{activeTitle || "Standby Programming"}</div>
+
         {queue.length > 0 && (
           <div className="mt-2 rounded-lg border border-slate-800 bg-slate-900/60">
             <div className="px-3 py-2 border-b border-slate-800 text-white/70 uppercase text-[11px] tracking-wide">
@@ -270,13 +282,16 @@ export default function WatchPage({ params }: { params: { channelId: string } })
               {queue.map((p, i) => {
                 const st = toUtcDate(p.start_time);
                 const en = st ? addSeconds(st, secs(p.duration)) : null;
+                const badge = i === 0 ? "NOW" : "NEXT";
                 return (
                   <li key={`${p.channel_id}-${p.start_time}-${i}`} className="px-3 py-2 flex items-center justify-between">
                     <div className="truncate">
-                      <span className={`mr-2 inline-block rounded px-1.5 py-0.5 text-[10px] font-bold ${
-                        i === 0 ? "bg-emerald-500 text-black" : "bg-slate-700 text-white/90"
-                      }`}>
-                        {i === 0 ? "NOW" : "NEXT"}
+                      <span
+                        className={`mr-2 inline-block rounded px-1.5 py-0.5 text-[10px] font-bold ${
+                          i === 0 ? "bg-emerald-500 text-black" : "bg-slate-700 text-white/90"
+                        }`}
+                      >
+                        {badge}
                       </span>
                       <span className="font-medium text-white truncate">{p.title || "Untitled"}</span>
                     </div>
