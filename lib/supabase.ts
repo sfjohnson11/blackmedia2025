@@ -3,7 +3,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 /* ---------- Types (match YOUR schema) ---------- */
 export type Program = {
-  id?: string | number;
+  // no id column in your programs table
   channel_id: number | string;
   title?: string | null;
   mp4_url?: string | null;
@@ -35,7 +35,6 @@ export function getSupabase(): SupabaseClient {
 export const supabase = getSupabase();
 
 /* ---------- Time helpers (robust UTC) ---------- */
-// Accepts: "...Z", "...+00", "...+0000", "...+00:00", or bare "YYYY-MM-DD HH:mm:ss"/ISO
 export function toUtcDate(val?: string | Date | null): Date | null {
   if (!val) return null;
   if (val instanceof Date) return Number.isNaN(val.getTime()) ? null : val;
@@ -154,11 +153,6 @@ export function getVideoUrlForProgram(p: Program): string | undefined {
   return list.length ? list[0] : undefined;
 }
 
-/** Back-compat for any old imports elsewhere */
-export function getCandidateUrlsForProgramLegacy(p: Program): string[] {
-  return getCandidateUrlsForProgram(p);
-}
-
 /* ---------- Channels & Programs ---------- */
 export async function fetchChannelById(client: SupabaseClient, id: number): Promise<Channel | null> {
   try {
@@ -173,7 +167,7 @@ export async function fetchChannelById(client: SupabaseClient, id: number): Prom
 export async function fetchProgramsForChannel(client: SupabaseClient, channelId: number): Promise<Program[]> {
   const { data, error } = await client
     .from("programs")
-    .select("id, channel_id, title, mp4_url, start_time, duration, description, poster_url")
+    .select("channel_id, title, mp4_url, start_time, duration, description, poster_url") // <-- NO programs.id
     .eq("channel_id", channelId)
     .order("start_time", { ascending: true });
   if (error) throw error;
