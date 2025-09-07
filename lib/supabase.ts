@@ -1,3 +1,4 @@
+// lib/supabase.ts
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 /* ---------- Types (match YOUR schema) ---------- */
@@ -6,17 +7,17 @@ export type Program = {
   title?: string | null;
   mp4_url?: string | null;
   duration?: number | string | null;  // seconds or "HH:MM:SS" / "MM:SS"
-  start_time?: string | null;         // UTC-like string
+  start_time?: string | null;         // ISO string (UTC with Z preferred)
   [k: string]: any;
 };
 
 export type Channel = {
-  id: number | string;                // channels.id (1..30)
+  id: number | string;
   name?: string | null;
   slug?: string | null;
   description?: string | null;
   logo_url?: string | null;
-  youtube_channel_id?: string | null; // CH21 embeds YouTube Live if present
+  youtube_channel_id?: string | null;
   [k: string]: any;
 };
 
@@ -30,58 +31,9 @@ export function getSupabase(): SupabaseClient {
 }
 export const supabase = getSupabase();
 
-/* ---------- Time helpers (robust UTC) ---------- */
-export function toUtcDate(val?: string | Date | null): Date | null {
-  if (!val) return null;
-  if (val instanceof Date) return Number.isNaN(val.getTime()) ? null : val;
-
-  let s = String(val).trim();
-
-  // "YYYY-MM-DD HH:mm:ss" → "YYYY-MM-DDTHH:mm:ss"
-  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(s)) s = s.replace(" ", "T");
-
-  if (/[zZ]$/.test(s)) {
-    s = s.replace(/[zZ]$/, "Z");
-  } else {
-    const m = /([+\-]\d{2})(:?)(\d{2})?$/.exec(s);
-    if (m) {
-      const hh = m[1];
-      const mm = m[3] ?? "00";
-      s = s.replace(/([+\-]\d{2})(:?)(\d{2})?$/, `${hh}:${mm}`);
-      if (/([+\-]00:00)$/.test(s)) s = s.replace(/([+\-]00:00)$/, "Z");
-    } else if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(s)) {
-      s += "Z"; // bare ISO → treat as UTC
-    } else if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(s)) {
-      s = s.replace(" ", "T") + "Z"; // bare datetime string → UTC
-    }
-  }
-
-  const d = new Date(s);
-  return Number.isNaN(d.getTime()) ? null : d;
-}
-
+/* ---------- Time helpers (optional but kept) ---------- */
 export function addSeconds(d: Date, secs: number) {
   return new Date(d.getTime() + secs * 1000);
-}
-
-export function parseDurationSec(v: number | string | null | undefined): number {
-  if (typeof v === "number") return v > 0 ? Math.round(v) : 0;
-  if (v == null) return 0;
-  const s = String(v).trim();
-
-  // HH:MM:SS or MM:SS
-  let m = /^(\d{1,3}):([0-5]?\d)(?::([0-5]?\d))?$/.exec(s);
-  if (m) {
-    const hh = m[3] ? Number(m[1]) : 0;
-    const mm = Number(m[3] ? m[2] : m[1]);
-    const ss = Number(m[3] ? m[3] : m[2]);
-    const total = hh * 3600 + mm * 60 + ss;
-    return total > 0 ? total : 0;
-  }
-
-  // plain numeric (seconds)
-  const num = Number(s.replace(/[^\d.]+/g, ""));
-  return Number.isFinite(num) && num > 0 ? Math.round(num) : 0;
 }
 
 /* ---------- Storage public URLs ---------- */
@@ -111,12 +63,15 @@ function bucketNameForChannelId(channel_id: number | string): string {
   return /^\d+$/.test(s) ? `channel${s}` : `channel${s}`;
 }
 
-/** Candidate URLs for a program (tries both common layouts for safety) */
+/* ---------- Tolerant URL resolver (SURGICAL FIX) ---------- */
+const GLOBAL_FALLBACK_CHANNEL_ID = 3; // the channel that currently has the files
+
+/** Candidate URLs for a program (tolerant to misnamed/misplaced files) */
 export function getCandidateUrlsForProgram(p: Program): string[] {
   const raw = String(p?.mp4_url || "").trim();
   if (!raw) return [];
 
-  // absolute or root-relative
+  // Absolute or root-relative
   if (/^https?:\/\//i.test(raw) || raw.startsWith("/")) return [raw];
 
   // storage://bucket/key
@@ -131,28 +86,34 @@ export function getCandidateUrlsForProgram(p: Program): string[] {
   m = /^([a-z0-9_\-]+)\/(.+)$/.exec(raw);
   if (m) return [buildPublicUrl(m[1], m[2])];
 
-  // relative → resolve against the channel bucket
-  const bucket = bucketNameForChannelId(p.channel_id);
-  const cleaned = cleanKey(raw);
-  const stripped = cleaned.replace(/^channel[^/]+\/+/i, "");
+  // Bare filename -> try multiple safe locations
+  const cleaned = cleanKey(raw); // e.g., "whitney.mp4"
+  const chanBucket = bucketNameForChannelId(p.channel_id);                    // "channelN"
+  const fallbackBucket = bucketNameForChannelId(GLOBAL_FALLBACK_CHANNEL_ID);  // "channel3"
+  const stripped = cleaned.replace(/^channel[^/]+\/+/i, ""); // remove accidental "channelX/" prefix
 
-  const urls = new Set<string>();
-  urls.add(buildPublicUrl(bucket, stripped)); // expected: key without "channelX/" prefix
-  urls.add(buildPublicUrl(bucket, cleaned));  // also try as-is (in case object key includes "channelX/"))
+  const urls = new Set<string>([
+    // 1) Expected per-channel
+    buildPublicUrl(chanBucket, stripped),                         // channelN/file.mp4
+    // 2) Known-good CH3 fallback so others still play today
+    buildPublicUrl(fallbackBucket, stripped),                     // channel3/file.mp4
+    // 3) Defensive: double channel pattern we’ve seen
+    buildPublicUrl(chanBucket, `channel${String(p.channel_id).toLowerCase()}/${stripped}`), // channelN/channelN/file.mp4
+  ]);
 
   return Array.from(urls);
 }
 
-/** Single URL (first candidate) — legacy helper */
+/** Legacy helper: first candidate */
 export function getVideoUrlForProgram(p: Program): string | undefined {
   const list = getCandidateUrlsForProgram(p);
   return list.length ? list[0] : undefined;
 }
 
 /* ---------- Channels & Programs ---------- */
-export async function fetchChannelById(client: SupabaseClient, id: number): Promise<Channel | null> {
+export async function fetchChannelById(client: SupabaseClient, id: number | string): Promise<Channel | null> {
   try {
-    const { data, error } = await client.from("channels").select("*").eq("id", id).maybeSingle();
+    const { data, error } = await client.from("channels").select("*").eq("id", String(id)).maybeSingle();
     if (error) throw error;
     return (data as Channel) ?? null;
   } catch {
@@ -160,19 +121,16 @@ export async function fetchChannelById(client: SupabaseClient, id: number): Prom
   }
 }
 
+/* Optional: your existing fetchPrograms if you keep it elsewhere
 export async function fetchProgramsForChannel(client: SupabaseClient, channelId: number): Promise<Program[]> {
   const { data, error } = await client
     .from("programs")
-    .select("channel_id, title, mp4_url, start_time, duration") // ONLY existing columns
+    .select("channel_id, title, mp4_url, start_time, duration")
     .eq("channel_id", channelId)
     .order("start_time", { ascending: true });
-
   if (error) throw error;
-
-  // 🔧 CRITICAL FIX: force duration to a NUMBER (seconds) so old player logic accepts it
-  const rows = (data || []) as Program[];
-  return rows.map((p) => ({
-    ...p,
-    duration: parseDurationSec(p.duration),
-  }));
+  return (data || []) as Program[];
 }
+*/
+
+export const STANDBY_PLACEHOLDER_ID = "__standby__";
