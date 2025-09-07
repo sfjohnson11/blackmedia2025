@@ -34,7 +34,7 @@ export function getSupabase(): SupabaseClient {
 }
 export const supabase = getSupabase();
 
-/* ---------- Time helpers (robust UTC, but minimal) ---------- */
+/* ---------- Time helpers (robust UTC) ---------- */
 // Accepts: "...Z", "...+00", "...+0000", "...+00:00", or bare "YYYY-MM-DD HH:mm:ss"/ISO
 export function toUtcDate(val?: string | Date | null): Date | null {
   if (!val) return null;
@@ -142,17 +142,21 @@ export function getCandidateUrlsForProgram(p: Program): string[] {
   const stripped = cleaned.replace(/^channel[^/]+\/+/i, "");
 
   const urls = new Set<string>();
-  urls.add(buildPublicUrl(bucket, stripped)); // expected: store key without "channelX/" prefix
-  // also try as-is (in case objects were uploaded with leading "channelX/")
-  urls.add(buildPublicUrl(bucket, cleaned));
+  urls.add(buildPublicUrl(bucket, stripped)); // expected: key without "channelX/" prefix
+  urls.add(buildPublicUrl(bucket, cleaned));  // also try as-is (in case object key includes "channelX/")
 
   return Array.from(urls);
 }
 
-/** Single URL (first candidate) — kept for legacy imports */
+/** Single URL (first candidate) — legacy helper */
 export function getVideoUrlForProgram(p: Program): string | undefined {
   const list = getCandidateUrlsForProgram(p);
   return list.length ? list[0] : undefined;
+}
+
+/** Back-compat for any old imports elsewhere */
+export function getCandidateUrlsForProgramLegacy(p: Program): string[] {
+  return getCandidateUrlsForProgram(p);
 }
 
 /* ---------- Channels & Programs ---------- */
