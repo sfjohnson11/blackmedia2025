@@ -1,35 +1,94 @@
-// components/TVGuideGrid.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useSupabase } from "@/components/SupabaseProvider";
-import type { Channel, Program } from "@/lib/supabase";
-import { toUtcDate, addSeconds, parseDurationSec } from "@/lib/supabase";
+import { createClient } from "@supabase/supabase-js";
 
+/* ---------- types (match YOUR schema) ---------- */
+type ChannelRow = {
+  id: number; // channels.id (1..30)
+  name: string | null;
+  slug?: string | null;
+  description?: string | null;
+  logo_url: string | null;
+  youtube_is_live?: boolean | null;
+};
+
+type ProgramRow = {
+  channel_id: number;          // FK to channels.id
+  title: string | null;
+  start_time: string;          // UTC string
+  duration: number | string;   // seconds
+};
+
+/* ---------- UTC helpers ---------- */
 const nowUtc = () => new Date(new Date().toISOString());
-const toStr = (v: string | number | null | undefined) => (v == null ? "" : String(v));
+const addSeconds = (d: Date, secs: number) => new Date(d.getTime() + secs * 1000);
+
+function toUtcDate(val?: string | Date | null): Date | null {
+  if (!val) return null;
+  if (val instanceof Date) return Number.isNaN(val.getTime()) ? null : val;
+  let s = String(val).trim();
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?[zZ]$/.test(s)) s = s.replace(" ", "T").replace(/[zZ]$/, "Z");
+  else if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?[+\-]\d{2}:?\d{2}$/.test(s)) s = s.replace(" ", "T").replace(/([+\-]\d{2})(\d{2})$/, "$1:$2");
+  else if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(s)) s += "Z";
+  else if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(s)) s = s.replace(" ", "T") + "Z";
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function parseDurationSec(v: number | string | null | undefined): number {
+  if (typeof v === "number") return Number.isFinite(v) && v > 0 ? v : 0;
+  if (v == null) return 0;
+  const m = String(v).match(/^\s*(\d+)/);
+  if (!m) return 0;
+  const n = Number(m[1]);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
 function toDbTimestampStringUTC(d: Date) {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
 }
+
 function fmtTimeLocal(isoish?: string) {
   const d = toUtcDate(isoish);
-  return d ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+  if (!d) return "";
+  try {
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  } catch { return ""; }
 }
 
-export default function TVGuideGrid({ lookAheadHours = 6, lookBackHours = 6 }: { lookAheadHours?: number; lookBackHours?: number; }) {
-  const supabase = useSupabase();
+/* ---------- component ---------- */
+export default function TVGuideGrid({
+  lookAheadHours = 6,
+  lookBackHours = 6,
+}: {
+  lookAheadHours?: number;
+  lookBackHours?: number;
+}) {
+  const supabase = useMemo(
+    () => createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    ),
+    []
+  );
 
-  const [channels, setChannels] = useState<Channel[]>([]);
-  const [programs, setPrograms] = useState<Program[]>([]);
+  const [channels, setChannels] = useState<ChannelRow[]>([]);
+  const [programs, setPrograms] = useState<ProgramRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
-  const windowStartISO = useMemo(() => { const d = nowUtc(); d.setUTCHours(d.getUTCHours() - lookBackHours); return d.toISOString(); }, [lookBackHours]);
-  const windowEndISO   = useMemo(() => { const d = nowUtc(); d.setUTCHours(d.getUTCHours() + lookAheadHours); return d.toISOString(); }, [lookAheadHours]);
-  const windowStartDB  = useMemo(() => toDbTimestampStringUTC(new Date(windowStartISO)), [windowStartISO]);
-  const windowEndDB    = useMemo(() => toDbTimestampStringUTC(new Date(windowEndISO)), [windowEndISO]);
+  // Window (UTC)
+  const windowStartISO = useMemo(() => {
+    const d = nowUtc(); d.setUTCHours(d.getUTCHours() - lookBackHours); return d.toISOString();
+  }, [lookBackHours]);
+  const windowEndISO = useMemo(() => {
+    const d = nowUtc(); d.setUTCHours(d.getUTCHours() + lookAheadHours); return d.toISOString();
+  }, [lookAheadHours]);
+  const windowStartDB = useMemo(() => toDbTimestampStringUTC(new Date(windowStartISO)), [windowStartISO]);
+  const windowEndDB   = useMemo(() => toDbTimestampStringUTC(new Date(windowEndISO)),   [windowEndISO]);
 
   useEffect(() => {
     let cancelled = false;
@@ -37,46 +96,42 @@ export default function TVGuideGrid({ lookAheadHours = 6, lookBackHours = 6 }: {
       try {
         setErr(null); setLoading(true);
 
-        // NO is_active filter here
+        // Channels (by channels.id)
         const { data: chRows, error: chErr } = await supabase
           .from("channels")
-          .select("id, name, slug, description, logo_url, youtube_channel_id, youtube_is_live")
+          .select("id, name, slug, description, logo_url, youtube_is_live")
           .order("id", { ascending: true });
-        if (chErr) throw new Error(chErr.message);
+        if (chErr) throw chErr;
 
-        let progRows: Program[] = [];
+        // Programs (NO programs.id here)
+        let progRows: ProgramRow[] = [];
         const { data: prA, error: prErrA } = await supabase
           .from("programs")
-          .select("id, title, channel_id, start_time, duration")
+          .select("channel_id, title, start_time, duration")
           .gte("start_time", windowStartISO)
           .lte("start_time", windowEndISO)
           .order("start_time", { ascending: true });
-        if (prErrA) throw new Error(prErrA.message);
-        progRows = (prA || []) as Program[];
+        if (prErrA) throw prErrA;
+        progRows = (prA || []) as ProgramRow[];
 
+        // Fallback to DB-text window if needed
         if (progRows.length === 0) {
           const { data: prB, error: prErrB } = await supabase
             .from("programs")
-            .select("id, title, channel_id, start_time, duration")
+            .select("channel_id, title, start_time, duration")
             .gte("start_time", windowStartDB)
             .lte("start_time", windowEndDB)
             .order("start_time", { ascending: true });
-          if (prErrB) throw new Error(prErrB.message);
-          progRows = (prB || []) as Program[];
+          if (prErrB) throw prErrB;
+          progRows = (prB || []) as ProgramRow[];
         }
 
         if (cancelled) return;
 
-        // Numeric-first channel sort
-        const chs = (chRows || []) as Channel[];
-        chs.sort((a, b) => {
-          const na = Number(a.id), nb = Number(b.id);
-          const fa = Number.isFinite(na), fb = Number.isFinite(nb);
-          if (fa && fb) return na - nb;
-          return String(a.id).localeCompare(String(b.id), undefined, { numeric: true });
-        });
+        // Ensure numeric sort by channels.id
+        const sortedChannels = [...(chRows || [])].sort((a, b) => a.id - b.id);
 
-        setChannels(chs);
+        setChannels(sortedChannels as ChannelRow[]);
         setPrograms(progRows);
       } catch (e: any) {
         if (!cancelled) setErr(e?.message ?? "Failed to load guide.");
@@ -87,15 +142,16 @@ export default function TVGuideGrid({ lookAheadHours = 6, lookBackHours = 6 }: {
     return () => { cancelled = true; };
   }, [supabase, windowStartISO, windowEndISO, windowStartDB, windowEndDB]);
 
+  // Group programs by channel_id
   const progsByChannel = useMemo(() => {
-    const map = new Map<string, Program[]>();
+    const map = new Map<number, ProgramRow[]>();
     const sorted = [...programs].sort((a, b) => {
       const da = toUtcDate(a.start_time)?.getTime() ?? 0;
       const db = toUtcDate(b.start_time)?.getTime() ?? 0;
       return da - db;
     });
     for (const p of sorted) {
-      const key = toStr(p.channel_id);
+      const key = Number(p.channel_id);
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(p);
     }
@@ -108,7 +164,9 @@ export default function TVGuideGrid({ lookAheadHours = 6, lookBackHours = 6 }: {
     <section className="mb-6">
       <div className="flex items-center justify-between mb-2">
         <h2 className="text-xl font-semibold text-white">📺 What’s On (Now &amp; Next)</h2>
-        <div className="text-xs text-slate-400">Window: {lookBackHours}h back → {lookAheadHours}h ahead</div>
+        <div className="text-xs text-slate-400">
+          Window: {lookBackHours}h back → {lookAheadHours}h ahead
+        </div>
       </div>
 
       {loading ? (
@@ -121,11 +179,11 @@ export default function TVGuideGrid({ lookAheadHours = 6, lookBackHours = 6 }: {
         <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-900">
           <div className="min-w-[720px] divide-y divide-slate-800">
             {channels.map((ch) => {
-              const chKey = toStr(ch.id);
-              const list = progsByChannel.get(chKey) || [];
+              const list = progsByChannel.get(ch.id) || [];
 
-              let current: Program | undefined;
-              let next: Program | undefined;
+              // find current & next
+              let current: ProgramRow | undefined;
+              let next: ProgramRow | undefined;
 
               for (let i = 0; i < list.length; i++) {
                 const p = list[i];
@@ -133,10 +191,19 @@ export default function TVGuideGrid({ lookAheadHours = 6, lookBackHours = 6 }: {
                 const dur = parseDurationSec(p.duration) || 1800;
                 if (!st) continue;
                 const en = addSeconds(st, dur);
-                if (now >= st && now < en) { current = p; next = list[i + 1]; break; }
-                if (st > now) { next = p; break; }
+
+                if (now >= st && now < en) {
+                  current = p;
+                  next = list[i + 1];
+                  break;
+                }
+                if (st > now) {
+                  next = p; // between shows
+                  break;
+                }
               }
 
+              // fallback current: last one that started before now
               if (!current && list.length > 0) {
                 const before = list.filter(p => {
                   const d = toUtcDate(p.start_time);
@@ -146,16 +213,18 @@ export default function TVGuideGrid({ lookAheadHours = 6, lookBackHours = 6 }: {
               }
 
               return (
-                <div key={chKey} className="flex items-stretch">
+                <div key={ch.id} className="flex items-stretch">
+                  {/* Channel cell */}
                   <div className="w-56 shrink-0 p-3 border-r border-slate-800">
                     <div className="text-sm text-slate-300">
-                      <div className="font-semibold text-white truncate">{ch.name || `Channel ${chKey}`}</div>
-                      <div className="text-xs text-slate-400">ID: {chKey}</div>
+                      <div className="font-semibold text-white truncate">
+                        {ch.name || `Channel ${ch.id}`}
+                      </div>
+                      <div className="text-xs text-slate-400">ID: {ch.id}</div>
                     </div>
                     <div className="mt-2">
-                      {/* FORCE numeric watch link */}
                       <Link
-                        href={`/watch/${encodeURIComponent(String(Number(ch.id)))}`}
+                        href={`/watch/${encodeURIComponent(String(ch.id))}`}
                         className="inline-flex items-center rounded bg-amber-300 text-black hover:bg-amber-200 h-8 px-3 text-xs font-semibold"
                       >
                         Watch
@@ -163,13 +232,17 @@ export default function TVGuideGrid({ lookAheadHours = 6, lookBackHours = 6 }: {
                     </div>
                   </div>
 
+                  {/* Programs cell */}
                   <div className="flex-1 p-3">
                     <div className="flex gap-3 overflow-x-auto">
+                      {/* Now */}
                       <div className="min-w-[260px] rounded-lg border border-slate-700 bg-slate-800 p-3">
                         <div className="text-xs uppercase tracking-wide text-sky-300 mb-1">Now</div>
                         {current ? (
                           <>
-                            <div className="text-sm font-semibold text-white truncate">{current.title || "Untitled"}</div>
+                            <div className="text-sm font-semibold text-white truncate">
+                              {current.title || "Untitled"}
+                            </div>
                             <div className="text-xs text-slate-400">
                               {fmtTimeLocal(current.start_time)}
                               {(() => {
@@ -186,18 +259,24 @@ export default function TVGuideGrid({ lookAheadHours = 6, lookBackHours = 6 }: {
                         )}
                       </div>
 
+                      {/* Next */}
                       <div className="min-w-[260px] rounded-lg border border-slate-700 bg-slate-800 p-3">
                         <div className="text-xs uppercase tracking-wide text-amber-300 mb-1">Next</div>
                         {next ? (
                           <>
-                            <div className="text-sm font-semibold text-white truncate">{next.title || "Upcoming program"}</div>
-                            <div className="text-xs text-slate-400">Starts {fmtTimeLocal(next.start_time)}</div>
+                            <div className="text-sm font-semibold text-white truncate">
+                              {next.title || "Upcoming program"}
+                            </div>
+                            <div className="text-xs text-slate-400">
+                              Starts {fmtTimeLocal(next.start_time)}
+                            </div>
                           </>
                         ) : (
                           <div className="text-sm text-slate-400">No upcoming program in window.</div>
                         )}
                       </div>
 
+                      {/* Later (example: show one after "next") */}
                       {list
                         .filter((p) => {
                           const ds = toUtcDate(p.start_time);
@@ -206,9 +285,16 @@ export default function TVGuideGrid({ lookAheadHours = 6, lookBackHours = 6 }: {
                         })
                         .slice(0, 1)
                         .map((p) => (
-                          <div key={String(p.id)} className="min-w-[240px] rounded-lg border border-slate-700 bg-slate-800 p-3">
-                            <div className="text-xs uppercase tracking-wide text-slate-300 mb-1">Later</div>
-                            <div className="text-sm font-semibold text-white truncate">{p.title || "Program"}</div>
+                          <div
+                            key={`${p.channel_id}-${p.start_time}`}   // ✅ composite key, not p.id
+                            className="min-w-[240px] rounded-lg border border-slate-700 bg-slate-800 p-3"
+                          >
+                            <div className="text-xs uppercase tracking-wide text-slate-300 mb-1">
+                              Later
+                            </div>
+                            <div className="text-sm font-semibold text-white truncate">
+                              {p.title || "Program"}
+                            </div>
                             <div className="text-xs text-slate-400">Starts {fmtTimeLocal(p.start_time)}</div>
                           </div>
                         ))}
