@@ -3,14 +3,11 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 /* ---------- Types (match YOUR schema) ---------- */
 export type Program = {
-  // no id column in your programs table
   channel_id: number | string;
   title?: string | null;
   mp4_url?: string | null;
   duration?: number | string | null;  // seconds or "HH:MM:SS" / "MM:SS"
   start_time?: string | null;         // UTC-like string
-  description?: string | null;
-  poster_url?: string | null;
   [k: string]: any;
 };
 
@@ -167,7 +164,7 @@ export async function fetchChannelById(client: SupabaseClient, id: number): Prom
 export async function fetchProgramsForChannel(client: SupabaseClient, channelId: number): Promise<Program[]> {
   const { data, error } = await client
     .from("programs")
-    .select("channel_id, title, mp4_url, start_time, duration, description, poster_url") // <-- NO programs.id
+    .select("channel_id, title, mp4_url, start_time, duration") // ONLY existing columns
     .eq("channel_id", channelId)
     .order("start_time", { ascending: true });
   if (error) throw error;
