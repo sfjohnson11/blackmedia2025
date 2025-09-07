@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import VideoPlayer from "@/components/video-player";
 import {
+  getCandidateUrlsForProgram,
   getVideoUrlForProgram,
   fetchChannelById,
   supabase,
@@ -15,18 +16,58 @@ import { ChevronLeft, Loader2 } from "lucide-react";
 
 const CH21_ID_NUMERIC = 21;
 const YT_CH21 = "UCMkW239dyAxDyOFDP0D6p2g";
-const GRACE_MS = 30_000; // 30s grace
+const GRACE_MS = 30_000; // 30s grace around start/end
 
+// ----- helpers -----
 function asSeconds(v: unknown): number {
-  const n = Number(v ?? 0);
-  return Number.isFinite(n) ? n : 0;
+  if (v == null) return 0;
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  const s = String(v).trim();
+
+  // HH:MM:SS or MM:SS
+  const m = /^(\d{1,3}):([0-5]?\d)(?::([0-5]?\d))?$/.exec(s);
+  if (m) {
+    const hh = m[3] ? Number(m[1]) : 0;
+    const mm = Number(m[3] ? m[2] : m[1]);
+    const ss = Number(m[3] ? m[3] : m[2]);
+    return hh * 3600 + mm * 60 + ss;
+  }
+
+  // plain numeric seconds (supports "1800.0" or "1800 sec")
+  const num = Number(s.replace(/[^\d.]+/g, ""));
+  return Number.isFinite(num) && num > 0 ? Math.round(num) : 0;
 }
+
+function parseUtcishMs(val: unknown): number {
+  const s = String(val || "").trim();
+  if (!s) return NaN;
+  if (/Z$|[+\-]\d{2}:\d{2}$/.test(s)) return Date.parse(s); // has timezone
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(s)) return Date.parse(s + "Z"); // bare ISO → UTC
+  return Date.parse(s);
+}
+
 function isActiveProgram(p: Program, nowMs: number): boolean {
-  const startMs = Date.parse(String(p.start_time || ""));
+  const startMs = parseUtcishMs(p.start_time);
   const durSec = asSeconds(p.duration);
   if (!Number.isFinite(startMs) || durSec <= 0) return false;
   const endMs = startMs + durSec * 1000;
   return (startMs - GRACE_MS) <= nowMs && nowMs < (endMs + GRACE_MS);
+}
+
+/** Try candidate video URLs and return the first that loads metadata */
+async function pickPlayableUrl(candidates: string[]): Promise<string | undefined> {
+  for (const url of candidates) {
+    // eslint-disable-next-line no-await-in-loop
+    const ok = await new Promise<boolean>((resolve) => {
+      const v = document.createElement("video");
+      v.preload = "metadata";
+      v.onloadedmetadata = () => resolve(true);
+      v.onerror = () => resolve(false);
+      v.src = url;
+    });
+    if (ok) return url;
+  }
+  return undefined;
 }
 
 export default function WatchPage() {
@@ -46,6 +87,7 @@ export default function WatchPage() {
   const skewRef = useRef<number>(0);
   const syncedRef = useRef<boolean>(false);
   const getNowMs = useCallback(() => Date.now() - (skewRef.current || 0), []);
+
   const syncServerTimeOnce = useCallback(async () => {
     if (syncedRef.current) return;
     try {
@@ -53,7 +95,7 @@ export default function WatchPage() {
       if (!error && data?.[0]?.now) {
         const serverMs = Date.parse(String(data[0].now));
         const localMs = Date.now();
-        const skew = localMs - serverMs;
+        const skew = localMs - serverMs; // + => local ahead
         skewRef.current = Number.isFinite(serverMs) && Math.abs(skew) <= 5 * 60_000 ? skew : 0;
       } else {
         skewRef.current = 0;
@@ -65,7 +107,7 @@ export default function WatchPage() {
     }
   }, []);
 
-  // Parse channel id (programs.channel_id is int8 → number)
+  // Parse channel id (programs.channel_id is int8 → use number)
   useEffect(() => {
     const n = Number.parseInt(channelIdString || "", 10);
     if (!Number.isInteger(n)) {
@@ -100,7 +142,7 @@ export default function WatchPage() {
     };
   }, [channelId]);
 
-  // Fetch current program (programs.channel_id is int8 → compare with number)
+  // Fetch current program (with candidate URL probing)
   const fetchCurrentProgram = useCallback(
     async (numericChannelId: number) => {
       setIsLoading(true);
@@ -110,8 +152,8 @@ export default function WatchPage() {
 
         const { data, error: dbError } = await supabase
           .from("programs")
-          .select("channel_id,title,mp4_url,start_time,duration")
-          .eq("channel_id", numericChannelId) // int8 compare with number
+          .select("channel_id,title,mp4_url,start_time,duration") // only real columns
+          .eq("channel_id", numericChannelId)
           .order("start_time", { ascending: true });
 
         if (dbError) throw new Error(`Database error: ${dbError.message}`);
@@ -119,23 +161,42 @@ export default function WatchPage() {
         const rows = (data || []) as Program[];
         const active = rows.find((p) => isActiveProgram(p, nowMs));
 
-        const programToSet: Program = active
-          ? { ...active, channel_id: numericChannelId }
-          : ({
-              id: STANDBY_PLACEHOLDER_ID as any,
-              title: "Standby Programming",
-              description: "Programming will resume shortly.",
-              channel_id: numericChannelId,
-              mp4_url: `channel${numericChannelId}/standby_blacktruthtv.mp4`,
-              duration: 300,
-              start_time: new Date().toISOString(),
-              poster_url: (channelDetails as any)?.logo_url || null,
-            } as unknown as Program);
+        let programToSet: Program =
+          active
+            ? { ...active, channel_id: numericChannelId }
+            : ({
+                id: STANDBY_PLACEHOLDER_ID as any,
+                title: "Standby Programming",
+                description: "Programming will resume shortly.",
+                channel_id: numericChannelId,
+                mp4_url: `channel${numericChannelId}/standby_blacktruthtv.mp4`,
+                duration: 300,
+                start_time: new Date().toISOString(),
+                poster_url: (channelDetails as any)?.logo_url || null,
+              } as unknown as Program);
+
+        // Resolve a playable URL from candidates
+        const candidates = getCandidateUrlsForProgram(programToSet);
+        let resolvedSrc = await pickPlayableUrl(candidates);
+
+        if (!resolvedSrc) {
+          // Fall back to standby if media file missing/unreachable
+          programToSet = {
+            id: STANDBY_PLACEHOLDER_ID as any,
+            title: "Standby Programming",
+            description: "File missing or misnamed. Standby will play.",
+            channel_id: numericChannelId,
+            mp4_url: `channel${numericChannelId}/standby_blacktruthtv.mp4`,
+            duration: 300,
+            start_time: new Date().toISOString(),
+            poster_url: (channelDetails as any)?.logo_url || null,
+          } as unknown as Program;
+          resolvedSrc = getVideoUrlForProgram(programToSet);
+        }
 
         setCurrentProgram((prev) => {
           const prevSrc = prev ? getVideoUrlForProgram(prev) : undefined;
-          const nextSrc = getVideoUrlForProgram(programToSet);
-          const changed = prevSrc !== nextSrc || prev?.start_time !== programToSet.start_time;
+          const changed = prevSrc !== resolvedSrc || prev?.start_time !== programToSet.start_time;
           if (changed) setVideoPlayerKey(Date.now());
           return programToSet;
         });
@@ -158,14 +219,14 @@ export default function WatchPage() {
     [channelDetails, getNowMs, syncServerTimeOnce]
   );
 
-  // Fetch upcoming (limit 6)
+  // Fetch next 6 upcoming for this channel
   const fetchUpcoming = useCallback(async (numericChannelId: number) => {
     try {
       const nowIso = new Date().toISOString();
       const { data, error } = await supabase
         .from("programs")
         .select("channel_id,title,mp4_url,start_time,duration")
-        .eq("channel_id", numericChannelId) // int8 compare with number
+        .eq("channel_id", numericChannelId)
         .gt("start_time", nowIso)
         .order("start_time", { ascending: true })
         .limit(6);
@@ -176,7 +237,7 @@ export default function WatchPage() {
     }
   }, []);
 
-  // Polling (skip CH21)
+  // Poll (skip CH21 which is YouTube Live)
   useEffect(() => {
     if (channelId == null) return;
     let timer: NodeJS.Timeout | null = null;
@@ -279,10 +340,12 @@ export default function WatchPage() {
         <div className="w-10 h-10" />
       </div>
 
+      {/* Video area */}
       <div className="w-full aspect-video bg-black flex items-center justify-center">
         {content}
       </div>
 
+      {/* Below the player */}
       <div className="p-4 flex-grow">
         {channelId !== CH21_ID_NUMERIC && currentProgram && !isLoading && (
           <>
