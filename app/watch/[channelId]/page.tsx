@@ -1,4 +1,3 @@
-// app/watch/[channelId]/page.tsx
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
@@ -14,11 +13,15 @@ import {
 import type { Channel, Program } from "@/types";
 import { ChevronLeft, Loader2 } from "lucide-react";
 
+type ProgramWithSrc = Program & { _resolved_src?: string };
+
 const CH21_ID_NUMERIC = 21;
 const YT_CH21 = "UCMkW239dyAxDyOFDP0D6p2g";
-const GRACE_MS = 30_000; // 30s grace around start/end
 
-// ----- helpers -----
+// Make timing forgiving to avoid flicker near boundaries
+const GRACE_MS = 30_000; // bump to 120_000 (2m) if you still see flips
+
+// ----- time + duration helpers -----
 function asSeconds(v: unknown): number {
   if (v == null) return 0;
   if (typeof v === "number" && Number.isFinite(v)) return v;
@@ -77,37 +80,16 @@ export default function WatchPage() {
 
   const [channelId, setChannelId] = useState<number | null>(null);
   const [channelDetails, setChannelDetails] = useState<Channel | null>(null);
-  const [currentProgram, setCurrentProgram] = useState<Program | null>(null);
-  const [upcomingPrograms, setUpcomingPrograms] = useState<Program[]>([]);
+  const [currentProgram, setCurrentProgram] = useState<ProgramWithSrc | null>(null);
+  const [upcomingPrograms, setUpcomingPrograms] = useState<ProgramWithSrc[]>([]);
   const [videoPlayerKey, setVideoPlayerKey] = useState<number>(Date.now());
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Server/client time skew (trust server only if within 5 minutes)
-  const skewRef = useRef<number>(0);
-  const syncedRef = useRef<boolean>(false);
-  const getNowMs = useCallback(() => Date.now() - (skewRef.current || 0), []);
+  // We’ll just use client time (no server clock trust right now)
+  const getNowMs = useCallback(() => Date.now(), []);
 
-  const syncServerTimeOnce = useCallback(async () => {
-    if (syncedRef.current) return;
-    try {
-      const { data, error } = await supabase.from("programs").select("now:now()").limit(1);
-      if (!error && data?.[0]?.now) {
-        const serverMs = Date.parse(String(data[0].now));
-        const localMs = Date.now();
-        const skew = localMs - serverMs; // + => local ahead
-        skewRef.current = Number.isFinite(serverMs) && Math.abs(skew) <= 5 * 60_000 ? skew : 0;
-      } else {
-        skewRef.current = 0;
-      }
-    } catch {
-      skewRef.current = 0;
-    } finally {
-      syncedRef.current = true;
-    }
-  }, []);
-
-  // Parse channel id (programs.channel_id is int8 → use number)
+  // Parse channel id (programs.channel_id is int8 → number)
   useEffect(() => {
     const n = Number.parseInt(channelIdString || "", 10);
     if (!Number.isInteger(n)) {
@@ -142,12 +124,11 @@ export default function WatchPage() {
     };
   }, [channelId]);
 
-  // Fetch current program (with candidate URL probing)
+  // Fetch current program (with candidate URL probing + stickiness)
   const fetchCurrentProgram = useCallback(
     async (numericChannelId: number) => {
       setIsLoading(true);
       try {
-        await syncServerTimeOnce();
         const nowMs = getNowMs();
 
         const { data, error: dbError } = await supabase
@@ -159,8 +140,23 @@ export default function WatchPage() {
         if (dbError) throw new Error(`Database error: ${dbError.message}`);
 
         const rows = (data || []) as Program[];
-        const active = rows.find((p) => isActiveProgram(p, nowMs));
+        // Primary active check
+        let active = rows.find((p) => isActiveProgram(p, nowMs));
 
+        // Optional “near window” tolerance: uncomment if you need it more forgiving
+        // if (!active) {
+        //   const NEAR_BEFORE_MS = 120_000; // 2m before start
+        //   const NEAR_AFTER_MS  = 300_000; // 5m after end
+        //   active = rows.find((p) => {
+        //     const s = parseUtcishMs(p.start_time);
+        //     const d = asSeconds(p.duration);
+        //     if (!Number.isFinite(s) || d <= 0) return false;
+        //     const e = s + d * 1000;
+        //     return (s - NEAR_BEFORE_MS) <= nowMs && nowMs < (e + NEAR_AFTER_MS);
+        //   });
+        // }
+
+        // Choose program (active or standby)
         let programToSet: Program =
           active
             ? { ...active, channel_id: numericChannelId }
@@ -175,12 +171,12 @@ export default function WatchPage() {
                 poster_url: (channelDetails as any)?.logo_url || null,
               } as unknown as Program);
 
-        // Resolve a playable URL from candidates
+        // Resolve a playable URL from candidates and STICK to it
         const candidates = getCandidateUrlsForProgram(programToSet);
         let resolvedSrc = await pickPlayableUrl(candidates);
 
         if (!resolvedSrc) {
-          // Fall back to standby if media file missing/unreachable
+          // Fallback to standby if media file missing/unreachable
           programToSet = {
             id: STANDBY_PLACEHOLDER_ID as any,
             title: "Standby Programming",
@@ -194,11 +190,13 @@ export default function WatchPage() {
           resolvedSrc = getVideoUrlForProgram(programToSet);
         }
 
+        const finalProgram: ProgramWithSrc = { ...(programToSet as ProgramWithSrc), _resolved_src: resolvedSrc };
+
         setCurrentProgram((prev) => {
-          const prevSrc = prev ? getVideoUrlForProgram(prev) : undefined;
-          const changed = prevSrc !== resolvedSrc || prev?.start_time !== programToSet.start_time;
+          const prevSrc = prev?._resolved_src;
+          const changed = prevSrc !== finalProgram._resolved_src || prev?.start_time !== finalProgram.start_time;
           if (changed) setVideoPlayerKey(Date.now());
-          return programToSet;
+          return finalProgram;
         });
       } catch (e: any) {
         setError(e?.message || "Error loading schedule.");
@@ -211,12 +209,16 @@ export default function WatchPage() {
           duration: 300,
           start_time: new Date().toISOString(),
           poster_url: (channelDetails as any)?.logo_url || null,
-        } as unknown as Program);
+          _resolved_src: getVideoUrlForProgram({
+            channel_id: numericChannelId,
+            mp4_url: `channel${numericChannelId}/standby_blacktruthtv.mp4`,
+          } as Program),
+        } as ProgramWithSrc);
       } finally {
         setIsLoading(false);
       }
     },
-    [channelDetails, getNowMs, syncServerTimeOnce]
+    [channelDetails, getNowMs]
   );
 
   // Fetch next 6 upcoming for this channel
@@ -231,39 +233,58 @@ export default function WatchPage() {
         .order("start_time", { ascending: true })
         .limit(6);
 
-      if (!error && data) setUpcomingPrograms(data as Program[]);
+      if (!error && data) setUpcomingPrograms(data as ProgramWithSrc[]);
     } catch (e) {
       console.warn("Error loading upcoming programs", e);
     }
   }, []);
 
-  // Poll (skip CH21 which is YouTube Live)
+  // Smarter polling: wake near expected end, otherwise every 60s
   useEffect(() => {
     if (channelId == null) return;
-    let timer: NodeJS.Timeout | null = null;
-
     if (channelId === CH21_ID_NUMERIC) {
       setIsLoading(false);
       return;
     }
+    let timer: NodeJS.Timeout | null = null;
 
-    fetchCurrentProgram(channelId);
-    fetchUpcoming(channelId);
-
-    timer = setInterval(() => {
-      if (document.visibilityState === "visible") {
-        fetchCurrentProgram(channelId);
-        fetchUpcoming(channelId);
-      }
-    }, 60_000);
-
-    return () => {
-      if (timer) clearInterval(timer);
+    const refetch = () => {
+      fetchCurrentProgram(channelId);
+      fetchUpcoming(channelId);
     };
-  }, [channelId, fetchCurrentProgram, fetchUpcoming]);
+
+    // initial
+    refetch();
+
+    const scheduleNext = () => {
+      if (currentProgram?.start_time && currentProgram?.duration) {
+        const s = parseUtcishMs(currentProgram.start_time);
+        const d = asSeconds(currentProgram.duration);
+        if (Number.isFinite(s) && d > 0) {
+          const endMs = s + d * 1000;
+          const wakeIn = Math.max(5_000, endMs - Date.now() - 5_000); // 5s before end
+          timer = setTimeout(() => {
+            refetch();
+            scheduleNext();
+          }, wakeIn);
+          return;
+        }
+      }
+      // no active program → poll in 60s
+      timer = setTimeout(() => {
+        refetch();
+        scheduleNext();
+      }, 60_000);
+    };
+
+    scheduleNext();
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [channelId, currentProgram, fetchCurrentProgram, fetchUpcoming]);
 
   // Player & render
-  const videoSrc = currentProgram ? getVideoUrlForProgram(currentProgram) : undefined;
+  const videoSrc = currentProgram?._resolved_src; // <- use the probed, working URL
   const posterSrc =
     (currentProgram as any)?.poster_url ||
     (channelDetails as any)?.logo_url ||
