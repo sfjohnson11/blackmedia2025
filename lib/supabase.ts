@@ -1,4 +1,3 @@
-// lib/supabase.ts
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 /* ---------- Types (match YOUR schema) ---------- */
@@ -80,7 +79,7 @@ export function parseDurationSec(v: number | string | null | undefined): number 
     return total > 0 ? total : 0;
   }
 
-  // plain numeric (allow decimals)
+  // plain numeric (seconds)
   const num = Number(s.replace(/[^\d.]+/g, ""));
   return Number.isFinite(num) && num > 0 ? Math.round(num) : 0;
 }
@@ -139,7 +138,7 @@ export function getCandidateUrlsForProgram(p: Program): string[] {
 
   const urls = new Set<string>();
   urls.add(buildPublicUrl(bucket, stripped)); // expected: key without "channelX/" prefix
-  urls.add(buildPublicUrl(bucket, cleaned));  // also try as-is (in case object key includes "channelX/")
+  urls.add(buildPublicUrl(bucket, cleaned));  // also try as-is (in case object key includes "channelX/"))
 
   return Array.from(urls);
 }
@@ -167,6 +166,13 @@ export async function fetchProgramsForChannel(client: SupabaseClient, channelId:
     .select("channel_id, title, mp4_url, start_time, duration") // ONLY existing columns
     .eq("channel_id", channelId)
     .order("start_time", { ascending: true });
+
   if (error) throw error;
-  return (data || []) as Program[];
+
+  // 🔧 CRITICAL FIX: force duration to a NUMBER (seconds) so old player logic accepts it
+  const rows = (data || []) as Program[];
+  return rows.map((p) => ({
+    ...p,
+    duration: parseDurationSec(p.duration),
+  }));
 }
