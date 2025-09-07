@@ -1,45 +1,43 @@
 // app/watch/[channelId]/page.tsx
 // Works with programs columns: channel_id, title, mp4_url, start_time, duration
-// No `id` column assumed anywhere.
+// No `id` dependency. Handles UTC+Z, string durations, server/client time skew, and grace window.
 
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import VideoPlayer from "@/components/video-player";
 import {
   getVideoUrlForProgram,
-  fetchChannelById,     // <- this exists in your lib
+  fetchChannelById,        // <- existing helper in your lib
   supabase,
-  STANDBY_PLACEHOLDER_ID, // placeholder only used to mark standby
+  STANDBY_PLACEHOLDER_ID, // just a flag value for standby
 } from "@/lib/supabase";
 import type { Channel, Program } from "@/types";
 import { ChevronLeft, Loader2 } from "lucide-react";
 
 const CH21_ID_NUMERIC = 21;
 const YT_CH21 = "UCMkW239dyAxDyOFDP0D6p2g"; // your YouTube channel ID
+const GRACE_MS = 30_000; // 30s grace to prevent edge flicker; increase to 60_000 if needed
 
-// Helper: coerce duration to number (accept "1800" or 1800)
+// ---- helpers ----
 function asSeconds(v: unknown): number {
   const n = Number(v ?? 0);
   return Number.isFinite(n) ? n : 0;
 }
 
-function pickActiveProgram(rows: Program[], nowMs: number): Program | null {
-  for (const p of rows) {
-    const startMs = Date.parse(String(p.start_time || ""));
-    const durSec = asSeconds(p.duration);
-    if (!Number.isFinite(startMs) || durSec <= 0) continue;
-    const endMs = startMs + durSec * 1000;
-    if (startMs <= nowMs && nowMs < endMs) return p;
-  }
-  return null;
+function isActiveProgram(p: Program, nowMs: number): boolean {
+  const startMs = Date.parse(String(p.start_time || ""));
+  const durSec = asSeconds(p.duration);
+  if (!Number.isFinite(startMs) || durSec <= 0) return false;
+  const endMs = startMs + durSec * 1000;
+  // Grace to handle tiny skews and boundary edges
+  return (startMs - GRACE_MS) <= nowMs && nowMs < (endMs + GRACE_MS);
 }
 
 export default function WatchPage() {
   const params = useParams();
   const router = useRouter();
-
   const channelIdString = params.channelId as string;
 
   const [channelId, setChannelId] = useState<number | null>(null);
@@ -52,7 +50,38 @@ export default function WatchPage() {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Parse & validate channel id
+  // Time skew (server vs client). We only trust server if it's close (<= 5 minutes).
+  const skewRef = useRef<number>(0);
+  const syncedRef = useRef<boolean>(false);
+
+  const getNowMs = useCallback(() => {
+    return Date.now() - (skewRef.current || 0);
+  }, []);
+
+  const syncServerTimeOnce = useCallback(async () => {
+    if (syncedRef.current) return;
+    try {
+      const { data, error } = await supabase.from("programs").select("now:now()").limit(1);
+      if (!error && data?.[0]?.now) {
+        const serverMs = Date.parse(String(data[0].now));
+        const localMs = Date.now();
+        const skew = localMs - serverMs; // positive => local ahead
+        if (Number.isFinite(serverMs) && Math.abs(skew) <= 5 * 60_000) {
+          skewRef.current = skew; // trust server if within 5 minutes
+        } else {
+          skewRef.current = 0; // fall back to client time
+        }
+      } else {
+        skewRef.current = 0;
+      }
+    } catch {
+      skewRef.current = 0;
+    } finally {
+      syncedRef.current = true;
+    }
+  }, []);
+
+  // ---- parse & validate channel id ----
   useEffect(() => {
     if (!channelIdString) {
       setError("Channel ID is missing in URL.");
@@ -69,11 +98,10 @@ export default function WatchPage() {
     setError(null);
   }, [channelIdString]);
 
-  // Load channel details (uses numeric id)
+  // ---- load channel details ----
   useEffect(() => {
     if (channelId == null) return;
     let cancelled = false;
-
     (async () => {
       setIsLoading(true);
       try {
@@ -88,37 +116,37 @@ export default function WatchPage() {
         if (!cancelled) setIsLoading(false);
       }
     })();
-
     return () => {
       cancelled = true;
     };
   }, [channelId]);
 
-  // Fetch current program (strictly for this channel)
+  // ---- fetch current program ----
   const fetchCurrentProgram = useCallback(
     async (numericChannelId: number) => {
       setIsLoading(true);
-      const nowMs = Date.now();
       try {
+        await syncServerTimeOnce(); // compute skew if sane; else 0
+        const nowMs = getNowMs();
+
         const { data, error: dbError } = await supabase
           .from("programs")
-          .select("channel_id,title,mp4_url,start_time,duration") // ONLY your real columns
+          .select("channel_id,title,mp4_url,start_time,duration") // only your real columns
           .eq("channel_id", numericChannelId)
           .order("start_time", { ascending: true });
 
         if (dbError) throw new Error(`Database error: ${dbError.message}`);
 
         const rows = (data || []) as Program[];
-        const active = pickActiveProgram(rows, nowMs);
+        const active = rows.find((p) => isActiveProgram(p, nowMs));
 
         let programToSet: Program;
-
         if (active) {
           programToSet = { ...active, channel_id: numericChannelId };
         } else {
-          // Standby fallback per-channel
+          // Standby fallback (per-channel)
           programToSet = {
-            // NOTE: your table has no `id`; this placeholder `id` is only for internal flagging
+            // no real `id` in your table; this placeholder is only an internal flag
             id: STANDBY_PLACEHOLDER_ID as any,
             title: "Standby Programming",
             description: "Programming will resume shortly.",
@@ -126,12 +154,10 @@ export default function WatchPage() {
             mp4_url: `channel${numericChannelId}/standby_blacktruthtv.mp4`,
             duration: 300,
             start_time: new Date().toISOString(),
-            // your schema uses logo_url for the channel artwork
             poster_url: (channelDetails as any)?.logo_url || null,
           } as unknown as Program;
         }
 
-        // Reset the player if the media actually changed
         setCurrentProgram((prev) => {
           const prevSrc = prev ? getVideoUrlForProgram(prev) : undefined;
           const nextSrc = getVideoUrlForProgram(programToSet);
@@ -155,10 +181,10 @@ export default function WatchPage() {
         setIsLoading(false);
       }
     },
-    [channelDetails]
+    [channelDetails, getNowMs, syncServerTimeOnce]
   );
 
-  // Fetch next 6 upcoming for this channel
+  // ---- fetch upcoming (next 6) ----
   const fetchUpcoming = useCallback(async (numericChannelId: number) => {
     try {
       const nowIso = new Date().toISOString(); // UTC with Z
@@ -176,7 +202,7 @@ export default function WatchPage() {
     }
   }, []);
 
-  // Polling (skip CH21 which is YouTube Live)
+  // ---- polling (skip CH21 which is YouTube Live) ----
   useEffect(() => {
     if (channelId == null) return;
     let timer: NodeJS.Timeout | null = null;
@@ -203,7 +229,7 @@ export default function WatchPage() {
     };
   }, [channelId, fetchCurrentProgram, fetchUpcoming]);
 
-  // Player props
+  // ---- player props & render ----
   const videoSrc = currentProgram ? getVideoUrlForProgram(currentProgram) : undefined;
   const posterSrc =
     (currentProgram as any)?.poster_url ||
@@ -218,7 +244,6 @@ export default function WatchPage() {
     }
   }, [channelId, fetchCurrentProgram, fetchUpcoming]);
 
-  // Render
   const isCh21 = channelId === CH21_ID_NUMERIC;
 
   let content: ReactNode;
@@ -282,7 +307,7 @@ export default function WatchPage() {
         <div className="w-10 h-10" />
       </div>
 
-      {/* Video */}
+      {/* Video area */}
       <div className="w-full aspect-video bg-black flex items-center justify-center">
         {content}
       </div>
@@ -295,7 +320,8 @@ export default function WatchPage() {
             <p className="text-sm text-gray-400">
               Channel: {channelDetails?.name || (channelId != null ? `Channel ${channelId}` : "")}
             </p>
-            {!(isStandby) && currentProgram.start_time && (
+
+            {!isStandby && currentProgram.start_time && (
               <p className="text-sm text-gray-400">
                 Scheduled Start: {new Date(currentProgram.start_time).toLocaleString()}
               </p>
@@ -311,8 +337,7 @@ export default function WatchPage() {
                 <ul className="text-sm text-gray-300 space-y-1">
                   {upcomingPrograms.map((p, idx) => (
                     <li
-                      // No `id` column → use a stable composite key
-                      key={`${p.channel_id}-${p.start_time}-${p.title}-${idx}`}
+                      key={`${p.channel_id}-${p.start_time}-${p.title}-${idx}`} // no `id` column → composite key
                     >
                       <span className="font-medium">{p.title}</span>{" "}
                       <span className="text-gray-400">
