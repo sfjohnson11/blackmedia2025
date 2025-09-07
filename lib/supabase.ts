@@ -5,7 +5,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 export type Program = {
   channel_id: number | string;
   title?: string | null;
-  mp4_url?: string | null;            // relative file, bucket:key, bucket/key, storage://bucket/key, or full URL
+  mp4_url?: string | null;
   duration?: number | string | null;  // seconds
   start_time?: string | null;         // UTC-like string
   description?: string | null;
@@ -13,15 +13,15 @@ export type Program = {
 };
 
 export type Channel = {
-  id: number | string;                // channels.id (1..30 or similar)
+  id: number | string;                // channels.id (1..30)
   name?: string | null;
-  slug?: string | null;               // display-only
+  slug?: string | null;
   logo_url?: string | null;
   youtube_channel_id?: string | null; // CH21 embeds YouTube Live if present
   [k: string]: any;
 };
 
-/* ---------- Supabase client (browser-safe) ---------- */
+/* ---------- Supabase client ---------- */
 export function getSupabase(): SupabaseClient {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -29,6 +29,9 @@ export function getSupabase(): SupabaseClient {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 }
+
+/** Back-compat: many pages import { supabase } from "@/lib/supabase" */
+export const supabase = getSupabase();
 
 /* ---------- Time (UTC + seconds) ---------- */
 export function toUtcDate(val?: string | Date | null): Date | null {
@@ -47,7 +50,7 @@ export function toUtcDate(val?: string | Date | null): Date | null {
     if (m) {
       const hh = m[1];
       const mm = m[3] ?? "00";
-      s = s.replace(/([+\-]\d{2})(:?)(\d{2})?$/, `${hh}:${mm}`); // ensure colon
+      s = s.replace(/([+\-]\d{2})(:?)(\d{2})?$/, `${hh}:${mm}`);
       if (/\+00:00$/.test(s) || /\-00:00$/.test(s)) s = s.replace(/([+\-]00:00)$/, "Z");
     } else if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(s)) {
       s += "Z"; // bare ISO -> treat as UTC
@@ -112,11 +115,11 @@ export function getVideoUrlForProgram(p: Program): string | undefined {
 
 /* ---------- Channels ---------- */
 export async function fetchChannelById(
-  supabase: SupabaseClient,
+  client: SupabaseClient,
   id: number
 ): Promise<Channel | null> {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await client
       .from("channels")
       .select("*")
       .eq("id", id)
@@ -130,14 +133,41 @@ export async function fetchChannelById(
 
 /* ---------- Programs (by Programs.channel_id) ---------- */
 export async function fetchProgramsForChannel(
-  supabase: SupabaseClient,
+  client: SupabaseClient,
   channelId: number
 ): Promise<Program[]> {
-  const { data, error } = await supabase
+  const { data, error } = await client
     .from("programs")
     .select("channel_id, title, mp4_url, start_time, duration")
     .eq("channel_id", channelId)
     .order("start_time", { ascending: true });
   if (error) throw error;
   return (data || []) as Program[];
+}
+
+/* ---------- Back-compat helpers used by admin/debug pages ---------- */
+export async function listBuckets(client: SupabaseClient = supabase) {
+  try {
+    const { data, error } = await client.storage.listBuckets();
+    if (error) throw error;
+    return data ?? [];
+  } catch {
+    return [];
+  }
+}
+
+export async function checkRLSStatus(client: SupabaseClient = supabase) {
+  // Tries to read minimal rows to see if anon RLS allows public read
+  try {
+    const { error: chErr } = await client.from("channels").select("id").limit(1);
+    const { error: prErr } = await client.from("programs").select("channel_id").limit(1);
+    return { channelsReadable: !chErr, programsReadable: !prErr };
+  } catch {
+    return { channelsReadable: false, programsReadable: false };
+  }
+}
+
+export async function getWatchProgress(/* userId?: string */) {
+  // Stub to keep pages compiling; adjust to your real schema later
+  return [];
 }
