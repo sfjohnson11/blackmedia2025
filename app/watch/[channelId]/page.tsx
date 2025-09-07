@@ -48,6 +48,7 @@ function standbyUrl(channelId: number) {
   return `${root}/storage/v1/object/public/channel${channelId}/standby_blacktruthtv.mp4`;
 }
 
+/* ---------- constants ---------- */
 const CH21 = 21;
 
 export default function WatchPage({ params }: { params: { channelId: string } }) {
@@ -56,6 +57,7 @@ export default function WatchPage({ params }: { params: { channelId: string } })
 
   const rawParam = String(params.channelId || "");
   const srcOverride = search?.get("src") || null;
+  const debugQuery = search?.get("debug") === "1";
 
   const [channelId, setChannelId] = useState<number | null>(null);
   const [channel, setChannel] = useState<Channel | null>(null);
@@ -64,6 +66,7 @@ export default function WatchPage({ params }: { params: { channelId: string } })
   const [activeTitle, setActiveTitle] = useState<string | null>(null);
   const [nextList, setNextList] = useState<Program[]>([]);
   const [err, setErr] = useState<string | null>(null);
+  const [lastFail, setLastFail] = useState<string | null>(null); // store failing URL for debug
 
   const pollRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -86,12 +89,43 @@ export default function WatchPage({ params }: { params: { channelId: string } })
     };
   }, []);
 
+  async function headOk(url: string): Promise<boolean> {
+    try {
+      const u = new URL(url, typeof window !== "undefined" ? window.location.href : undefined);
+      u.searchParams.set("_", String(Date.now())); // bust caches
+      const res = await fetch(u.toString(), { method: "HEAD", cache: "no-store" });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  async function resolvePlayableSrc(chId: number, current: Program | null): Promise<{src: string, standby: boolean}> {
+    // 1) explicit override
+    if (srcOverride) return { src: srcOverride, standby: false };
+
+    // 2) current program
+    if (current) {
+      const candidate = getVideoUrlForProgram(current);
+      if (candidate) {
+        const ok = await headOk(candidate);
+        if (ok) return { src: candidate, standby: false };
+        setLastFail(candidate);
+      }
+    }
+
+    // 3) per-channel standby
+    const sb = standbyUrl(chId);
+    return { src: sb, standby: true };
+  }
+
   async function loadAndDecide(chId: number) {
     setErr(null);
     setVideoSrc(null);
     setIsStandby(false);
     setActiveTitle(null);
     setNextList([]);
+    setLastFail(null);
 
     // channel row
     const ch = await fetchChannelById(supabase, chId);
@@ -128,13 +162,10 @@ export default function WatchPage({ params }: { params: { channelId: string } })
 
     setNextList(upcoming.slice(0, 6));
 
-    // Decide src: override → current → standby
-    const sb = standbyUrl(chId);
-    const src = srcOverride || (current ? getVideoUrlForProgram(current) : null) || sb;
-    if (!src) throw new Error("No playable URL for program/standby");
-
-    setVideoSrc(src);
-    setIsStandby(!current && !srcOverride);
+    // Decide src with HEAD preflight
+    const chosen = await resolvePlayableSrc(chId, current);
+    setVideoSrc(chosen.src);
+    setIsStandby(chosen.standby && !srcOverride);
     setActiveTitle(current?.title ?? "Standby Programming");
 
     // If no current, poll for the next start and auto-switch from standby
@@ -207,6 +238,16 @@ export default function WatchPage({ params }: { params: { channelId: string } })
 
   return (
     <div className="bg-black min-h-screen text-white">
+      {/* Debug banner if program URL failed preflight */}
+      {(debugQuery || lastFail) && (
+        <div className="text-xs bg-red-900/40 text-red-200 px-3 py-2">
+          {lastFail
+            ? <>Program URL failed to load: <span className="underline break-all">{lastFail}</span>. Fell back to Standby.</>
+            : <>Debug mode on.</>
+          }
+        </div>
+      )}
+
       <div className="w-full aspect-video bg-black grid place-items-center">
         {err ? (
           <p className="text-red-400 text-sm px-4 text-center">Error: {err}</p>
@@ -223,15 +264,20 @@ export default function WatchPage({ params }: { params: { channelId: string } })
             src={videoSrc}
             poster={channel?.logo_url || undefined}
             autoPlay
-            muted={false}          // user can unmute if blocked
+            muted={false}          // user can unmute if browser blocks
             playsInline
             controls
+            crossOrigin="anonymous"
             loop={isStandby}       // standby loops
             onEnded={handleEnded}  // auto-advance after short shows
             onError={() => {
               if (channelId != null) {
                 const s = standbyUrl(channelId);
-                if (s !== videoSrc) { setVideoSrc(s); setIsStandby(true); setActiveTitle("Standby Programming"); }
+                if (s !== videoSrc) {
+                  setVideoSrc(s);
+                  setIsStandby(true);
+                  setActiveTitle("Standby Programming");
+                }
               }
             }}
           >
