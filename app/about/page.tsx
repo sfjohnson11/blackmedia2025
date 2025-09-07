@@ -156,26 +156,26 @@ export default function AboutPage() {
           <p className="mt-4 text-white/80">
             Head to the guide to see what’s live right now, or jump straight into a channel.
           </p>
-          <div className="mt-6 flex flex-wrap gap-3">
-            <Link
-              href="/guide"
-              className="inline-flex items-center rounded-lg bg-white text-black px-4 py-2 text-sm font-semibold hover:bg-white/90"
-            >
-              Open the Guide
-            </Link>
-            <Link
-              href="/watch/21"
-              className="inline-flex items-center rounded-lg border border-white/25 px-4 py-2 text-sm font-semibold hover:bg-white/10"
-            >
-              Watch Channel 21 (Live)
-            </Link>
-            <Link
-              href="/watch/4"
-              className="inline-flex items-center rounded-lg border border-white/25 px-4 py-2 text-sm font-semibold hover:bg-white/10"
-            >
-              Watch Channel 4
-            </Link>
-          </div>
+        </div>
+        <div className="max-w-5xl mt-6 flex flex-wrap gap-3">
+          <Link
+            href="/guide"
+            className="inline-flex items-center rounded-lg bg-white text-black px-4 py-2 text-sm font-semibold hover:bg-white/90"
+          >
+            Open the Guide
+          </Link>
+          <Link
+            href="/watch/21"
+            className="inline-flex items-center rounded-lg border border-white/25 px-4 py-2 text-sm font-semibold hover:bg-white/10"
+          >
+            Watch Channel 21 (Live)
+          </Link>
+          <Link
+            href="/watch/4"
+            className="inline-flex items-center rounded-lg border border-white/25 px-4 py-2 text-sm font-semibold hover:bg-white/10"
+          >
+            Watch Channel 4
+          </Link>
         </div>
       </section>
 
@@ -189,8 +189,8 @@ export default function AboutPage() {
             Questions, licensing, or content submissions? We’d love to hear from you.
           </p>
           <div className="mt-4 text-white/80">
-            <a href="mailto:support@blacktruthtv.example" className="underline">
-              support@blacktruthtv.example
+            <a href="mailto:director@sfjfamilyservices.org" className="underline">
+              director@sfjfamilyservices.org
             </a>
           </div>
 
