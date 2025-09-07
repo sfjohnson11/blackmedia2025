@@ -19,24 +19,24 @@ const CH21_ID_NUMERIC = 21;
 const YT_CH21 = "UCMkW239dyAxDyOFDP0D6p2g";
 
 // Make timing forgiving to avoid flicker near boundaries
-const GRACE_MS = 30_000; // bump to 120_000 (2m) if you still see flips
+const GRACE_MS = 120_000; // 2 minutes
+
+// --- Simple in-memory cache so we don't keep probing the same asset
+// key = `${channel_id}|${mp4_url}|${start_time}`
+const urlProbeCache = new Map<string, string | null>();
 
 // ----- time + duration helpers -----
 function asSeconds(v: unknown): number {
   if (v == null) return 0;
   if (typeof v === "number" && Number.isFinite(v)) return v;
   const s = String(v).trim();
-
-  // HH:MM:SS or MM:SS
-  const m = /^(\d{1,3}):([0-5]?\d)(?::([0-5]?\d))?$/.exec(s);
+  const m = /^(\d{1,3}):([0-5]?\d)(?::([0-5]?\d))?$/.exec(s); // HH:MM:SS or MM:SS
   if (m) {
     const hh = m[3] ? Number(m[1]) : 0;
     const mm = Number(m[3] ? m[2] : m[1]);
     const ss = Number(m[3] ? m[3] : m[2]);
     return hh * 3600 + mm * 60 + ss;
   }
-
-  // plain numeric seconds (supports "1800.0" or "1800 sec")
   const num = Number(s.replace(/[^\d.]+/g, ""));
   return Number.isFinite(num) && num > 0 ? Math.round(num) : 0;
 }
@@ -44,8 +44,8 @@ function asSeconds(v: unknown): number {
 function parseUtcishMs(val: unknown): number {
   const s = String(val || "").trim();
   if (!s) return NaN;
-  if (/Z$|[+\-]\d{2}:\d{2}$/.test(s)) return Date.parse(s); // has timezone
-  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(s)) return Date.parse(s + "Z"); // bare ISO → UTC
+  if (/Z$|[+\-]\d{2}:\d{2}$/.test(s)) return Date.parse(s);
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(s)) return Date.parse(s + "Z");
   return Date.parse(s);
 }
 
@@ -63,6 +63,9 @@ async function pickPlayableUrl(candidates: string[]): Promise<string | undefined
     // eslint-disable-next-line no-await-in-loop
     const ok = await new Promise<boolean>((resolve) => {
       const v = document.createElement("video");
+      // iOS autoplay friendliness
+      v.muted = true;
+      v.playsInline = true as any;
       v.preload = "metadata";
       v.onloadedmetadata = () => resolve(true);
       v.onerror = () => resolve(false);
@@ -84,9 +87,9 @@ export default function WatchPage() {
   const [upcomingPrograms, setUpcomingPrograms] = useState<ProgramWithSrc[]>([]);
   const [videoPlayerKey, setVideoPlayerKey] = useState<number>(Date.now());
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isResolvingSrc, setIsResolvingSrc] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
-  // We’ll just use client time (no server clock trust right now)
   const getNowMs = useCallback(() => Date.now(), []);
 
   // Parse channel id (programs.channel_id is int8 → number)
@@ -124,29 +127,29 @@ export default function WatchPage() {
     };
   }, [channelId]);
 
-  // Fetch current program (with candidate URL probing + stickiness)
+  // Fetch current program (with candidate URL probing + cache + stickiness)
   const fetchCurrentProgram = useCallback(
     async (numericChannelId: number) => {
-      setIsLoading(true);
       try {
+        setIsResolvingSrc(true); // show resolving overlay instead of standby flicker
+
         const nowMs = getNowMs();
 
         const { data, error: dbError } = await supabase
           .from("programs")
-          .select("channel_id,title,mp4_url,start_time,duration") // only real columns
+          .select("channel_id,title,mp4_url,start_time,duration")
           .eq("channel_id", numericChannelId)
           .order("start_time", { ascending: true });
 
         if (dbError) throw new Error(`Database error: ${dbError.message}`);
 
         const rows = (data || []) as Program[];
-        // Primary active check
         let active = rows.find((p) => isActiveProgram(p, nowMs));
 
-        // Optional “near window” tolerance: uncomment if you need it more forgiving
+        // If you want even more tolerance, uncomment this near-window clause.
         // if (!active) {
-        //   const NEAR_BEFORE_MS = 120_000; // 2m before start
-        //   const NEAR_AFTER_MS  = 300_000; // 5m after end
+        //   const NEAR_BEFORE_MS = 120_000; // 2m early start
+        //   const NEAR_AFTER_MS  = 300_000; // 5m late end
         //   active = rows.find((p) => {
         //     const s = parseUtcishMs(p.start_time);
         //     const d = asSeconds(p.duration);
@@ -171,12 +174,19 @@ export default function WatchPage() {
                 poster_url: (channelDetails as any)?.logo_url || null,
               } as unknown as Program);
 
-        // Resolve a playable URL from candidates and STICK to it
-        const candidates = getCandidateUrlsForProgram(programToSet);
-        let resolvedSrc = await pickPlayableUrl(candidates);
+        // Build a cache key specific to this asset instance
+        const cacheKey = `${programToSet.channel_id}|${programToSet.mp4_url}|${programToSet.start_time}`;
 
+        // Resolve a playable URL (use cache first)
+        let resolvedSrc = urlProbeCache.get(cacheKey) ?? undefined;
+        if (resolvedSrc === undefined) {
+          const candidates = getCandidateUrlsForProgram(programToSet);
+          resolvedSrc = (await pickPlayableUrl(candidates)) ?? null; // null = probed and failed
+          urlProbeCache.set(cacheKey, resolvedSrc);
+        }
+
+        // If failed, force standby (but only after probing completes)
         if (!resolvedSrc) {
-          // Fallback to standby if media file missing/unreachable
           programToSet = {
             id: STANDBY_PLACEHOLDER_ID as any,
             title: "Standby Programming",
@@ -187,10 +197,11 @@ export default function WatchPage() {
             start_time: new Date().toISOString(),
             poster_url: (channelDetails as any)?.logo_url || null,
           } as unknown as Program;
-          resolvedSrc = getVideoUrlForProgram(programToSet);
+          // Standby URL doesn't need probing (assumed to exist)
+          resolvedSrc = getVideoUrlForProgram(programToSet) || "";
         }
 
-        const finalProgram: ProgramWithSrc = { ...(programToSet as ProgramWithSrc), _resolved_src: resolvedSrc };
+        const finalProgram: ProgramWithSrc = { ...(programToSet as ProgramWithSrc), _resolved_src: resolvedSrc || "" };
 
         setCurrentProgram((prev) => {
           const prevSrc = prev?._resolved_src;
@@ -212,10 +223,10 @@ export default function WatchPage() {
           _resolved_src: getVideoUrlForProgram({
             channel_id: numericChannelId,
             mp4_url: `channel${numericChannelId}/standby_blacktruthtv.mp4`,
-          } as Program),
+          } as Program) || "",
         } as ProgramWithSrc);
       } finally {
-        setIsLoading(false);
+        setIsResolvingSrc(false);
       }
     },
     [channelDetails, getNowMs]
@@ -284,7 +295,7 @@ export default function WatchPage() {
   }, [channelId, currentProgram, fetchCurrentProgram, fetchUpcoming]);
 
   // Player & render
-  const videoSrc = currentProgram?._resolved_src; // <- use the probed, working URL
+  const videoSrc = currentProgram?._resolved_src; // <- use the probed, cached URL
   const posterSrc =
     (currentProgram as any)?.poster_url ||
     (channelDetails as any)?.logo_url ||
@@ -328,6 +339,14 @@ export default function WatchPage() {
       <div className="flex flex-col items-center justify-center h-full">
         <Loader2 className="h-10 w-10 animate-spin text-red-500 mb-2" />
         <p>Loading Channel…</p>
+      </div>
+    );
+  } else if (isResolvingSrc) {
+    // while we probe candidates, show a neutral loader (prevents standby flash)
+    content = (
+      <div className="flex flex-col items-center justify-center h-full">
+        <Loader2 className="h-10 w-10 animate-spin text-red-500 mb-2" />
+        <p>Preparing stream…</p>
       </div>
     );
   } else if (currentProgram && videoSrc) {
