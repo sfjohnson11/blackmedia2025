@@ -1,7 +1,9 @@
+// app/watch/[channelId]/page.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import VideoPlayer from "@/components/video-player";
 import {
   getSupabase,
   toUtcDate,
@@ -36,7 +38,7 @@ export default function WatchPage({ params }: { params: { channelId: string } })
 
   const vidRef = useRef<HTMLVideoElement | null>(null);
 
-  // numeric-only id
+  // Normalize numeric-only channel id
   useEffect(() => {
     const s = String(params.channelId || "").trim();
     if (!/^\d+$/.test(s)) {
@@ -63,7 +65,6 @@ export default function WatchPage({ params }: { params: { channelId: string } })
     }
 
     function pickCurrentAndNext(list: Program[], now: Date) {
-      // Ensure ascending by start_time
       const sorted = [...list].sort((a, b) => {
         const ta = toUtcDate(a.start_time)?.getTime() ?? 0;
         const tb = toUtcDate(b.start_time)?.getTime() ?? 0;
@@ -79,6 +80,7 @@ export default function WatchPage({ params }: { params: { channelId: string } })
         if (!st) continue;
         const startTol = addSeconds(st, -DRIFT_TOLERANCE_S);
         const endTol = addSeconds(addSeconds(st, secs(p.duration)), DRIFT_TOLERANCE_S);
+
         if (now >= startTol && now < endTol) {
           current = p;
           next = sorted[i + 1] ?? null;
@@ -86,12 +88,11 @@ export default function WatchPage({ params }: { params: { channelId: string } })
         }
         if (!current && st > now) {
           next = p;
-          // don't break; we still want to see if any later one actually overlaps due to tolerance
           break;
         }
       }
 
-      // Fallback: last before now (keeps us off standby if the show is still realistically on)
+      // Fallback: last before now (keeps us from landing on standby unless truly between shows)
       if (!current && sorted.length > 0) {
         const before = sorted.filter((p) => {
           const d = toUtcDate(p.start_time);
@@ -109,13 +110,13 @@ export default function WatchPage({ params }: { params: { channelId: string } })
       try {
         setErr(null);
 
-        // 1) channel
+        // 1) Channel row
         const ch = await fetchChannelById(supabase, channelId);
         if (!ch) throw new Error(`Channel not found (id=${channelId})`);
         if (cancelled) return;
         setChannel(ch);
 
-        // 2) CH21 → YouTube iframe if youtube_channel_id present
+        // 2) CH21 → YouTube Live iframe if youtube_channel_id present
         const ytId = (ch.youtube_channel_id || "").trim();
         if (channelId === CH21 && ytId) {
           const url = `https://www.youtube.com/embed/live_stream?channel=${encodeURIComponent(
@@ -129,7 +130,7 @@ export default function WatchPage({ params }: { params: { channelId: string } })
           return;
         }
 
-        // 3) programs (we fetch whole channel; JS does overlap)
+        // 3) Programs for this channel (we compute overlap in JS)
         const list = await fetchProgramsForChannel(supabase, channelId);
         const now = new Date();
         const { current, next } = pickCurrentAndNext(list, now);
@@ -138,12 +139,12 @@ export default function WatchPage({ params }: { params: { channelId: string } })
         setNextTitle(next?.title ?? null);
         setNextStart(next?.start_time ?? null);
 
-        // 4) build source: override → current → standby
+        // 4) Build source: ?src override → current program URL → per-channel standby
         const override = search?.get("src") || null;
         const standby = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/channel${channelId}/standby_blacktruthtv.mp4?t=${Date.now()}`;
         const candidate = override || (current ? getVideoUrlForProgram(current) : null) || standby;
 
-        // 5) verify & log
+        // 5) Verify URLs quickly (HEAD) and decide
         const candidateOK = await headOK(candidate);
         const standbyOK = await headOK(standby);
         console.table({
@@ -174,22 +175,6 @@ export default function WatchPage({ params }: { params: { channelId: string } })
 
   const isYouTube = channelId === CH21 && !!(channel?.youtube_channel_id || "").trim();
 
-  // Unmute after play starts (helps with autoplay policies)
-  useEffect(() => {
-    if (!vidRef.current) return;
-    const v = vidRef.current;
-    function onPlaying() {
-      try {
-        if (v.muted) {
-          v.muted = false;
-          v.volume = 1.0;
-        }
-      } catch {}
-    }
-    v.addEventListener("playing", onPlaying);
-    return () => v.removeEventListener("playing", onPlaying);
-  }, [videoSrc]);
-
   return (
     <div className="bg-black min-h-screen text-white">
       <div className="w-full aspect-video bg-black grid place-items-center">
@@ -203,21 +188,16 @@ export default function WatchPage({ params }: { params: { channelId: string } })
             src={videoSrc}
           />
         ) : videoSrc ? (
-          <video
-            key={videoSrc} // force reload on src change
-            ref={vidRef}
-            className="w-full h-full"
+          <VideoPlayer
+            // force a full reload on src change so overlay shows per source
+            key={videoSrc}
             src={videoSrc}
-            crossOrigin="anonymous"
-            // poster={channel?.logo_url || undefined}  // optional
-            autoPlay
-            muted={true}           // start muted to satisfy autoplay, unmute on "playing"
-            playsInline
-            controls
-            preload="auto"
-            loop={activeTitle === "Standby Programming"}
-            onError={(e) => {
-              console.warn("[WATCH] video error, falling back to standby", e);
+            poster={channel?.logo_url || undefined}
+            logoUrl={channel?.logo_url || undefined}
+            isStandby={activeTitle === "Standby Programming"}
+            programTitle={activeTitle || undefined}
+            onError={() => {
+              console.warn("[WATCH] player error, falling back to standby");
               if (channelId != null) {
                 const s = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/channel${channelId}/standby_blacktruthtv.mp4?t=${Date.now()}`;
                 if (s !== videoSrc) setVideoSrc(s);
