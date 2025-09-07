@@ -6,7 +6,7 @@ import { createClient } from "@supabase/supabase-js";
 
 /* ---------- types (match YOUR schema) ---------- */
 type ChannelRow = {
-  id: number; // channels.id (1..30)
+  id: number;
   name: string | null;
   slug?: string | null;
   description?: string | null;
@@ -15,7 +15,7 @@ type ChannelRow = {
 };
 
 type ProgramRow = {
-  channel_id: number;          // FK to channels.id
+  channel_id: number;
   title: string | null;
   start_time: string;          // UTC string
   duration: number | string;   // seconds
@@ -96,30 +96,34 @@ export default function TVGuideGrid({
       try {
         setErr(null); setLoading(true);
 
-        // Channels (by channels.id)
+        // Channels
         const { data: chRows, error: chErr } = await supabase
           .from("channels")
-          .select("id, name, slug, description, logo_url, youtube_is_live")
+          .select("id, name, slug, description, logo_url, youtube_is_live, youtube_channel_id")
           .order("id", { ascending: true });
         if (chErr) throw chErr;
 
-        // Programs (NO programs.id here)
-        let progRows: ProgramRow[] = [];
+        // --- FIX: fetch a wider slice so we can include overlapping shows ---
+        // anything starting from (windowStart - backBuffer) up to windowEnd
+        const backBufferHours = 12; // adjust if your shows can be even longer
+        const sliceStartA = new Date(new Date(windowStartISO).getTime() - backBufferHours * 3600_000);
+
         const { data: prA, error: prErrA } = await supabase
           .from("programs")
           .select("channel_id, title, start_time, duration")
-          .gte("start_time", windowStartISO)
+          .gte("start_time", sliceStartA.toISOString())
           .lte("start_time", windowEndISO)
           .order("start_time", { ascending: true });
         if (prErrA) throw prErrA;
-        progRows = (prA || []) as ProgramRow[];
 
-        // Fallback to DB-text window if needed
+        // Fallback to DB-text window if needed (some setups prefer the 'YYYY-MM-DD HH:MM:SS' format)
+        let progRows = (prA || []) as ProgramRow[];
         if (progRows.length === 0) {
+          const sliceStartDB = toDbTimestampStringUTC(sliceStartA);
           const { data: prB, error: prErrB } = await supabase
             .from("programs")
             .select("channel_id, title, start_time, duration")
-            .gte("start_time", windowStartDB)
+            .gte("start_time", sliceStartDB)
             .lte("start_time", windowEndDB)
             .order("start_time", { ascending: true });
           if (prErrB) throw prErrB;
@@ -128,11 +132,23 @@ export default function TVGuideGrid({
 
         if (cancelled) return;
 
-        // Ensure numeric sort by channels.id
+        // Sort channels numeric
         const sortedChannels = [...(chRows || [])].sort((a, b) => a.id - b.id);
-
         setChannels(sortedChannels as ChannelRow[]);
-        setPrograms(progRows);
+
+        // --- Filter by OVERLAP with [windowStart, windowEnd) ---
+        const winStart = new Date(windowStartISO);
+        const winEnd = new Date(windowEndISO);
+        const overlapped: ProgramRow[] = [];
+        for (const p of progRows) {
+          const st = toUtcDate(p.start_time);
+          const dur = parseDurationSec(p.duration);
+          if (!st || dur <= 0) continue;
+          const en = addSeconds(st, dur);
+          // keep if it overlaps the window (starts before window end AND ends after window start)
+          if (st < winEnd && en > winStart) overlapped.push(p);
+        }
+        setPrograms(overlapped);
       } catch (e: any) {
         if (!cancelled) setErr(e?.message ?? "Failed to load guide.");
       } finally {
@@ -142,7 +158,7 @@ export default function TVGuideGrid({
     return () => { cancelled = true; };
   }, [supabase, windowStartISO, windowEndISO, windowStartDB, windowEndDB]);
 
-  // Group programs by channel_id
+  // Group by channel
   const progsByChannel = useMemo(() => {
     const map = new Map<number, ProgramRow[]>();
     const sorted = [...programs].sort((a, b) => {
@@ -181,7 +197,7 @@ export default function TVGuideGrid({
             {channels.map((ch) => {
               const list = progsByChannel.get(ch.id) || [];
 
-              // find current & next
+              // find current & next from the OVERLAP-filtered list
               let current: ProgramRow | undefined;
               let next: ProgramRow | undefined;
 
@@ -203,7 +219,7 @@ export default function TVGuideGrid({
                 }
               }
 
-              // fallback current: last one that started before now
+              // fallback current: last one that started before now (within overlapped list)
               if (!current && list.length > 0) {
                 const before = list.filter(p => {
                   const d = toUtcDate(p.start_time);
@@ -286,7 +302,7 @@ export default function TVGuideGrid({
                         .slice(0, 1)
                         .map((p) => (
                           <div
-                            key={`${p.channel_id}-${p.start_time}`}   // ✅ composite key, not p.id
+                            key={`${p.channel_id}-${p.start_time}`}
                             className="min-w-[240px] rounded-lg border border-slate-700 bg-slate-800 p-3"
                           >
                             <div className="text-xs uppercase tracking-wide text-slate-300 mb-1">
