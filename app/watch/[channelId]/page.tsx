@@ -3,40 +3,29 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { useSupabase } from "@/components/SupabaseProvider";
-import type { Channel, Program } from "@/lib/supabase";
 import {
-  fetchChannelDetails,
-  fetchProgramsForChannel,
+  getSupabase,
+  toUtcDate,
+  addSeconds,
+  parseDurationSec,
   getVideoUrlForProgram,
-  toUtcDate, // keep this for rendering the "Next:" time
+  fetchChannelById,
+  fetchProgramsForChannel,
+  type Program,
+  type Channel,
 } from "@/lib/supabase";
+import { getStandbyUrlForChannel } from "@/lib/standby";
 
 const CH21 = 21;
 
-// Your provided standby file (channel1 example)
-const STANDBY_URL_SAMPLE =
-  "https://msllqpnxwbugvkpnquwx.supabase.co/storage/v1/object/public/channel1/standby_blacktruthtv.mp4";
-
-// Build a per-channel standby URL by swapping the channel number in the path.
-// If the pattern isn't found, we just return the sample (channel1) URL.
-function standbyUrlForChannel(id: number): string {
-  return STANDBY_URL_SAMPLE.replace(/channel\d+\//, `channel${id}/`);
-}
-
 export default function WatchPage({ params }: { params: { channelId: string } }) {
-  const supabase = useSupabase();
+  const supabase = useMemo(() => getSupabase(), []);
   const search = useSearchParams();
 
+  const rawParam = String(params.channelId || "");
   const srcOverride = search?.get("src") || null;
-  const debug = (search?.get("debug") ?? "0") === "1";
 
-  // Strict: channel id must be an integer 1..30
-  const channelNum = useMemo(() => {
-    const n = Number(params.channelId);
-    return Number.isInteger(n) && n >= 1 && n <= 30 ? n : null;
-  }, [params.channelId]);
-
+  const [channelId, setChannelId] = useState<number | null>(null);
   const [channel, setChannel] = useState<Channel | null>(null);
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
   const [activeTitle, setActiveTitle] = useState<string | null>(null);
@@ -44,9 +33,23 @@ export default function WatchPage({ params }: { params: { channelId: string } })
   const [nextStart, setNextStart] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
+  // Normalize URL param to numeric channel id (you said you only use numeric ids for channels)
+  useEffect(() => {
+    const s = rawParam.trim();
+    if (!/^\d+$/.test(s)) {
+      setErr(`Channel id must be numeric (got "${s}")`);
+      setChannelId(null);
+      return;
+    }
+    const n = Number(s.replace(/^0+/, "") || "0");
+    setChannelId(Number.isFinite(n) ? n : null);
+  }, [rawParam]);
+
+  // Load channel + decide what to play
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      if (channelId == null) return;
       try {
         setErr(null);
         setVideoSrc(null);
@@ -54,61 +57,56 @@ export default function WatchPage({ params }: { params: { channelId: string } })
         setNextTitle(null);
         setNextStart(null);
 
-        if (channelNum == null) throw new Error(`Channel id must be 1–30 (got "${params.channelId}")`);
-
-        // Channels.id
-        const ch = await fetchChannelDetails(supabase, channelNum);
-        if (!ch) throw new Error(`Channel not found (id=${channelNum})`);
+        // channel row
+        const ch = await fetchChannelById(supabase, channelId);
+        if (!ch) throw new Error(`Channel not found (id=${channelId})`);
         if (cancelled) return;
         setChannel(ch);
 
-        // CH21 -> YouTube Live (only if configured)
-        if (channelNum === CH21 && (ch.youtube_channel_id || "").trim()) {
-          const yt = `https://www.youtube.com/embed/live_stream?channel=${ch.youtube_channel_id}&autoplay=1&mute=1`;
-          setVideoSrc(srcOverride || yt);
-          setActiveTitle(null);
+        // CH21 → YouTube
+        const ytId = (ch.youtube_channel_id || "").trim();
+        if (channelId === CH21 && ytId) {
+          const url = `https://www.youtube.com/embed/live_stream?channel=${encodeURIComponent(
+            ytId
+          )}&autoplay=1&mute=1`;
+          setVideoSrc(url);
+          setActiveTitle("YouTube Live");
           return;
         }
 
-        // Programs.channel_id
-        const list = await fetchProgramsForChannel(supabase, channelNum);
+        // Pull programs for this channel
+        const list = await fetchProgramsForChannel(supabase, channelId);
+        const now = new Date();
 
-        // Sort by start_time (UNIX seconds) ascending
-        list.sort((a, b) => Number(a.start_time) - Number(b.start_time));
-
-        const nowSec = Math.floor(Date.now() / 1000);
-
-        // Find what's on now
+        // pick "current" by UTC window
         let current: Program | null = null;
         for (const p of list) {
-          const st = Number(p.start_time);               // seconds
-          const dur = Math.max(60, Number(p.duration) || 0); // seconds (min 60)
-          if (!Number.isFinite(st) || !Number.isFinite(dur)) continue;
-
-          const en = st + dur;
-          if (nowSec >= st && nowSec < en) { current = p; break; }
+          const st = toUtcDate(p.start_time);
+          if (!st) continue;
+          const dur = Math.max(60, parseDurationSec(p.duration));
+          const en = addSeconds(st, dur);
+          if (now >= st && now < en) { current = p; break; }
         }
 
-        // Next program strictly after now
-        const upcoming = list.find((p) => Number(p.start_time) > nowSec) || null;
+        const upcoming =
+          list.find((p) => {
+            const st = toUtcDate(p.start_time);
+            return !!st && st > now;
+          }) || null;
 
         setActiveTitle(current?.title ?? "Standby Programming");
         setNextTitle(upcoming?.title ?? null);
-        setNextStart(upcoming ? new Date(Number(upcoming.start_time) * 1000).toISOString() : null);
+        setNextStart(upcoming?.start_time ?? null);
 
-        // Choose source with explicit standby fallback
-        let src: string | null = srcOverride;
-        if (!src) {
-          if (current) {
-            src = getVideoUrlForProgram(current); // expects to return a playable mp4 URL or null
-          }
-          if (!src) {
-            src = standbyUrlForChannel(channelNum); // continuous standby for this channel
-          }
-        }
+        // Build final source: ?src override → current program URL → per-channel standby
+        const standbySrc = getStandbyUrlForChannel(channelId);
+        const src =
+          srcOverride ||
+          (current ? getVideoUrlForProgram(current) : null) ||
+          standbySrc;
 
         if (!src) throw new Error("No playable URL for program/standby");
-        if (!cancelled) setVideoSrc(src);
+        setVideoSrc(src);
       } catch (e: any) {
         if (!cancelled) setErr(e?.message || "Failed to load channel.");
       }
@@ -116,22 +114,9 @@ export default function WatchPage({ params }: { params: { channelId: string } })
     return () => {
       cancelled = true;
     };
-  }, [supabase, params.channelId, channelNum, srcOverride]);
+  }, [supabase, channelId, srcOverride]);
 
-  const isYouTube = channelNum === CH21 && !!(channel?.youtube_channel_id || "").trim();
-
-  // If the current src errors (bad storage path/MIME/CORS), immediately fall back to channel standby.
-  function handleVideoError() {
-    if (!channelNum) return;
-    const standby = standbyUrlForChannel(channelNum);
-    if (videoSrc !== standby) {
-      setActiveTitle("Standby Programming");
-      setVideoSrc(standby);
-      setErr(null);
-    } else {
-      setErr("Video failed to load (check storage URL/permissions/MIME).");
-    }
-  }
+  const isYouTube = channelId === CH21 && !!(channel?.youtube_channel_id || "").trim();
 
   return (
     <div className="bg-black min-h-screen text-white">
@@ -154,7 +139,12 @@ export default function WatchPage({ params }: { params: { channelId: string } })
             muted
             playsInline
             controls
-            onError={handleVideoError}
+            onError={() => {
+              if (channelId != null) {
+                const s = getStandbyUrlForChannel(channelId);
+                if (s !== videoSrc) setVideoSrc(s);
+              }
+            }}
           >
             <source src={videoSrc} type="video/mp4" />
           </video>
@@ -167,17 +157,16 @@ export default function WatchPage({ params }: { params: { channelId: string } })
         {activeTitle && <div className="font-semibold">{activeTitle}</div>}
         {nextTitle && (
           <div className="text-white/60">
-            Next: {nextTitle} —{" "}
-            {toUtcDate(nextStart || "")?.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            Next: {nextTitle}{" "}
+            {nextStart
+              ? `— ${toUtcDate(nextStart)?.toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}`
+              : ""}
           </div>
         )}
       </div>
-
-      {debug && (
-        <pre className="m-4 p-3 text-[11px] bg-zinc-900/70 border border-zinc-800 rounded overflow-auto">
-{JSON.stringify({ channelNum, videoSrc, activeTitle, nextTitle, nextStart }, null, 2)}
-        </pre>
-      )}
     </div>
   );
 }
