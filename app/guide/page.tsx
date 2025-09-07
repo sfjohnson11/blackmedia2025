@@ -7,14 +7,14 @@ import { supabase } from "@/lib/supabase";
 
 // Keep in sync with your types
 type Channel = {
-  id: number | string;         // channels.id (text in DB, but numeric ids 1..30)
+  id: number | string;         // TEXT in DB, but values "1".."30"
   name?: string | null;
   logo_url?: string | null;
   youtube_is_live?: boolean | null;
 };
 
 type Program = {
-  channel_id: number | string;
+  channel_id: number | string; // INT8 in DB
   title?: string | null;
   mp4_url?: string | null;
   duration?: number | string | null; // seconds or "HH:MM:SS"
@@ -23,6 +23,12 @@ type Program = {
 
 const CH21_ID_NUMERIC = 21;
 const GRACE_MS = 120_000; // 2 minutes grace around start/end
+
+/* ---------- ID normalization (CRITICAL FIX) ---------- */
+function toId(v: number | string | null | undefined): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : NaN;
+}
 
 /* ---------- Time helpers (match Watch page behavior) ---------- */
 function asSeconds(v: unknown): number {
@@ -140,27 +146,30 @@ export default function GuidePage() {
 
   const rows: Row[] = useMemo(() => {
     const nowMs = Date.now();
-    const byChannel = new Map<number | string, Program[]>();
+
+    // Group programs by NUMERIC channel id (critical)
+    const byChannel = new Map<number, Program[]>();
     for (const p of programs) {
-      const key = p.channel_id;
+      const key = toId(p.channel_id);
+      if (!Number.isFinite(key)) continue;
       if (!byChannel.has(key)) byChannel.set(key, []);
       byChannel.get(key)!.push(p);
     }
-    // Sort channel programs by start_time
+    // Sort each channel's programs by start_time
     for (const arr of byChannel.values()) {
       arr.sort((a, b) => (parseUtcishMs(a.start_time) || 0) - (parseUtcishMs(b.start_time) || 0));
     }
 
-    // Sort channels numerically by id (even if DB type is text)
-    const chans = channels.slice().sort((a, b) => Number(a.id) - Number(b.id));
+    // Sort channels numerically by id
+    const chans = channels.slice().sort((a, b) => toId(a.id) - toId(b.id));
 
     const list: Row[] = [];
     for (const ch of chans) {
-      const cid = ch.id;
+      const cid = toId(ch.id);
       const listForChannel = byChannel.get(cid) || [];
 
       // CH21 hard LIVE override
-      if (Number(cid) === CH21_ID_NUMERIC && ch.youtube_is_live) {
+      if (cid === CH21_ID_NUMERIC && ch.youtube_is_live) {
         const next = listForChannel.find(p => parseUtcishMs(p.start_time) > nowMs) || null;
         list.push({
           channel: ch,
@@ -222,7 +231,7 @@ export default function GuidePage() {
       {!loading && !err && (
         <div className="divide-y divide-gray-800">
           {rows.map((row) => {
-            const idNum = Number(row.channel.id);
+            const idNum = toId(row.channel.id);
             const href = `/watch/${row.channel.id}`;
             const tone =
               row.status === "live" ? "text-red-400"
