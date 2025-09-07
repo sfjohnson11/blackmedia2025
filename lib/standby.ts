@@ -6,7 +6,8 @@ function publicUrl(bucket: string, key: string) {
   return `${ROOT}/storage/v1/object/public/${bucket}/${clean}`;
 }
 
+/** Always build the standby URL for a numeric channel id. */
 export function getStandbyUrlForChannel(channelId: number) {
-  // If every channel uses the same filename, keep this one line.
+  // If you use a single universal filename across all buckets, this one line is enough.
   return publicUrl(`channel${channelId}`, "standby_blacktruthtv.mp4");
 }
