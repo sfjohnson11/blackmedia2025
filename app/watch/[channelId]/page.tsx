@@ -13,9 +13,9 @@ import {
 import type { Program, Channel } from "@/types"
 import { ChevronLeft, Loader2 } from "lucide-react"
 
-const HLS_LIVE_STREAM_URL_CH21 =
-  "https://cdn.livepush.io/hls/fe96095a2d2b4314aa1789fb309e48f8/index.m3u8"
-const CH21_ID_NUMERIC = 21
+const CH21_ID_NUMERIC = 21;
+/** Your 24/7 YouTube Channel ID for Channel 21 */
+const YT_CH21 = "UCMkW239dyAxDyOFDP0D6p2g";
 
 export default function WatchPage() {
   const params = useParams()
