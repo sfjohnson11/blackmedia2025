@@ -57,15 +57,13 @@ function bucketNameForChannelId(channel_id: number | string): string {
   return /^\d+$/.test(s) ? `channel${s}` : `channel${s}`;
 }
 
-/* ---------- Tolerant URL resolver (code-only fix) ---------- */
-const GLOBAL_FALLBACK_CHANNEL_ID = 3; // channel that “works today”
-
-/** Candidate URLs for a program (tolerant to misnamed/misplaced files) */
+/* ---------- URL candidates: ONLY this channel’s bucket ---------- */
+/** Candidate URLs for a program (tries the channel bucket; small defensive variant) */
 export function getCandidateUrlsForProgram(p: Program): string[] {
   const raw = String(p?.mp4_url || "").trim();
   if (!raw) return [];
 
-  // Absolute or root-relative
+  // Absolute or root-relative given → use as-is
   if (/^https?:\/\//i.test(raw) || raw.startsWith("/")) return [raw];
 
   // storage://bucket/key
@@ -80,19 +78,16 @@ export function getCandidateUrlsForProgram(p: Program): string[] {
   m = /^([a-z0-9_\-]+)\/(.+)$/.exec(raw);
   if (m) return [buildPublicUrl(m[1], m[2])];
 
-  // Bare filename → try multiple safe locations
-  const cleaned = cleanKey(raw); // e.g., "whitney.mp4"
-  const chanBucket = bucketNameForChannelId(p.channel_id);                    // "channelN"
-  const fallbackBucket = bucketNameForChannelId(GLOBAL_FALLBACK_CHANNEL_ID);  // "channel3"
+  // Bare filename → look ONLY in this channel’s bucket
+  const cleaned = cleanKey(raw); // e.g. "show.mp4"
+  const chanBucket = bucketNameForChannelId(p.channel_id); // "channelN"
   const stripped = cleaned.replace(/^channel[^/]+\/+/i, ""); // remove accidental "channelX/" prefix
 
+  // 1) channelN/file.mp4
+  // 2) channelN/channelN/file.mp4 (defensive: if someone uploaded into a nested folder)
   const urls = new Set<string>([
-    // 1) Expected per-channel
-    buildPublicUrl(chanBucket, stripped),                         // channelN/file.mp4
-    // 2) Known-good CH3 fallback so others still play today
-    buildPublicUrl(fallbackBucket, stripped),                     // channel3/file.mp4
-    // 3) Defensive: double channel pattern we’ve seen
-    buildPublicUrl(chanBucket, `channel${String(p.channel_id).toLowerCase()}/${stripped}`), // channelN/channelN/file.mp4
+    buildPublicUrl(chanBucket, stripped),
+    buildPublicUrl(chanBucket, `channel${String(p.channel_id).toLowerCase()}/${stripped}`),
   ]);
 
   return Array.from(urls);
