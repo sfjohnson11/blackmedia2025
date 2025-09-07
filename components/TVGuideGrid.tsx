@@ -16,14 +16,14 @@ type ChannelRow = {
 };
 
 type ProgramRow = {
-  id?: number;               // if exists; not required for guide logic
+  id?: number;
   channel_id: number;        // FK to channels.id
   title: string | null;
-  start_time: string;        // UTC string (or DB text)
+  start_time: string;        // UTC string or DB text
   duration: number | string; // seconds
 };
 
-/* ---------- UTC helpers ---------- */
+/* ---------- time helpers (UTC-friendly) ---------- */
 const addSeconds = (d: Date, secs: number) => new Date(d.getTime() + secs * 1000);
 
 function toUtcDate(val?: string | Date | null): Date | null {
@@ -31,7 +31,7 @@ function toUtcDate(val?: string | Date | null): Date | null {
   if (val instanceof Date) return Number.isNaN(val.getTime()) ? null : val;
   let s = String(val).trim();
 
-  // normalize common shapes → UTC
+  // normalize typical formats to real UTC
   if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?[zZ]$/.test(s))
     s = s.replace(" ", "T").replace(/[zZ]$/, "Z");
   else if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?[+\-]\d{2}:?\d{2}$/.test(s))
@@ -79,72 +79,111 @@ export default function TVGuideGrid({
   );
 
   const [channels, setChannels] = useState<ChannelRow[]>([]);
-  const [programs, setPrograms] = useState<ProgramRow[]>([]);
+  const [byChannel, setByChannel] = useState<Map<number, ProgramRow[]>>(new Map());
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
   // Window bounds (UTC ISO)
-  const windowStart = useMemo(() => {
+  const windowStartISO = useMemo(() => {
     const d = new Date();
-    d.setUTCHours(d.getUTCHours() - lookBackHours, d.getUTCMinutes(), 0, 0);
+    d.setUTCMinutes(0, 0, 0);
+    d.setUTCHours(d.getUTCHours() - lookBackHours);
     return d.toISOString();
   }, [lookBackHours]);
 
-  const windowEnd = useMemo(() => {
+  const windowEndISO = useMemo(() => {
     const d = new Date();
-    d.setUTCHours(d.getUTCHours() + lookAheadHours, d.getUTCMinutes(), 0, 0);
+    d.setUTCMinutes(0, 0, 0);
+    d.setUTCHours(d.getUTCHours() + lookAheadHours);
     return d.toISOString();
   }, [lookAheadHours]);
+
+  // Fallback DB-text bounds ("YYYY-MM-DD HH:mm:ss") for text columns
+  const toDbText = (d: Date) => {
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+  };
+  const windowStartDB = useMemo(() => toDbText(new Date(windowStartISO)), [windowStartISO]);
+  const windowEndDB   = useMemo(() => toDbText(new Date(windowEndISO)),   [windowEndISO]);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        setErr(null); setLoading(true);
+        setErr(null);
+        setLoading(true);
 
-        // Channels
+        // 1) channels (numeric sort)
         const { data: chRows, error: chErr } = await supabase
           .from("channels")
           .select("id, name, slug, description, logo_url, youtube_is_live")
           .order("id", { ascending: true });
         if (chErr) throw chErr;
-        const sortedChannels = [...(chRows || [])].sort((a, b) => a.id - b.id) as ChannelRow[];
+
+        const sorted = [...(chRows || [])].sort((a, b) => a.id - b.id) as ChannelRow[];
         if (cancelled) return;
-        setChannels(sortedChannels);
+        setChannels(sorted);
 
-        // Programs — robust 3-step fetch:
-        // 1) try ISO window (works if start_time is timestamptz)
-        let progRows: ProgramRow[] = [];
-        const q1 = await supabase
-          .from("programs")
-          .select("channel_id, title, start_time, duration")
-          .gte("start_time", windowStart)
-          .lte("start_time", windowEnd)
-          .order("start_time", { ascending: true });
-
-        if (!q1.error && q1.data && q1.data.length) {
-          progRows = q1.data as ProgramRow[];
-        } else {
-          // 2) fallback: pull a modest recent slice and filter client-side
-          const q2 = await supabase
+        // 2) programs per channel (RLS-safe)
+        const map = new Map<number, ProgramRow[]>();
+        for (const ch of sorted) {
+          // try direct window
+          let rows: ProgramRow[] = [];
+          const q1 = await supabase
             .from("programs")
             .select("channel_id, title, start_time, duration")
-            .order("start_time", { ascending: true })
-            .limit(2000); // your dataset is small; adjust if needed
+            .eq("channel_id", ch.id)
+            .gte("start_time", windowStartISO)
+            .lte("start_time", windowEndISO)
+            .order("start_time", { ascending: true });
 
-          if (!q2.error && q2.data) {
-            const all = q2.data as ProgramRow[];
-            const ws = new Date(windowStart).getTime();
-            const we = new Date(windowEnd).getTime();
-            progRows = all.filter((p) => {
-              const t = toUtcDate(p.start_time)?.getTime() ?? 0;
-              return t >= ws && t <= we;
-            });
+          if (!q1.error && q1.data && q1.data.length) {
+            rows = q1.data as ProgramRow[];
+          } else {
+            // fallback: DB-text comparison (if column is text)
+            const q2 = await supabase
+              .from("programs")
+              .select("channel_id, title, start_time, duration")
+              .eq("channel_id", ch.id)
+              .gte("start_time", windowStartDB)
+              .lte("start_time", windowEndDB)
+              .order("start_time", { ascending: true });
+
+            if (!q2.error && q2.data && q2.data.length) {
+              rows = q2.data as ProgramRow[];
+            } else {
+              // last resort: pull a slice for that channel and filter client-side
+              const q3 = await supabase
+                .from("programs")
+                .select("channel_id, title, start_time, duration")
+                .eq("channel_id", ch.id)
+                .order("start_time", { ascending: true })
+                .limit(1000);
+
+              if (!q3.error && q3.data) {
+                const all = q3.data as ProgramRow[];
+                const ws = new Date(windowStartISO).getTime();
+                const we = new Date(windowEndISO).getTime();
+                rows = all.filter((p) => {
+                  const t = toUtcDate(p.start_time)?.getTime() ?? 0;
+                  return t >= ws && t <= we;
+                });
+              }
+            }
           }
+
+          // ensure sorted by actual time
+          rows.sort((a, b) => {
+            const da = toUtcDate(a.start_time)?.getTime() ?? 0;
+            const db = toUtcDate(b.start_time)?.getTime() ?? 0;
+            return da - db;
+          });
+
+          map.set(ch.id, rows);
         }
 
         if (cancelled) return;
-        setPrograms(progRows);
+        setByChannel(map);
       } catch (e: any) {
         if (!cancelled) setErr(e?.message ?? "Failed to load guide.");
       } finally {
@@ -152,44 +191,9 @@ export default function TVGuideGrid({
       }
     })();
     return () => { cancelled = true; };
-  }, [supabase, windowStart, windowEnd]);
+  }, [supabase, windowStartISO, windowEndISO, windowStartDB, windowEndDB]);
 
-  // Group programs per channel, determine Now/Next/Later strictly (no fake fallbacks)
   const now = new Date();
-  const rows = useMemo(() => {
-    const byCh = new Map<number, ProgramRow[]>();
-    for (const p of programs) {
-      const list = byCh.get(p.channel_id) ?? [];
-      list.push(p);
-      byCh.set(p.channel_id, list);
-    }
-    // Ensure each channel’s list sorted by real time
-    for (const [k, list] of byCh.entries()) {
-      list.sort((a, b) => {
-        const da = toUtcDate(a.start_time)?.getTime() ?? 0;
-        const db = toUtcDate(b.start_time)?.getTime() ?? 0;
-        return da - db;
-      });
-      byCh.set(k, list);
-    }
-
-    return channels.map((ch) => {
-      const list = byCh.get(ch.id) ?? [];
-      let current: ProgramRow | undefined;
-      const upcoming: ProgramRow[] = [];
-
-      for (const p of list) {
-        const st = toUtcDate(p.start_time);
-        if (!st) continue;
-        const dur = parseDurationSec(p.duration) || 1800;
-        const en = addSeconds(st, dur);
-        if (!current && now >= st && now < en) current = p;
-        if (st > now) upcoming.push(p);
-      }
-
-      return { ch, current, upcoming };
-    });
-  }, [channels, programs, now]);
 
   return (
     <section className="mb-6">
@@ -209,7 +213,22 @@ export default function TVGuideGrid({
       ) : (
         <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-900">
           <div className="min-w-[720px] divide-y divide-slate-800">
-            {rows.map(({ ch, current, upcoming }) => {
+            {channels.map((ch) => {
+              const list = byChannel.get(ch.id) || [];
+
+              // find current & upcoming strictly
+              let current: ProgramRow | undefined;
+              const upcoming: ProgramRow[] = [];
+
+              for (const p of list) {
+                const st = toUtcDate(p.start_time);
+                if (!st) continue;
+                const dur = parseDurationSec(p.duration) || 1800;
+                const en = addSeconds(st, dur);
+                if (!current && now >= st && now < en) current = p;
+                if (st > now) upcoming.push(p);
+              }
+
               return (
                 <div key={ch.id} className="flex items-stretch">
                   {/* Channel cell */}
@@ -253,7 +272,9 @@ export default function TVGuideGrid({
                             </div>
                           </>
                         ) : (
-                          <div className="text-sm text-slate-400">Standby / no program right now.</div>
+                          <div className="text-sm text-slate-400">
+                            Standby / no program right now.
+                          </div>
                         )}
                       </div>
 
@@ -274,7 +295,7 @@ export default function TVGuideGrid({
                         )}
                       </div>
 
-                      {/* Later (show up to 2 more) */}
+                      {/* Later (up to 2 more) */}
                       {upcoming.slice(1, 3).map((p) => (
                         <div
                           key={`${p.channel_id}-${p.start_time}`}
@@ -286,7 +307,9 @@ export default function TVGuideGrid({
                           <div className="text-sm font-semibold text-white truncate">
                             {p.title || "Program"}
                           </div>
-                          <div className="text-xs text-slate-400">Starts {fmtTimeLocal(p.start_time)}</div>
+                          <div className="text-xs text-slate-400">
+                            Starts {fmtTimeLocal(p.start_time)}
+                          </div>
                         </div>
                       ))}
                     </div>
