@@ -1,4 +1,3 @@
-// app/page.tsx
 import Link from "next/link";
 import { createClient } from "@supabase/supabase-js";
 import type { Channel } from "@/lib/supabase";
@@ -14,8 +13,7 @@ export default async function HomePage() {
 
   const { data, error } = await supabase
     .from("channels")
-    .select("id, name, slug, description, logo_url, youtube_channel_id, youtube_is_live")
-    .order("id", { ascending: true });
+    .select("id, name, slug, description, logo_url, youtube_channel_id, youtube_is_live");
 
   if (error) {
     return (
@@ -26,13 +24,18 @@ export default async function HomePage() {
     );
   }
 
-  const channels = (data ?? []) as Channel[];
+  // ✅ force numeric sort on id
+  const channels = (data ?? []).sort(
+    (a, b) => Number(a.id) - Number(b.id)
+  ) as Channel[];
 
   return (
     <div className="min-h-screen bg-black text-white">
       <section className="px-4 md:px-10 py-8 border-b border-gray-800 bg-[radial-gradient(ellipse_at_top,rgba(239,68,68,0.15),rgba(0,0,0,0))]">
         <h1 className="text-3xl md:text-4xl font-extrabold">Black Truth TV</h1>
-        <p className="text-gray-300 mt-2 max-w-2xl">Streaming live and on-demand. Choose a channel to start watching.</p>
+        <p className="text-gray-300 mt-2 max-w-2xl">
+          Streaming live and on-demand. Choose a channel to start watching.
+        </p>
       </section>
 
       <section className="px-4 md:px-10 py-6">
@@ -42,7 +45,7 @@ export default async function HomePage() {
           <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
             {channels.map((ch) => {
               const art = ch.logo_url || null;
-              const isCh21YouTube = ch.id === 21 && !!(ch.youtube_channel_id || "").trim();
+              const isCh21YouTube = Number(ch.id) === 21 && !!(ch.youtube_channel_id || "").trim();
               return (
                 <Link
                   href={`/watch/${ch.id}`}
@@ -73,17 +76,24 @@ export default async function HomePage() {
                         loading="lazy"
                       />
                     ) : (
-                      <div className="w-full h-full grid place-items-center text-gray-500 text-sm">No artwork</div>
+                      <div className="w-full h-full grid place-items-center text-gray-500 text-sm">
+                        No artwork
+                      </div>
                     )}
                   </div>
 
                   <div className="p-3">
-                    <div className="text-base font-semibold truncate">{ch.name ?? `Channel ${ch.id}`}</div>
+                    <div className="text-base font-semibold truncate">
+                      {ch.name ?? `Channel ${ch.id}`}
+                    </div>
                     <div className="mt-0.5 text-xs text-gray-400">
-                      Channel {ch.id}{isCh21YouTube ? " • YouTube Live" : ""}
+                      Channel {ch.id}
+                      {isCh21YouTube ? " • YouTube Live" : ""}
                     </div>
                     {ch.description ? (
-                      <div className="text-xs text-gray-400 line-clamp-2 mt-1">{ch.description}</div>
+                      <div className="text-xs text-gray-400 line-clamp-2 mt-1">
+                        {ch.description}
+                      </div>
                     ) : null}
                   </div>
                 </Link>
