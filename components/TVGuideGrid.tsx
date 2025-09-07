@@ -9,27 +9,21 @@ import { createClient } from "@supabase/supabase-js";
 type ChannelRow = {
   id: number;
   name: string | null;
-  slug?: string | null;
-  description?: string | null;
   logo_url: string | null;
-  youtube_is_live?: boolean | null;
   youtube_channel_id?: string | null;
 };
 
 type ProgramRow = {
-  channel_id: number;          // FK -> channels.id
+  channel_id: number;
   title: string | null;
-  start_time: string;          // UTC-ish string
-  duration: number | string;   // seconds
+  start_time: string;        // UTC-like string
+  duration: number | string; // seconds
 };
 
-/* ---------- UTC helpers ---------- */
+/* ---------- time helpers ---------- */
 const nowUtc = () => new Date(new Date().toISOString());
-const DRIFT_S = 5; // ±5s tolerance for tiny skews
-
-function addSeconds(d: Date, secs: number) {
-  return new Date(d.getTime() + secs * 1000);
-}
+const DRIFT_S = 5;
+const addSeconds = (d: Date, s: number) => new Date(d.getTime() + s * 1000);
 
 function toUtcDate(val?: string | Date | null): Date | null {
   if (!val) return null;
@@ -42,7 +36,6 @@ function toUtcDate(val?: string | Date | null): Date | null {
   const d = new Date(s);
   return Number.isNaN(d.getTime()) ? null : d;
 }
-
 function parseDurationSec(v: number | string | null | undefined): number {
   if (typeof v === "number") return Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
   if (v == null) return 0;
@@ -51,13 +44,10 @@ function parseDurationSec(v: number | string | null | undefined): number {
   const n = Number(m[1]);
   return Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
 }
-
 function fmtTimeLocal(isoish?: string) {
   const d = toUtcDate(isoish);
   if (!d) return "";
-  try {
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZoneName: "short" });
-  } catch { return ""; }
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZoneName: "short" });
 }
 
 /* ---------- component ---------- */
@@ -81,8 +71,9 @@ export default function TVGuideGrid({
   const [programs, setPrograms] = useState<ProgramRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  const [diag, setDiag] = useState<{channels:number; slice:number; probe:number; note?:string}>({channels:0, slice:0, probe:0});
 
-  // Time window (UTC)
+  // Window (UTC)
   const now = nowUtc();
   const winStart = new Date(now.getTime() - lookBackHours * 3600_000);
   const winEnd   = new Date(now.getTime() + lookAheadHours * 3600_000);
@@ -95,51 +86,46 @@ export default function TVGuideGrid({
         setLoading(true);
 
         // 1) Channels
-        const { data: chRows, error: chErr } = await supabase
+        const chQ = await supabase
           .from("channels")
-          .select("id, name, slug, description, logo_url, youtube_is_live, youtube_channel_id")
-          .order("id", { ascending: true });
-        if (chErr) throw chErr;
-        console.log("[GUIDE] channels len =", (chRows || []).length);
+          .select("id, name, logo_url, youtube_channel_id");
+        if (chQ.error) throw chQ.error;
+        const chRows = (chQ.data || []) as ChannelRow[];
+        chRows.sort((a, b) => Number(a.id) - Number(b.id)); // numeric order
+        if (cancelled) return;
+        setChannels(chRows);
 
-        // 2) Programs — fetch a WIDE slice, then overlap in JS
-        const backBufferHours = 48; // generous to catch long overlaps
-        const sliceStartISO = new Date(winStart.getTime() - backBufferHours * 3600_000).toISOString();
-
-        const { data: prA, error: prErrA } = await supabase
+        // 2) Programs: try server-slice first (wide), then fall back to unfiltered probe
+        const sliceStartISO = new Date(winStart.getTime() - 48 * 3600_000).toISOString();
+        const prA = await supabase
           .from("programs")
           .select("channel_id, title, start_time, duration")
           .gte("start_time", sliceStartISO)
           .lte("start_time", winEnd.toISOString())
           .order("start_time", { ascending: true });
 
-        if (prErrA) console.warn("[GUIDE] programs slice error:", prErrA.message);
-        console.log("[GUIDE] programs len (slice) =", (prA || []).length);
+        let raw: ProgramRow[] = [];
+        let sliceLen = 0, probeLen = 0;
 
-        let rawPrograms: ProgramRow[] | null = (prA || []) as ProgramRow[];
-
-        // If slice failed/empty, do an unfiltered probe to bypass TEXT/format issues
-        if (!rawPrograms || rawPrograms.length === 0 || prErrA) {
-          const probe = await supabase
+        if (!prA.error && prA.data && prA.data.length > 0) {
+          sliceLen = prA.data.length;
+          raw = prA.data as ProgramRow[];
+        } else {
+          const prProbe = await supabase
             .from("programs")
             .select("channel_id, title, start_time, duration")
             .order("start_time", { ascending: true })
             .limit(1000);
-          console.log(
-            "[GUIDE] probe programs len =",
-            (probe.data || []).length,
-            "err:",
-            probe.error?.message
-          );
-          if (probe.error) throw probe.error;
-          rawPrograms = (probe.data || []) as ProgramRow[];
+          if (prProbe.error) throw prProbe.error;
+          probeLen = (prProbe.data || []).length;
+          raw = (prProbe.data || []) as ProgramRow[];
         }
 
         if (cancelled) return;
 
-        // 3) Overlap filter (robust even if start_time is TEXT)
+        // 3) Overlap in JS (works regardless of TEXT/timestamptz)
         const overlapped: ProgramRow[] = [];
-        for (const p of rawPrograms) {
+        for (const p of raw) {
           const st = toUtcDate(p.start_time);
           const dur = parseDurationSec(p.duration);
           if (!st || dur <= 0) continue;
@@ -147,12 +133,20 @@ export default function TVGuideGrid({
           if (st < winEnd && en > winStart) overlapped.push(p);
         }
 
-        // 4) Save state
-        const sortedChannels = [...(chRows || [])].sort((a, b) => a.id - b.id);
-        setChannels(sortedChannels as ChannelRow[]);
         setPrograms(overlapped);
+        setDiag({ channels: chRows.length, slice: sliceLen, probe: probeLen, note: (!sliceLen && !probeLen) ? "No rows visible from browser (RLS/env)" : undefined });
+        console.table({
+          channels: chRows.length,
+          programs_slice: sliceLen,
+          programs_probe: probeLen,
+          overlapped_kept: overlapped.length,
+        });
       } catch (e: any) {
-        if (!cancelled) setErr(e?.message ?? "Failed to load guide.");
+        if (!cancelled) {
+          setErr(e?.message ?? "Failed to load guide.");
+          setDiag((d) => ({...d, note: "Query error; check console"}));
+          console.error("[GUIDE] error:", e);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -160,7 +154,7 @@ export default function TVGuideGrid({
     return () => { cancelled = true; };
   }, [supabase, lookAheadHours, lookBackHours]);
 
-  // Group by channel, sorted by start
+  // Group programs by channel (sorted by start_time)
   const progsByChannel = useMemo(() => {
     const map = new Map<number, ProgramRow[]>();
     const sorted = [...programs].sort((a, b) => {
@@ -185,19 +179,29 @@ export default function TVGuideGrid({
         </div>
       </div>
 
+      {/* Inline diagnostics so you can see what's happening in Production */}
+      <div className="mb-3 text-[11px] text-slate-400">
+        <span>diag — channels:{diag.channels} slice:{diag.slice} probe:{diag.probe}</span>
+        {diag.note ? <span className="ml-2 text-red-300">({diag.note})</span> : null}
+      </div>
+
       {loading ? (
         <div className="text-slate-300">Loading guide…</div>
       ) : err ? (
         <div className="rounded border border-red-500 bg-red-900/30 p-3 text-red-200">{err}</div>
       ) : channels.length === 0 ? (
-        <div className="text-slate-400">No channels found.</div>
+        <div className="text-slate-400">
+          No channels found. Check env keys on Vercel:
+          <code className="ml-1">NEXT_PUBLIC_SUPABASE_URL</code> &nbsp;
+          <code>NEXT_PUBLIC_SUPABASE_ANON_KEY</code>
+        </div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-900">
           <div className="min-w-[720px] divide-y divide-slate-800">
             {channels.map((ch) => {
               const list = progsByChannel.get(ch.id) || [];
 
-              // ---- NOW/NEXT with overlap + tolerance ----
+              // Determine NOW/NEXT with overlap + small tolerance
               const localNow = nowUtc();
               let current: ProgramRow | undefined;
               let next: ProgramRow | undefined;
@@ -207,20 +211,19 @@ export default function TVGuideGrid({
                 const st = toUtcDate(p.start_time);
                 const dur = parseDurationSec(p.duration) || 1800;
                 if (!st) continue;
-                const startTol = new Date(st.getTime() - DRIFT_S * 1000);
-                const endTol   = new Date(st.getTime() + dur * 1000 + DRIFT_S * 1000);
+                const startTol = addSeconds(st, -DRIFT_S);
+                const endTol   = addSeconds(st, dur + DRIFT_S);
 
                 if (localNow >= startTol && localNow < endTol) {
                   current = p;
                   next = list[i + 1];
                   break;
                 }
-                if (st > localNow && !next) {
+                if (!current && st > localNow) {
                   next = p;
+                  break;
                 }
               }
-
-              // Fallback: if still no current, show last before now (keeps 24/7 feel)
               if (!current && list.length > 0) {
                 const before = list.filter(p => {
                   const d = toUtcDate(p.start_time);
@@ -292,29 +295,6 @@ export default function TVGuideGrid({
                           <div className="text-sm text-slate-400">No upcoming program in window.</div>
                         )}
                       </div>
-
-                      {/* Later (one after Next) */}
-                      {list
-                        .filter((p) => {
-                          const ds = toUtcDate(p.start_time);
-                          const dn = next ? toUtcDate(next.start_time) : null;
-                          return ds && (!dn ? ds > localNow : ds > dn);
-                        })
-                        .slice(0, 1)
-                        .map((p) => (
-                          <div
-                            key={`${p.channel_id}-${p.start_time}`}
-                            className="min-w-[240px] rounded-lg border border-slate-700 bg-slate-800 p-3"
-                          >
-                            <div className="text-xs uppercase tracking-wide text-slate-300 mb-1">
-                              Later
-                            </div>
-                            <div className="text-sm font-semibold text-white truncate">
-                              {p.title || "Program"}
-                            </div>
-                            <div className="text-xs text-slate-400">Starts {fmtTimeLocal(p.start_time)}</div>
-                          </div>
-                        ))}
                     </div>
                   </div>
                 </div>
