@@ -1,4 +1,3 @@
-// lib/supabase.ts
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 /* ---------- Types (match YOUR schema) ---------- */
@@ -7,7 +6,7 @@ export type Program = {
   title?: string | null;
   mp4_url?: string | null;
   duration?: number | string | null;  // seconds or "HH:MM:SS" / "MM:SS"
-  start_time?: string | null;         // ISO string (UTC with Z preferred)
+  start_time?: string | null;         // ISO-like string (UTC with Z preferred)
   [k: string]: any;
 };
 
@@ -30,11 +29,6 @@ export function getSupabase(): SupabaseClient {
   });
 }
 export const supabase = getSupabase();
-
-/* ---------- Time helpers (optional but kept) ---------- */
-export function addSeconds(d: Date, secs: number) {
-  return new Date(d.getTime() + secs * 1000);
-}
 
 /* ---------- Storage public URLs ---------- */
 const ROOT = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "");
@@ -63,8 +57,8 @@ function bucketNameForChannelId(channel_id: number | string): string {
   return /^\d+$/.test(s) ? `channel${s}` : `channel${s}`;
 }
 
-/* ---------- Tolerant URL resolver (SURGICAL FIX) ---------- */
-const GLOBAL_FALLBACK_CHANNEL_ID = 3; // the channel that currently has the files
+/* ---------- Tolerant URL resolver (code-only fix) ---------- */
+const GLOBAL_FALLBACK_CHANNEL_ID = 3; // channel that “works today”
 
 /** Candidate URLs for a program (tolerant to misnamed/misplaced files) */
 export function getCandidateUrlsForProgram(p: Program): string[] {
@@ -86,7 +80,7 @@ export function getCandidateUrlsForProgram(p: Program): string[] {
   m = /^([a-z0-9_\-]+)\/(.+)$/.exec(raw);
   if (m) return [buildPublicUrl(m[1], m[2])];
 
-  // Bare filename -> try multiple safe locations
+  // Bare filename → try multiple safe locations
   const cleaned = cleanKey(raw); // e.g., "whitney.mp4"
   const chanBucket = bucketNameForChannelId(p.channel_id);                    // "channelN"
   const fallbackBucket = bucketNameForChannelId(GLOBAL_FALLBACK_CHANNEL_ID);  // "channel3"
@@ -110,7 +104,7 @@ export function getVideoUrlForProgram(p: Program): string | undefined {
   return list.length ? list[0] : undefined;
 }
 
-/* ---------- Channels & Programs ---------- */
+/* ---------- Channels ---------- */
 export async function fetchChannelById(client: SupabaseClient, id: number | string): Promise<Channel | null> {
   try {
     const { data, error } = await client.from("channels").select("*").eq("id", String(id)).maybeSingle();
@@ -120,17 +114,5 @@ export async function fetchChannelById(client: SupabaseClient, id: number | stri
     return null;
   }
 }
-
-/* Optional: your existing fetchPrograms if you keep it elsewhere
-export async function fetchProgramsForChannel(client: SupabaseClient, channelId: number): Promise<Program[]> {
-  const { data, error } = await client
-    .from("programs")
-    .select("channel_id, title, mp4_url, start_time, duration")
-    .eq("channel_id", channelId)
-    .order("start_time", { ascending: true });
-  if (error) throw error;
-  return (data || []) as Program[];
-}
-*/
 
 export const STANDBY_PLACEHOLDER_ID = "__standby__";
