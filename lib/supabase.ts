@@ -6,7 +6,7 @@ export type Program = {
   channel_id: number | string;
   title?: string | null;
   mp4_url?: string | null;
-  duration?: number | string | null;  // seconds
+  duration?: number | string | null;  // seconds or HH:MM:SS / MM:SS / ISO8601
   start_time?: string | null;         // UTC-like string
   description?: string | null;
   [k: string]: any;
@@ -33,43 +33,62 @@ export function getSupabase(): SupabaseClient {
 /** Back-compat: many pages import { supabase } from "@/lib/supabase" */
 export const supabase = getSupabase();
 
-/* ---------- Time (UTC + seconds) ---------- */
+/* ---------- Time (strict UTC + seconds) ---------- */
 export function toUtcDate(val?: string | Date | null): Date | null {
   if (!val) return null;
   if (val instanceof Date) return Number.isNaN(val.getTime()) ? null : val;
   let s = String(val).trim();
 
-  // "YYYY-MM-DD HH:mm:ss..." -> "YYYY-MM-DDTHH:mm:ss..."
-  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(s)) s = s.replace(" ", "T");
-
-  // Normalize trailing Z / offsets (+00, +0000, +00:00, -05, -0500, -05:00)
-  if (/[zZ]$/.test(s)) {
-    s = s.replace(/[zZ]$/, "Z");
-  } else {
-    const m = /([+\-]\d{2})(:?)(\d{2})?$/.exec(s);
-    if (m) {
-      const hh = m[1];
-      const mm = m[3] ?? "00";
-      s = s.replace(/([+\-]\d{2})(:?)(\d{2})?$/, `${hh}:${mm}`);
-      if (/\+00:00$/.test(s) || /\-00:00$/.test(s)) s = s.replace(/([+\-]00:00)$/, "Z");
-    } else if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(s)) {
-      s += "Z"; // bare ISO -> treat as UTC
-    }
+  // If already has Z or +/-HH(:)MM, normalize.
+  if (/[zZ]$/.test(s) || /[+\-]\d{2}:?\d{2}$/.test(s)) {
+    s = s.replace(" ", "T").replace(/([+\-]\d{2})(\d{2})$/, "$1:$2").replace(/[zZ]$/, "Z");
+    const d1 = new Date(s);
+    return Number.isNaN(d1.getTime()) ? null : d1;
   }
 
-  const d = new Date(s);
-  return Number.isNaN(d.getTime()) ? null : d;
+  // "YYYY-MM-DD HH:mm:ss" → treat as UTC.
+  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/.exec(s);
+  if (m) {
+    const [, yy, MM, dd, hh, mm, ss] = m;
+    const d = new Date(Date.UTC(+yy, +MM - 1, +dd, +hh, +mm, +ss));
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  return null;
 }
 
 export function addSeconds(d: Date, secs: number) {
   return new Date(d.getTime() + secs * 1000);
 }
 
+/** Robust duration: supports number, "HH:MM:SS", "MM:SS", ISO8601 (PT1H5M), "1800.0" */
 export function parseDurationSec(v: number | string | null | undefined): number {
-  if (typeof v === "number" && Number.isFinite(v)) return Math.max(0, Math.round(v));
   if (v == null) return 0;
-  const n = Number(String(v).trim().match(/^\d+/)?.[0] ?? "0");
-  return Number.isFinite(n) ? Math.max(0, Math.round(n)) : 0;
+  if (typeof v === "number") return v > 0 ? Math.round(v) : 0;
+  const s = String(v).trim();
+
+  // HH:MM:SS or MM:SS
+  let m = /^(\d{1,3}):([0-5]?\d)(?::([0-5]?\d))?$/.exec(s);
+  if (m) {
+    const hh = m[3] ? Number(m[1]) : 0;
+    const mm = Number(m[3] ? m[2] : m[1]);
+    const ss = Number(m[3] ? m[3] : m[2]);
+    const total = hh * 3600 + mm * 60 + ss;
+    return total > 0 ? total : 0;
+  }
+
+  // ISO8601 e.g., PT30M, PT1H5M, PT90S
+  m = /^P(T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)$/i.exec(s);
+  if (m) {
+    const hh = Number(m[2] || 0);
+    const mm = Number(m[3] || 0);
+    const ss = Number(m[4] || 0);
+    const total = hh * 3600 + mm * 60 + ss;
+    return total > 0 ? total : 0;
+  }
+
+  // Plain numeric (allow decimals) → seconds
+  const num = Number(s.replace(/[^\d.]+/g, ""));
+  return Number.isFinite(num) && num > 0 ? Math.round(num) : 0;
 }
 
 /* ---------- Storage (PUBLIC buckets) ---------- */
@@ -77,8 +96,22 @@ const ROOT = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "");
 const cleanKey = (k: string) =>
   (k || "").trim().replace(/^\.?\//, "").replace(/\\/g, "/").replace(/\/{2,}/g, "/");
 
+// Handle already-encoded OR raw segments safely (prevents double-encoding)
+function safeEncodePath(path: string) {
+  return cleanKey(path)
+    .split("/")
+    .map((seg) => {
+      try {
+        return encodeURIComponent(decodeURIComponent(seg));
+      } catch {
+        return encodeURIComponent(seg);
+      }
+    })
+    .join("/");
+}
+
 function buildPublicUrl(bucket: string, objectPath: string): string {
-  const key = cleanKey(objectPath);
+  const key = safeEncodePath(objectPath);
   return `${ROOT}/storage/v1/object/public/${bucket}/${key}`;
 }
 
@@ -157,7 +190,6 @@ export async function listBuckets(client: SupabaseClient = supabase) {
 }
 
 export async function checkRLSStatus(client: SupabaseClient = supabase) {
-  // Tries to read minimal rows to see if anon RLS allows public read
   try {
     const { error: chErr } = await client.from("channels").select("id").limit(1);
     const { error: prErr } = await client.from("programs").select("channel_id").limit(1);
