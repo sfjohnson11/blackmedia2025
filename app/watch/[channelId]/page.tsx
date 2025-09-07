@@ -19,7 +19,6 @@ const CH21 = 21;
 
 function standbyUrlForChannel(channelId: number) {
   const root = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "");
-  // your standby file name:
   return `${root}/storage/v1/object/public/channel${channelId}/standby_blacktruthtv.mp4`;
 }
 
@@ -200,7 +199,6 @@ export default function WatchPage({ params }: { params: { channelId: string } })
               }
             }}
           >
-            {/* Try multiple source candidates so the browser can pick a working one */}
             {videoSrcs.map((src, i) => (
               <source key={`${i}-${src}`} src={src} type="video/mp4" />
             ))}
