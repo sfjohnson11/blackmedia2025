@@ -23,26 +23,33 @@ type ProgramRow = {
   duration: number | string; // seconds
 };
 
-/* ---------- time helpers (UTC-friendly) ---------- */
+/* ---------- time helpers (STRICT UTC) ---------- */
 const addSeconds = (d: Date, secs: number) => new Date(d.getTime() + secs * 1000);
 
 function toUtcDate(val?: string | Date | null): Date | null {
   if (!val) return null;
   if (val instanceof Date) return Number.isNaN(val.getTime()) ? null : val;
-  let s = String(val).trim();
+  const s = String(val).trim();
 
-  // normalize typical formats to real UTC
-  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?[zZ]$/.test(s))
-    s = s.replace(" ", "T").replace(/[zZ]$/, "Z");
-  else if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?[+\-]\d{2}:?\d{2}$/.test(s))
-    s = s.replace(" ", "T").replace(/([+\-]\d{2})(\d{2})$/, "$1:$2");
-  else if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(s))
-    s += "Z";
-  else if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(s))
-    s = s.replace(" ", "T") + "Z";
+  // If already has timezone (Z or ±HH[:MM]) → normalize and use native.
+  if (/[zZ]$/.test(s) || /[+\-]\d{2}:?\d{2}$/.test(s)) {
+    const norm = s
+      .replace(" ", "T")
+      .replace(/([+\-]\d{2})(\d{2})$/, "$1:$2") // +0500 -> +05:00
+      .replace(/[zZ]$/, "Z");
+    const d = new Date(norm);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
 
-  const d = new Date(s);
-  return Number.isNaN(d.getTime()) ? null : d;
+  // NAIVE timestamp (no TZ) → interpret as **UTC** explicitly.
+  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/.exec(s);
+  if (m) {
+    const [, yy, MM, dd, hh, mm, ss] = m;
+    const d = new Date(Date.UTC(+yy, +MM - 1, +dd, +hh, +mm, +ss));
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+
+  return null;
 }
 
 function parseDurationSec(v: number | string | null | undefined): number {
@@ -124,7 +131,7 @@ export default function TVGuideGrid({
         if (cancelled) return;
         setChannels(sorted);
 
-        // 2) programs per channel (RLS-safe)
+        // 2) programs per channel (RLS-safe, strict UTC parsing)
         const map = new Map<number, ProgramRow[]>();
         for (const ch of sorted) {
           // try direct window
