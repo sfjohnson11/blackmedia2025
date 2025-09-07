@@ -22,9 +22,9 @@ type Program = {
 };
 
 const CH21_ID_NUMERIC = 21;
-const GRACE_MS = 120_000;       // 2 min grace
-const LOOKAHEAD_HOURS = 24;     // show NEXT within 24h
-const LOOKBACK_HOURS = 6;       // fetch a little earlier to detect a running show
+const GRACE_MS = 120_000;        // 2 min grace
+const LOOKAHEAD_HOURS = 24;      // show all upcoming within 24h
+const LOOKBACK_HOURS = 6;        // fetch a little earlier to correctly detect "Now"
 
 /* ---------- Helpers ---------- */
 function toId(v: number | string | null | undefined): number {
@@ -91,7 +91,8 @@ function fmtTimeLocal(ms: number) {
 type Row = {
   channel: Channel;
   now?: Program | null;
-  next?: Program | null; // within next 24h
+  next?: Program | null;
+  later?: Program[]; // all upcoming beyond "next" within 24h
   status: "live" | "on" | "upcoming" | "idle";
   badge: string;
 };
@@ -170,15 +171,17 @@ export default function GuidePage() {
 
       // CH21 Live override
       if (cid === CH21_ID_NUMERIC && ch.youtube_is_live) {
-        const next = listForChannel.find(p => {
+        const upcoming = listForChannel.filter(p => {
           const t = parseUtcishMs(p.start_time);
           return t > nowMs && t <= cutoffNextMs;
-        }) || null;
-
+        });
+        const next = upcoming[0] || null;
+        const later = upcoming.slice(1);
         list.push({
           channel: ch,
           now: null,
           next,
+          later,
           status: "live",
           badge: "LIVE NOW",
         });
@@ -186,29 +189,32 @@ export default function GuidePage() {
       }
 
       let nowProg: Program | undefined;
-      let nextProg: Program | undefined;
-
+      // gather all upcoming within window
+      const upcoming: Program[] = [];
       for (const p of listForChannel) {
         const t = parseUtcishMs(p.start_time);
         if (!nowProg && isActiveProgram(p, nowMs)) nowProg = p;
-        if (!nextProg && t > nowMs && t <= cutoffNextMs) nextProg = p;
-        if (nowProg && nextProg) break;
+        if (t > nowMs && t <= cutoffNextMs) upcoming.push(p);
       }
+      const next = upcoming[0] || null;
+      const later = upcoming.slice(1);
 
       if (nowProg) {
         list.push({
           channel: ch,
           now: nowProg,
-          next: nextProg || null,
+          next,
+          later,
           status: "on",
           badge: "On now",
         });
-      } else if (nextProg) {
-        const at = fmtTimeLocal(parseUtcishMs(nextProg.start_time));
+      } else if (next) {
+        const at = fmtTimeLocal(parseUtcishMs(next.start_time));
         list.push({
           channel: ch,
           now: null,
-          next: nextProg,
+          next,
+          later: upcoming.slice(1),
           status: "upcoming",
           badge: `Upcoming at ${at}`,
         });
@@ -217,6 +223,7 @@ export default function GuidePage() {
           channel: ch,
           now: null,
           next: null,
+          later: [],
           status: "idle",
           badge: "Standby",
         });
@@ -281,7 +288,7 @@ export default function GuidePage() {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <div className="truncate font-semibold">
-                        {row.channel.name || `Channel ${idNum}`}
+                        {row.channel.name || { idNum }}
                       </div>
                       <div className={`text-xs px-2 py-0.5 rounded-full bg-gray-800 border border-gray-700 ${tone}`}>
                         {row.badge}
@@ -302,13 +309,29 @@ export default function GuidePage() {
                       {row.status === "idle" && "Standby Programming"}
                     </div>
 
-                    {/* Next (within 24h) */}
+                    {/* Next */}
                     {row.next?.title && (
                       <div className="mt-0.5 text-[11px] text-gray-400 truncate">
                         <span className="text-gray-500">Next:</span>{" "}
                         <span className="text-gray-200">{row.next.title}</span>
                         {" · "}
                         <span>{fmtTimeLocal(parseUtcishMs(row.next.start_time))}</span>
+                      </div>
+                    )}
+
+                    {/* Later list (compact) */}
+                    {row.later && row.later.length > 0 && (
+                      <div className="mt-0.5 text-[11px] text-gray-500 truncate">
+                        <span className="text-gray-600">Later:</span>{" "}
+                        {row.later.map((p, i) => {
+                          const t = fmtTimeLocal(parseUtcishMs(p.start_time));
+                          return (
+                            <span key={`${p.start_time}-${i}`} className="whitespace-nowrap">
+                              {t} {p.title}
+                              {i < row.later!.length - 1 ? " · " : ""}
+                            </span>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
