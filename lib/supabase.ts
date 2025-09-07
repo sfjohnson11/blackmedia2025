@@ -30,37 +30,54 @@ export function getSupabase(): SupabaseClient {
   });
 }
 
-/** Back-compat: many pages import { supabase } from "@/lib/supabase" */
+/** Back-compat */
 export const supabase = getSupabase();
 
-/* ---------- Time (strict UTC + seconds) ---------- */
+/* ---------- Time utils (robust UTC parsing) ---------- */
+/**
+ * Accepts:
+ * - "YYYY-MM-DD HH:mm:ss" (UTC)
+ * - "YYYY-MM-DDTHH:mm:ss" (UTC)
+ * - Either of the above with fractional seconds
+ * - With "Z"
+ * - With offsets: +00, +0000, +00:00 (and negatives)
+ */
 export function toUtcDate(val?: string | Date | null): Date | null {
   if (!val) return null;
   if (val instanceof Date) return Number.isNaN(val.getTime()) ? null : val;
+
   let s = String(val).trim();
 
-  // If already has Z or +/-HH(:)MM, normalize.
-  if (/[zZ]$/.test(s) || /[+\-]\d{2}:?\d{2}$/.test(s)) {
-    s = s.replace(" ", "T").replace(/([+\-]\d{2})(\d{2})$/, "$1:$2").replace(/[zZ]$/, "Z");
-    const d1 = new Date(s);
-    return Number.isNaN(d1.getTime()) ? null : d1;
+  // Space → T for consistency
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(s)) s = s.replace(" ", "T");
+
+  // Normalize Z
+  if (/[zZ]$/.test(s)) {
+    s = s.replace(/[zZ]$/, "Z");
+  } else {
+    // Normalize offsets like +00, +0000, +00:00
+    const m = /([+\-]\d{2})(:?)(\d{2})?$/.exec(s);
+    if (m) {
+      const hh = m[1];
+      const mm = m[3] ?? "00";
+      s = s.replace(/([+\-]\d{2})(:?)(\d{2})?$/, `${hh}:${mm}`);
+      // Turn ±00:00 into Z
+      if (/([+\-]00:00)$/.test(s)) s = s.replace(/([+\-]00:00)$/, "Z");
+    } else {
+      // Bare ISO without zone → assume UTC
+      if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(s)) s += "Z";
+    }
   }
 
-  // "YYYY-MM-DD HH:mm:ss" → treat as UTC.
-  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/.exec(s);
-  if (m) {
-    const [, yy, MM, dd, hh, mm, ss] = m;
-    const d = new Date(Date.UTC(+yy, +MM - 1, +dd, +hh, +mm, +ss));
-    return Number.isNaN(d.getTime()) ? null : d;
-  }
-  return null;
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? null : d;
 }
 
 export function addSeconds(d: Date, secs: number) {
   return new Date(d.getTime() + secs * 1000);
 }
 
-/** Robust duration: supports number, "HH:MM:SS", "MM:SS", ISO8601 (PT1H5M), "1800.0" */
+/** Supports: number, "HH:MM:SS", "MM:SS", ISO8601 (PT1H5M), "1800.0" */
 export function parseDurationSec(v: number | string | null | undefined): number {
   if (v == null) return 0;
   if (typeof v === "number") return v > 0 ? Math.round(v) : 0;
@@ -76,7 +93,7 @@ export function parseDurationSec(v: number | string | null | undefined): number 
     return total > 0 ? total : 0;
   }
 
-  // ISO8601 e.g., PT30M, PT1H5M, PT90S
+  // ISO8601 duration
   m = /^P(T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)$/i.exec(s);
   if (m) {
     const hh = Number(m[2] || 0);
@@ -86,7 +103,7 @@ export function parseDurationSec(v: number | string | null | undefined): number 
     return total > 0 ? total : 0;
   }
 
-  // Plain numeric (allow decimals) → seconds
+  // Plain numeric (allow decimals)
   const num = Number(s.replace(/[^\d.]+/g, ""));
   return Number.isFinite(num) && num > 0 ? Math.round(num) : 0;
 }
@@ -96,7 +113,7 @@ const ROOT = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "");
 const cleanKey = (k: string) =>
   (k || "").trim().replace(/^\.?\//, "").replace(/\\/g, "/").replace(/\/{2,}/g, "/");
 
-// Handle already-encoded OR raw segments safely (prevents double-encoding)
+// Encode safely (handles already-encoded segments too)
 function safeEncodePath(path: string) {
   return cleanKey(path)
     .split("/")
@@ -140,7 +157,7 @@ export function getVideoUrlForProgram(p: Program): string | undefined {
   m = /^([a-z0-9_\-]+)\/(.+)$/.exec(raw);
   if (m) return buildPublicUrl(m[1], m[2]);
 
-  // relative file → resolve against the channel bucket
+  // relative → resolve against the channel bucket
   const bucket = bucketNameForChannelId(p.channel_id);
   const key = cleanKey(raw).replace(/^channel[^/]+\/+/i, "");
   return buildPublicUrl(bucket, key);
@@ -164,7 +181,7 @@ export async function fetchChannelById(
   }
 }
 
-/* ---------- Programs (by Programs.channel_id) ---------- */
+/* ---------- Programs for a channel ---------- */
 export async function fetchProgramsForChannel(
   client: SupabaseClient,
   channelId: number
@@ -178,7 +195,7 @@ export async function fetchProgramsForChannel(
   return (data || []) as Program[];
 }
 
-/* ---------- Back-compat helpers used by admin/debug pages ---------- */
+/* ---------- Optional admin helpers ---------- */
 export async function listBuckets(client: SupabaseClient = supabase) {
   try {
     const { data, error } = await client.storage.listBuckets();
@@ -200,6 +217,5 @@ export async function checkRLSStatus(client: SupabaseClient = supabase) {
 }
 
 export async function getWatchProgress(/* userId?: string */) {
-  // Stub to keep pages compiling; adjust to your real schema later
   return [];
 }
