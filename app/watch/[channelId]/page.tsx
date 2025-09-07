@@ -1,13 +1,13 @@
 // app/watch/[channelId]/page.tsx
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   supabase,
   fetchChannelById,
   fetchProgramsForChannel,
-  getVideoUrlForProgram,
+  getCandidateUrlsForProgram,
   toUtcDate,
   addSeconds,
   parseDurationSec,
@@ -19,7 +19,7 @@ const CH21 = 21;
 
 function standbyUrlForChannel(channelId: number) {
   const root = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "");
-  // your real standby file name:
+  // your standby file name:
   return `${root}/storage/v1/object/public/channel${channelId}/standby_blacktruthtv.mp4`;
 }
 
@@ -32,11 +32,11 @@ export default function WatchPage({ params }: { params: { channelId: string } })
   const [channel, setChannel] = useState<Channel | null>(null);
   const [currentProgram, setCurrentProgram] = useState<Program | null>(null);
   const [upcoming, setUpcoming] = useState<Program[]>([]);
-  const [videoSrc, setVideoSrc] = useState<string | null>(null);
+  const [videoSrcs, setVideoSrcs] = useState<string[]>([]);
   const [title, setTitle] = useState<string>("Loading…");
   const [err, setErr] = useState<string | null>(null);
   const [dbg, setDbg] = useState<any>(null);
-  const pollRef = useRef<NodeJS.Timeout | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // normalize channel id
   useEffect(() => {
@@ -64,10 +64,12 @@ export default function WatchPage({ params }: { params: { channelId: string } })
       const en = addSeconds(st, dur);
       if (now >= st && now < en) { active = p; break; }
     }
-    const nexts = list.filter(p => {
-      const st = toUtcDate(p.start_time);
-      return !!st && st > now;
-    }).slice(0, 4);
+    const nexts = list
+      .filter(p => {
+        const st = toUtcDate(p.start_time);
+        return !!st && st > now;
+      })
+      .slice(0, 4);
     return { active, nexts };
   };
 
@@ -85,22 +87,23 @@ export default function WatchPage({ params }: { params: { channelId: string } })
 
       // CH21 special: YouTube live if configured and no override
       if (!srcOverride && chId === CH21 && (ch.youtube_channel_id || "").trim()) {
-        setCurrentProgram(null);
-        setUpcoming(nexts);
         const yt = `https://www.youtube.com/embed/live_stream?channel=${encodeURIComponent(
           (ch.youtube_channel_id || "").trim()
         )}&autoplay=1`;
-        setVideoSrc(yt);
+        setCurrentProgram(null);
+        setUpcoming(nexts);
+        setVideoSrcs([yt]);
         setTitle("YouTube Live");
-        setDbg({ mode: "youtube", yt });
+        setDbg({ mode: "youtube", yt, nexts: nexts.map(n => ({ t: n.title, st: n.start_time })) });
         return;
       }
 
       if (active) {
-        const url = getVideoUrlForProgram(active);
+        const candidates = getCandidateUrlsForProgram(active);
+        const finalList = srcOverride ? [srcOverride] : (candidates.length ? candidates : [standbyUrlForChannel(chId)]);
         setCurrentProgram(active);
         setUpcoming(nexts);
-        setVideoSrc(srcOverride || url || standbyUrlForChannel(chId));
+        setVideoSrcs(finalList);
         setTitle(active.title || "Now Playing");
         setDbg({
           mode: "program",
@@ -110,22 +113,23 @@ export default function WatchPage({ params }: { params: { channelId: string } })
             start_time: active.start_time,
             duration_raw: active.duration,
             duration_sec: parseDurationSec(active.duration),
-            resolved_url: url,
+            candidates: finalList,
           },
-          nexts: nexts.map(n => ({ title: n.title, start_time: n.start_time })),
+          nexts: nexts.map(n => ({ t: n.title, st: n.start_time })),
         });
       } else {
         // standby
         const standby = standbyUrlForChannel(chId);
+        const finalList = srcOverride ? [srcOverride] : [standby];
         setCurrentProgram(null);
         setUpcoming(nexts);
-        setVideoSrc(srcOverride || standby);
+        setVideoSrcs(finalList);
         setTitle("Standby Programming");
         setDbg({
           mode: "standby",
           now: new Date().toISOString(),
-          nexts: nexts.map(n => ({ title: n.title, start_time: n.start_time })),
-          standby,
+          standby: finalList[0],
+          nexts: nexts.map(n => ({ t: n.title, st: n.start_time })),
         });
       }
 
@@ -140,7 +144,9 @@ export default function WatchPage({ params }: { params: { channelId: string } })
               if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
               await load(chId);
             }
-          } catch { /* ignore */ }
+          } catch {
+            /* ignore */
+          }
         }, 30000);
       }
     } catch (e: any) {
@@ -154,15 +160,15 @@ export default function WatchPage({ params }: { params: { channelId: string } })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channelId, srcOverride]);
 
-  const isYouTube = (videoSrc || "").includes("youtube.com/embed");
+  const isYouTube = videoSrcs.length === 1 && videoSrcs[0].includes("youtube.com/embed");
 
   return (
     <div className="bg-black min-h-screen text-white">
-      {debug && dbg && (
+      {debug && dbg ? (
         <pre className="text-[10px] leading-tight p-2 bg-black/60 text-green-300 overflow-x-auto">
 {JSON.stringify(dbg, null, 2)}
         </pre>
-      )}
+      ) : null}
 
       <div className="w-full aspect-video bg-black grid place-items-center">
         {err ? (
@@ -172,16 +178,15 @@ export default function WatchPage({ params }: { params: { channelId: string } })
             title="YouTube Live"
             className="w-full h-full"
             allow="autoplay; encrypted-media; picture-in-picture"
-            src={videoSrc!}
+            src={videoSrcs[0]}
           />
-        ) : videoSrc ? (
+        ) : videoSrcs.length > 0 ? (
           <video
-            key={videoSrc}
+            key={videoSrcs.join("|")}
             className="w-full h-full"
-            src={videoSrc}
             poster={channel?.logo_url || undefined}
             autoPlay
-            muted={false}      {/* SOUND ON so your standby music plays */}
+            muted={false}      // SOUND ON so your standby music plays
             playsInline
             controls
             loop={/standby/i.test(title)}
@@ -191,11 +196,14 @@ export default function WatchPage({ params }: { params: { channelId: string } })
             onError={() => {
               if (channelId != null) {
                 const s = standbyUrlForChannel(channelId);
-                if (s !== videoSrc) setVideoSrc(s);
+                if (videoSrcs[0] !== s) setVideoSrcs([s]);
               }
             }}
           >
-            <source src={videoSrc} type="video/mp4" />
+            {/* Try multiple source candidates so the browser can pick a working one */}
+            {videoSrcs.map((src, i) => (
+              <source key={`${i}-${src}`} src={src} type="video/mp4" />
+            ))}
           </video>
         ) : (
           <div className="text-white/70 text-sm">Loading…</div>
