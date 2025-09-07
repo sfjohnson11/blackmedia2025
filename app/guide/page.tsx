@@ -7,7 +7,7 @@ import { supabase } from "@/lib/supabase";
 
 // Keep in sync with your types
 type Channel = {
-  id: number | string;         // TEXT in DB, but values "1".."30"
+  id: number | string;         // TEXT in DB, values "1".."30"
   name?: string | null;
   logo_url?: string | null;
   youtube_is_live?: boolean | null;
@@ -24,7 +24,7 @@ type Program = {
 const CH21_ID_NUMERIC = 21;
 const GRACE_MS = 120_000; // 2 minutes grace around start/end
 
-/* ---------- ID normalization (CRITICAL FIX) ---------- */
+/* ---------- ID normalization (CRITICAL) ---------- */
 function toId(v: number | string | null | undefined): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : NaN;
@@ -117,10 +117,10 @@ export default function GuidePage() {
           .order("id", { ascending: true });
         if (chErr) throw chErr;
 
-        // Programs: from 6 hours ago to +24 hours ahead → captures "now" + "next"
+        // Programs: from 6 hours ago to +72 hours ahead → captures NOW & NEXT reliably
         const now = Date.now();
         const from = new Date(now - 6 * 3600 * 1000).toISOString();
-        const to = new Date(now + 24 * 3600 * 1000).toISOString();
+        const to = new Date(now + 72 * 3600 * 1000).toISOString();
 
         const { data: progs, error: pErr } = await supabase
           .from("programs")
@@ -190,6 +190,7 @@ export default function GuidePage() {
       }
 
       if (nowProg) {
+        // If we didn't find a next (outside the window), leave it null gracefully
         list.push({
           channel: ch,
           now: nowProg,
@@ -239,6 +240,9 @@ export default function GuidePage() {
               : row.status === "upcoming" ? "text-gray-300"
               : "text-gray-400";
 
+            const nowStart = row.now ? parseUtcishMs(row.now.start_time) : NaN;
+            const nowEnd = row.now ? nowStart + asSeconds(row.now.duration) * 1000 : NaN;
+
             return (
               <Link
                 key={row.channel.id}
@@ -279,7 +283,7 @@ export default function GuidePage() {
                       </div>
                     </div>
 
-                    {/* Now / Next lines */}
+                    {/* Now line */}
                     <div className="mt-1 text-xs text-gray-300 truncate">
                       {row.status === "live" && "YouTube Live"}
                       {row.status !== "live" && row.now?.title && (
@@ -288,22 +292,22 @@ export default function GuidePage() {
                           <strong className="text-white">{row.now.title}</strong>
                           {" · "}
                           <span className="text-gray-400">
-                            until {fmtTimeLocal(parseUtcishMs(row.now.start_time) + asSeconds(row.now.duration) * 1000)}
-                          </span>
-                        </>
-                      )}
-                      {row.status !== "live" && !row.now?.title && row.next?.title && (
-                        <>
-                          <span className="text-gray-400">Next:</span>{" "}
-                          <strong className="text-white">{row.next.title}</strong>
-                          {" · "}
-                          <span className="text-gray-400">
-                            {fmtTimeLocal(parseUtcishMs(row.next.start_time))}
+                            until {fmtTimeLocal(nowEnd)}
                           </span>
                         </>
                       )}
                       {row.status === "idle" && "Standby Programming"}
                     </div>
+
+                    {/* NEW: Next line even when Now exists */}
+                    {row.next?.title && (
+                      <div className="mt-0.5 text-[11px] text-gray-400 truncate">
+                        <span className="text-gray-500">Next:</span>{" "}
+                        <span className="text-gray-200">{row.next.title}</span>
+                        {" · "}
+                        <span>{fmtTimeLocal(parseUtcishMs(row.next.start_time))}</span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Chevron */}
