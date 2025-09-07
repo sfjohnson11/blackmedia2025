@@ -1,45 +1,46 @@
-// app/watch/[channelId]/page.tsx
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useParams, useRouter } from "next/navigation";
+import VideoPlayer from "@/components/video-player";
 import {
-  supabase,
-  fetchChannelById,
-  fetchProgramsForChannel,
-  getCandidateUrlsForProgram,
+  getSupabase,
   toUtcDate,
   addSeconds,
   parseDurationSec,
-  type Channel,
+  getVideoUrlForProgram,
+  fetchChannelById,
+  fetchProgramsForChannel,
   type Program,
+  type Channel,
 } from "@/lib/supabase";
+import { ChevronLeft, Loader2 } from "lucide-react";
 
-const CH21 = 21;
+const CH21_ID = 21;
+const STANDBY_PLACEHOLDER_ID = "__standby__";
 
-function standbyUrlForChannel(channelId: number) {
-  const root = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "");
-  return `${root}/storage/v1/object/public/channel${channelId}/standby_blacktruthtv.mp4`;
-}
+// helper: UTC "now"
+const nowUtc = () => new Date(new Date().toISOString());
 
-export default function WatchPage({ params }: { params: { channelId: string } }) {
-  const search = useSearchParams();
-  const srcOverride = search?.get("src") || null;
-  const debug = search?.get("debug") === "1";
+export default function WatchPage() {
+  const router = useRouter();
+  const params = useParams();
+  const supabase = useMemo(() => getSupabase(), []);
 
+  const channelIdStr = String(params.channelId || "");
   const [channelId, setChannelId] = useState<number | null>(null);
-  const [channel, setChannel] = useState<Channel | null>(null);
-  const [currentProgram, setCurrentProgram] = useState<Program | null>(null);
-  const [upcoming, setUpcoming] = useState<Program[]>([]);
-  const [videoSrcs, setVideoSrcs] = useState<string[]>([]);
-  const [title, setTitle] = useState<string>("Loading…");
-  const [err, setErr] = useState<string | null>(null);
-  const [dbg, setDbg] = useState<any>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // normalize channel id
+  const [channel, setChannel] = useState<Channel | null>(null);
+  const [current, setCurrent] = useState<Program | null>(null);
+  const [upcoming, setUpcoming] = useState<Program[]>([]);
+
+  const [videoSrc, setVideoSrc] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+
+  // normalize numeric channel id
   useEffect(() => {
-    const s = String(params.channelId || "").trim();
+    const s = channelIdStr.trim();
     if (!/^\d+$/.test(s)) {
       setErr(`Channel id must be numeric (got "${s}")`);
       setChannelId(null);
@@ -47,178 +48,214 @@ export default function WatchPage({ params }: { params: { channelId: string } })
     }
     const n = Number(s.replace(/^0+/, "") || "0");
     setChannelId(Number.isFinite(n) ? n : null);
-  }, [params.channelId]);
+  }, [channelIdStr]);
 
-  useEffect(() => {
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, []);
-
-  const pickActive = (list: Program[]) => {
-    const now = new Date();
-    let active: Program | null = null;
-    for (const p of list) {
-      const st = toUtcDate(p.start_time);
-      if (!st) continue;
-      const dur = Math.max(60, parseDurationSec(p.duration));
-      const en = addSeconds(st, dur);
-      if (now >= st && now < en) { active = p; break; }
-    }
-    const nexts = list
-      .filter(p => {
-        const st = toUtcDate(p.start_time);
-        return !!st && st > now;
-      })
-      .slice(0, 4);
-    return { active, nexts };
-  };
-
-  async function load(chId: number) {
+  // load channel + decide what to play
+  const refresh = useCallback(async (cid: number) => {
+    setLoading(true);
+    setErr(null);
     try {
-      setErr(null);
-      setDbg(null);
-
-      const ch = await fetchChannelById(supabase, chId);
-      if (!ch) throw new Error(`Channel not found (id=${chId})`);
+      // channel row
+      const ch = await fetchChannelById(supabase, cid);
+      if (!ch) throw new Error(`Channel not found (id=${cid})`);
       setChannel(ch);
 
-      const programs = await fetchProgramsForChannel(supabase, chId);
-      const { active, nexts } = pickActive(programs);
+      // programs list
+      const list = await fetchProgramsForChannel(supabase, cid);
+      const now = nowUtc();
 
-      // CH21 special: YouTube live if configured and no override
-      if (!srcOverride && chId === CH21 && (ch.youtube_channel_id || "").trim()) {
-        const yt = `https://www.youtube.com/embed/live_stream?channel=${encodeURIComponent(
-          (ch.youtube_channel_id || "").trim()
-        )}&autoplay=1`;
-        setCurrentProgram(null);
-        setUpcoming(nexts);
-        setVideoSrcs([yt]);
-        setTitle("YouTube Live");
-        setDbg({ mode: "youtube", yt, nexts: nexts.map(n => ({ t: n.title, st: n.start_time })) });
+      // pick current by strict UTC window
+      let cur: Program | null = null;
+      for (const p of list) {
+        const st = toUtcDate(p.start_time);
+        if (!st) continue;
+        const dur = Math.max(60, parseDurationSec(p.duration));
+        const en = addSeconds(st, dur);
+        if (now >= st && now < en) {
+          cur = p;
+          break;
+        }
+      }
+
+      // compute next
+      const nxt =
+        list.find((p) => {
+          const st = toUtcDate(p.start_time);
+          return !!st && st > now;
+        }) || null;
+
+      setCurrent(cur ?? null);
+      setUpcoming(nxt ? [nxt, ...list.filter((p) => toUtcDate(p.start_time)! > toUtcDate(nxt.start_time)! ).slice(0, 2)] : []);
+
+      // resolve src:
+      // CH21 -> YouTube embed if youtube_channel_id present
+      const ytId = (ch.youtube_channel_id || "").trim();
+      if (cid === CH21_ID && ytId) {
+        const url = `https://www.youtube.com/embed/live_stream?channel=${encodeURIComponent(
+          ytId
+        )}&autoplay=1&mute=1`;
+        setVideoSrc(url);
         return;
       }
 
-      if (active) {
-        const candidates = getCandidateUrlsForProgram(active);
-        const finalList = srcOverride ? [srcOverride] : (candidates.length ? candidates : [standbyUrlForChannel(chId)]);
-        setCurrentProgram(active);
-        setUpcoming(nexts);
-        setVideoSrcs(finalList);
-        setTitle(active.title || "Now Playing");
-        setDbg({
-          mode: "program",
-          now: new Date().toISOString(),
-          current: {
-            title: active.title,
-            start_time: active.start_time,
-            duration_raw: active.duration,
-            duration_sec: parseDurationSec(active.duration),
-            candidates: finalList,
-          },
-          nexts: nexts.map(n => ({ t: n.title, st: n.start_time })),
-        });
-      } else {
-        // standby
-        const standby = standbyUrlForChannel(chId);
-        const finalList = srcOverride ? [srcOverride] : [standby];
-        setCurrentProgram(null);
-        setUpcoming(nexts);
-        setVideoSrcs(finalList);
-        setTitle("Standby Programming");
-        setDbg({
-          mode: "standby",
-          now: new Date().toISOString(),
-          standby: finalList[0],
-          nexts: nexts.map(n => ({ t: n.title, st: n.start_time })),
-        });
+      // current program url
+      let src: string | undefined = undefined;
+      if (cur) {
+        src = getVideoUrlForProgram(cur);
       }
 
-      // Poll while on standby to switch when a program window opens
-      if (!active) {
-        if (pollRef.current) clearInterval(pollRef.current);
-        pollRef.current = setInterval(async () => {
-          try {
-            const fresh = await fetchProgramsForChannel(supabase, chId);
-            const { active: nowActive } = pickActive(fresh);
-            if (nowActive) {
-              if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-              await load(chId);
-            }
-          } catch {
-            /* ignore */
-          }
-        }, 30000);
+      // standby URL (per-channel)
+      if (!src) {
+        const standbyLikeProgram: Program = {
+          channel_id: cid,
+          mp4_url: `standby_blacktruthtv.mp4`,
+          title: "Standby",
+          duration: 300,
+          start_time: now.toISOString(),
+        };
+        src = getVideoUrlForProgram(standbyLikeProgram);
       }
+
+      if (!src) throw new Error("No playable URL for program/standby");
+      setVideoSrc(src);
     } catch (e: any) {
       setErr(e?.message || "Failed to load channel.");
+    } finally {
+      setLoading(false);
     }
-  }
+  }, [supabase]);
 
   useEffect(() => {
     if (channelId == null) return;
-    load(channelId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [channelId, srcOverride]);
+    refresh(channelId);
+  }, [channelId, refresh]);
 
-  const isYouTube = videoSrcs.length === 1 && videoSrcs[0].includes("youtube.com/embed");
+  // auto refresh each minute (and when tab visible)
+  useEffect(() => {
+    if (channelId == null) return;
+    const t = setInterval(() => {
+      if (document.visibilityState === "visible") refresh(channelId);
+    }, 60000);
+    return () => clearInterval(t);
+  }, [channelId, refresh]);
+
+  const onEnded = useCallback(() => {
+    if (channelId != null) refresh(channelId);
+  }, [channelId, refresh]);
+
+  const onVideoError = useCallback(() => {
+    if (channelId == null) return;
+    // swap to per-channel standby if not already
+    const standbyLikeProgram: Program = {
+      channel_id: channelId,
+      mp4_url: `standby_blacktruthtv.mp4`,
+      title: "Standby",
+      duration: 300,
+      start_time: nowUtc().toISOString(),
+    };
+    const s = getVideoUrlForProgram(standbyLikeProgram);
+    if (s && s !== videoSrc) setVideoSrc(s);
+  }, [channelId, videoSrc]);
+
+  const isYouTube = (videoSrc || "").includes("youtube.com/embed");
+  const poster = channel?.logo_url || undefined;
+
+  let content: ReactNode;
+  if (err) {
+    content = <p className="text-red-400 p-4 text-center">Error: {err}</p>;
+  } else if (loading && !videoSrc) {
+    content = (
+      <div className="flex flex-col items-center justify-center h-full">
+        <Loader2 className="h-10 w-10 animate-spin text-red-500 mb-2" />
+        <p>Loading Channel...</p>
+      </div>
+    );
+  } else if (isYouTube && videoSrc) {
+    content = (
+      <iframe
+        title="YouTube Live"
+        className="w-full h-full"
+        allow="autoplay; encrypted-media; picture-in-picture"
+        src={videoSrc}
+      />
+    );
+  } else if (videoSrc) {
+    content = (
+      <VideoPlayer
+        src={videoSrc}
+        poster={poster}
+        isStandby={current == null}
+        programTitle={current?.title || "Standby Programming"}
+        onVideoEnded={onEnded}
+        onError={onVideoError}
+      />
+    );
+  } else {
+    content = <p className="text-gray-400 p-4 text-center">Initializing channel...</p>;
+  }
+
+  // compute Now & Next display
+  const nowLabel = useMemo(() => {
+    if (!current) return null;
+    const st = toUtcDate(current.start_time);
+    if (!st) return null;
+    const en = addSeconds(st, Math.max(60, parseDurationSec(current.duration)));
+    try {
+      return `${st.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZoneName: "short" })} – ${en.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZoneName: "short" })}`;
+    } catch {
+      return null;
+    }
+  }, [current]);
 
   return (
-    <div className="bg-black min-h-screen text-white">
-      {debug && dbg ? (
-        <pre className="text-[10px] leading-tight p-2 bg-black/60 text-green-300 overflow-x-auto">
-{JSON.stringify(dbg, null, 2)}
-        </pre>
-      ) : null}
-
-      <div className="w-full aspect-video bg-black grid place-items-center">
-        {err ? (
-          <p className="text-red-400 text-sm px-4 text-center">Error: {err}</p>
-        ) : isYouTube ? (
-          <iframe
-            title="YouTube Live"
-            className="w-full h-full"
-            allow="autoplay; encrypted-media; picture-in-picture"
-            src={videoSrcs[0]}
-          />
-        ) : videoSrcs.length > 0 ? (
-          <video
-            key={videoSrcs.join("|")}
-            className="w-full h-full"
-            poster={channel?.logo_url || undefined}
-            autoPlay
-            muted={false}      // SOUND ON so your standby music plays
-            playsInline
-            controls
-            loop={/standby/i.test(title)}
-            onEnded={() => {
-              if (channelId != null) load(channelId);
-            }}
-            onError={() => {
-              if (channelId != null) {
-                const s = standbyUrlForChannel(channelId);
-                if (videoSrcs[0] !== s) setVideoSrcs([s]);
-              }
-            }}
-          >
-            {videoSrcs.map((src, i) => (
-              <source key={`${i}-${src}`} src={src} type="video/mp4" />
-            ))}
-          </video>
-        ) : (
-          <div className="text-white/70 text-sm">Loading…</div>
-        )}
+    <div className="bg-black min-h-screen flex flex-col text-white">
+      {/* top bar */}
+      <div className="p-4 flex items-center justify-between bg-gray-900/50 sticky top-0 z-10">
+        <button
+          onClick={() => router.back()}
+          className="p-2 rounded-full hover:bg-gray-700"
+          aria-label="Go back"
+        >
+          <ChevronLeft className="h-6 w-6" />
+        </button>
+        <h1 className="text-xl font-semibold truncate px-2">
+          {channel?.name || (channelId != null ? `Channel ${channelId}` : "Channel")}
+        </h1>
+        <div className="w-10 h-10" />
       </div>
 
-      <div className="p-4 space-y-1 text-sm">
-        <div className="font-semibold">{title}</div>
+      {/* player */}
+      <div className="w-full aspect-video bg-black flex items-center justify-center">{content}</div>
+
+      {/* now & next */}
+      <div className="p-4 flex-grow space-y-2">
+        {current && (
+          <>
+            <h2 className="text-2xl font-bold">{current.title || "Now Playing"}</h2>
+            {nowLabel && (
+              <p className="text-sm text-gray-400">
+                {nowLabel}
+              </p>
+            )}
+          </>
+        )}
+
         {upcoming.length > 0 && (
-          <div className="text-white/60">
-            Next: {upcoming[0].title || "Upcoming"}{" "}
-            {upcoming[0].start_time
-              ? `— ${toUtcDate(upcoming[0].start_time)?.toLocaleTimeString([], {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}`
-              : ""}
+          <div className="mt-4">
+            <h3 className="text-lg font-semibold text-white mb-2">Upcoming Programs</h3>
+            <ul className="text-sm text-gray-300 space-y-1">
+              {upcoming.slice(0, 4).map((p, i) => {
+                const st = toUtcDate(p.start_time);
+                return (
+                  <li key={`${p.channel_id}-${p.start_time}-${i}`}>
+                    <span className="font-medium">{p.title || "Program"}</span>{" "}
+                    <span className="text-gray-400">
+                      — {st ? st.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZoneName: "short" }) : ""}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
           </div>
         )}
       </div>
