@@ -1,23 +1,30 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import type { Program } from "@/lib/supabase";
 
-// If you keep a separate type file, ensure youtube_is_live is in Channel
+// Keep in sync with your types
 type Channel = {
-  id: number | string;
+  id: number | string;         // channels.id (text in DB, but numeric ids 1..30)
   name?: string | null;
   logo_url?: string | null;
-  youtube_is_live?: boolean | null; // <- IMPORTANT
+  youtube_is_live?: boolean | null;
+};
+
+type Program = {
+  channel_id: number | string;
+  title?: string | null;
+  mp4_url?: string | null;
+  duration?: number | string | null; // seconds or "HH:MM:SS"
+  start_time?: string | null;        // timestamptz-ish
 };
 
 const CH21_ID_NUMERIC = 21;
 const GRACE_MS = 120_000; // 2 minutes grace around start/end
 
-/* ---------- Time helpers (same behavior as the Watch page) ---------- */
+/* ---------- Time helpers (match Watch page behavior) ---------- */
 function asSeconds(v: unknown): number {
   if (v == null) return 0;
   if (typeof v === "number" && Number.isFinite(v)) return v;
@@ -68,24 +75,21 @@ function isActiveProgram(p: Program, nowMs: number): boolean {
   return (startMs - GRACE_MS) <= nowMs && nowMs < (endMs + GRACE_MS);
 }
 
-/* ---------- Small UI bits ---------- */
-function Badge({ children, tone = "default" }: { children: React.ReactNode; tone?: "live" | "now" | "default" }) {
-  const cls =
-    tone === "live"
-      ? "bg-red-600 text-white"
-      : tone === "now"
-      ? "bg-emerald-600 text-white"
-      : "bg-gray-700 text-gray-100";
-  return <span className={`px-2 py-0.5 text-xs rounded-full ${cls}`}>{children}</span>;
+function fmtTimeLocal(ms: number) {
+  return new Date(ms).toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZoneName: "short",
+  });
 }
 
-/* ---------- Page ---------- */
-type GuideRow = {
+/* ---------- Guide row shape ---------- */
+type Row = {
   channel: Channel;
-  status: "live" | "on" | "upcoming" | "idle";
-  label: string;           // “LIVE NOW”, “On now”, “Upcoming at 07:30 AM PDT”, “Standby”
-  current?: Program | null;
+  now?: Program | null;
   next?: Program | null;
+  status: "live" | "on" | "upcoming" | "idle";
+  badge: string; // LIVE NOW / On now / Upcoming at ... / Standby
 };
 
 export default function GuidePage() {
@@ -100,23 +104,23 @@ export default function GuidePage() {
       setLoading(true);
       setErr(null);
       try {
-        // 1) Channels: need youtube_is_live + display bits
+        // Channels
         const { data: ch, error: chErr } = await supabase
           .from("channels")
           .select("id, name, logo_url, youtube_is_live")
           .order("id", { ascending: true });
         if (chErr) throw chErr;
 
-        // 2) Programs for TODAY (UTC day). We’ll group client-side.
-        const now = new Date();
-        const startUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0));
-        const endUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 0));
+        // Programs: from 6 hours ago to +24 hours ahead → captures "now" + "next"
+        const now = Date.now();
+        const from = new Date(now - 6 * 3600 * 1000).toISOString();
+        const to = new Date(now + 24 * 3600 * 1000).toISOString();
 
         const { data: progs, error: pErr } = await supabase
           .from("programs")
           .select("channel_id, title, mp4_url, start_time, duration")
-          .gte("start_time", startUtc.toISOString())
-          .lt("start_time", endUtc.toISOString())
+          .gte("start_time", from)
+          .lt("start_time", to)
           .order("start_time", { ascending: true });
 
         if (pErr) throw pErr;
@@ -131,12 +135,10 @@ export default function GuidePage() {
         if (!cancelled) setLoading(false);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
 
-  const rows: GuideRow[] = useMemo(() => {
+  const rows: Row[] = useMemo(() => {
     const nowMs = Date.now();
     const byChannel = new Map<number | string, Program[]>();
     for (const p of programs) {
@@ -144,69 +146,68 @@ export default function GuidePage() {
       if (!byChannel.has(key)) byChannel.set(key, []);
       byChannel.get(key)!.push(p);
     }
+    // Sort channel programs by start_time
+    for (const arr of byChannel.values()) {
+      arr.sort((a, b) => (parseUtcishMs(a.start_time) || 0) - (parseUtcishMs(b.start_time) || 0));
+    }
 
-    const result: GuideRow[] = [];
-    for (const ch of channels) {
-      // Sort that channel’s programs by start
-      const list = (byChannel.get(ch.id) || []).slice().sort((a, b) => {
-        const sa = parseUtcishMs(a.start_time);
-        const sb = parseUtcishMs(b.start_time);
-        return (isNaN(sa) ? 0 : sa) - (isNaN(sb) ? 0 : sb);
-      });
+    // Sort channels numerically by id (even if DB type is text)
+    const chans = channels.slice().sort((a, b) => Number(a.id) - Number(b.id));
 
-      // Special case: Channel 21 live flag wins
-      if (Number(ch.id) === CH21_ID_NUMERIC && ch.youtube_is_live) {
-        result.push({
+    const list: Row[] = [];
+    for (const ch of chans) {
+      const cid = ch.id;
+      const listForChannel = byChannel.get(cid) || [];
+
+      // CH21 hard LIVE override
+      if (Number(cid) === CH21_ID_NUMERIC && ch.youtube_is_live) {
+        const next = listForChannel.find(p => parseUtcishMs(p.start_time) > nowMs) || null;
+        list.push({
           channel: ch,
+          now: null,
+          next,
           status: "live",
-          label: "LIVE NOW",
-          current: null,
-          next: list[0] || null,
+          badge: "LIVE NOW",
         });
         continue;
       }
 
-      // Find active + next
-      let active: Program | undefined;
-      let next: Program | undefined;
-      for (const p of list) {
-        if (!active && isActiveProgram(p, nowMs)) active = p;
-        if (!next && parseUtcishMs(p.start_time) > nowMs) next = p;
-        if (active && next) break;
+      let nowProg: Program | undefined;
+      let nextProg: Program | undefined;
+      for (const p of listForChannel) {
+        if (!nowProg && isActiveProgram(p, nowMs)) nowProg = p;
+        if (!nextProg && parseUtcishMs(p.start_time) > nowMs) nextProg = p;
+        if (nowProg && nextProg) break;
       }
 
-      if (active) {
-        result.push({
+      if (nowProg) {
+        list.push({
           channel: ch,
+          now: nowProg,
+          next: nextProg || null,
           status: "on",
-          label: "On now",
-          current: active,
-          next: next || null,
+          badge: "On now",
         });
-      } else if (next) {
-        const when = new Date(parseUtcishMs(next.start_time)).toLocaleTimeString("en-US", {
-          hour: "2-digit",
-          minute: "2-digit",
-          timeZoneName: "short",
-        });
-        result.push({
+      } else if (nextProg) {
+        const at = fmtTimeLocal(parseUtcishMs(nextProg.start_time));
+        list.push({
           channel: ch,
+          now: null,
+          next: nextProg,
           status: "upcoming",
-          label: `Upcoming at ${when}`,
-          current: null,
-          next,
+          badge: `Upcoming at ${at}`,
         });
       } else {
-        result.push({
+        list.push({
           channel: ch,
-          status: "idle",
-          label: "Standby",
-          current: null,
+          now: null,
           next: null,
+          status: "idle",
+          badge: "Standby",
         });
       }
     }
-    return result;
+    return list;
   }, [channels, programs]);
 
   return (
@@ -215,27 +216,34 @@ export default function GuidePage() {
         <h1 className="text-xl font-semibold">Guide</h1>
       </div>
 
-      {err && (
-        <div className="p-4 text-red-400">
-          Error: {err}
-        </div>
-      )}
+      {err && <div className="p-4 text-red-400">Error: {err}</div>}
+      {loading && <div className="p-6 text-center text-gray-300">Loading guide…</div>}
 
-      {loading ? (
-        <div className="p-6 text-center text-gray-300">Loading guide…</div>
-      ) : (
-        <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+      {!loading && !err && (
+        <div className="divide-y divide-gray-800">
           {rows.map((row) => {
+            const idNum = Number(row.channel.id);
             const href = `/watch/${row.channel.id}`;
-            const tone = row.status === "live" ? "live" : row.status === "on" ? "now" : "default";
+            const tone =
+              row.status === "live" ? "text-red-400"
+              : row.status === "on" ? "text-emerald-400"
+              : row.status === "upcoming" ? "text-gray-300"
+              : "text-gray-400";
+
             return (
               <Link
                 key={row.channel.id}
                 href={href}
-                className="group rounded-2xl overflow-hidden bg-gray-900/60 ring-1 ring-gray-800 hover:ring-gray-600 transition"
+                className="block px-4 py-3 hover:bg-gray-900/50 transition"
               >
-                <div className="flex items-center gap-3 p-3">
-                  <div className="relative w-12 h-12 rounded-lg overflow-hidden bg-black/50 shrink-0">
+                <div className="flex items-center gap-3">
+                  {/* Channel number badge */}
+                  <div className="w-10 h-10 flex items-center justify-center rounded-lg bg-gray-800 border border-gray-700 shrink-0">
+                    <span className="font-semibold">{idNum}</span>
+                  </div>
+
+                  {/* Logo */}
+                  <div className="relative w-12 h-12 rounded-lg overflow-hidden bg-black/40 shrink-0">
                     {row.channel.logo_url ? (
                       <Image
                         src={row.channel.logo_url}
@@ -243,37 +251,54 @@ export default function GuidePage() {
                         fill
                         className="object-contain"
                         sizes="48px"
-                        priority={false}
                       />
                     ) : (
-                      <div className="w-full h-full flex items-center justify-center text-xs text-gray-400">
-                        {String(row.channel.id)}
+                      <div className="w-full h-full flex items-center justify-center text-xs text-gray-500">
+                        Logo
                       </div>
                     )}
                   </div>
-                  <div className="min-w-0">
+
+                  {/* Info */}
+                  <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <h2 className="truncate font-semibold">
-                        {row.channel.name || `Channel ${row.channel.id}`}
-                      </h2>
-                      <Badge tone={tone}>
-                        {row.label}
-                      </Badge>
+                      <div className="truncate font-semibold">
+                        {row.channel.name || `Channel ${idNum}`}
+                      </div>
+                      <div className={`text-xs px-2 py-0.5 rounded-full bg-gray-800 border border-gray-700 ${tone}`}>
+                        {row.badge}
+                      </div>
                     </div>
-                    <div className="text-xs text-gray-300 truncate">
+
+                    {/* Now / Next lines */}
+                    <div className="mt-1 text-xs text-gray-300 truncate">
                       {row.status === "live" && "YouTube Live"}
-                      {row.status !== "live" && row.current?.title
-                        ? row.current.title
-                        : row.next?.title
-                        ? row.next.title
-                        : "Standby Programming"}
+                      {row.status !== "live" && row.now?.title && (
+                        <>
+                          <span className="text-gray-400">Now:</span>{" "}
+                          <strong className="text-white">{row.now.title}</strong>
+                          {" · "}
+                          <span className="text-gray-400">
+                            until {fmtTimeLocal(parseUtcishMs(row.now.start_time) + asSeconds(row.now.duration) * 1000)}
+                          </span>
+                        </>
+                      )}
+                      {row.status !== "live" && !row.now?.title && row.next?.title && (
+                        <>
+                          <span className="text-gray-400">Next:</span>{" "}
+                          <strong className="text-white">{row.next.title}</strong>
+                          {" · "}
+                          <span className="text-gray-400">
+                            {fmtTimeLocal(parseUtcishMs(row.next.start_time))}
+                          </span>
+                        </>
+                      )}
+                      {row.status === "idle" && "Standby Programming"}
                     </div>
                   </div>
-                </div>
-                <div className="px-3 pb-3">
-                  <div className="text-[11px] text-gray-400">
-                    Go to <span className="underline group-hover:no-underline">Watch</span>
-                  </div>
+
+                  {/* Chevron */}
+                  <div className="text-gray-600">›</div>
                 </div>
               </Link>
             );
