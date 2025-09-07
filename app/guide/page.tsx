@@ -5,7 +5,7 @@ import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
-// Keep in sync with your types
+/* ------- Types (match your schema) ------- */
 type Channel = {
   id: number | string;         // TEXT in DB, values "1".."30"
   name?: string | null;
@@ -22,20 +22,21 @@ type Program = {
 };
 
 const CH21_ID_NUMERIC = 21;
-const GRACE_MS = 120_000; // 2 minutes grace around start/end
+const GRACE_MS = 120_000;       // 2 min grace
+const LOOKAHEAD_HOURS = 24;     // show NEXT within 24h
+const LOOKBACK_HOURS = 6;       // fetch a little earlier to detect a running show
 
-/* ---------- ID normalization (CRITICAL) ---------- */
+/* ---------- Helpers ---------- */
 function toId(v: number | string | null | undefined): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : NaN;
 }
 
-/* ---------- Time helpers (match Watch page behavior) ---------- */
 function asSeconds(v: unknown): number {
   if (v == null) return 0;
   if (typeof v === "number" && Number.isFinite(v)) return v;
   const s = String(v).trim();
-  const m = /^(\d{1,3}):([0-5]?\d)(?::([0-5]?\d))?$/.exec(s); // HH:MM:SS or MM:SS
+  const m = /^(\d{1,3}):([0-5]?\d)(?::([0-5]?\d))?$/.exec(s);
   if (m) {
     const hh = m[3] ? Number(m[1]) : 0;
     const mm = Number(m[3] ? m[2] : m[1]);
@@ -51,9 +52,7 @@ function parseUtcishMs(val: unknown): number {
   let s = String(val).trim();
   if (!s) return NaN;
 
-  // "YYYY-MM-DD HH:mm:ss" -> "YYYY-MM-DDTHH:mm:ss"
   if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(s)) s = s.replace(" ", "T");
-
   if (/[zZ]$/.test(s)) s = s.replace(/[zZ]$/, "Z");
   else {
     const m = /([+\-]\d{2})(:?)(\d{2})?$/.exec(s);
@@ -68,7 +67,6 @@ function parseUtcishMs(val: unknown): number {
       s = s.replace(" ", "T") + "Z";
     }
   }
-
   const t = Date.parse(s);
   return Number.isNaN(t) ? NaN : t;
 }
@@ -89,15 +87,16 @@ function fmtTimeLocal(ms: number) {
   });
 }
 
-/* ---------- Guide row shape ---------- */
+/* ---------- Row shape ---------- */
 type Row = {
   channel: Channel;
   now?: Program | null;
-  next?: Program | null;
+  next?: Program | null; // within next 24h
   status: "live" | "on" | "upcoming" | "idle";
-  badge: string; // LIVE NOW / On now / Upcoming at ... / Standby
+  badge: string;
 };
 
+/* ================== PAGE ================== */
 export default function GuidePage() {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [programs, setPrograms] = useState<Program[]>([]);
@@ -110,17 +109,17 @@ export default function GuidePage() {
       setLoading(true);
       setErr(null);
       try {
-        // Channels
+        // Channels (id is TEXT, but values are "1".."30")
         const { data: ch, error: chErr } = await supabase
           .from("channels")
           .select("id, name, logo_url, youtube_is_live")
           .order("id", { ascending: true });
         if (chErr) throw chErr;
 
-        // Programs: from 6 hours ago to +72 hours ahead → captures NOW & NEXT reliably
+        // Programs: small lookback to catch "now", and 24h lookahead
         const now = Date.now();
-        const from = new Date(now - 6 * 3600 * 1000).toISOString();
-        const to = new Date(now + 72 * 3600 * 1000).toISOString();
+        const from = new Date(now - LOOKBACK_HOURS * 3600 * 1000).toISOString();
+        const to = new Date(now + LOOKAHEAD_HOURS * 3600 * 1000).toISOString();
 
         const { data: progs, error: pErr } = await supabase
           .from("programs")
@@ -146,8 +145,9 @@ export default function GuidePage() {
 
   const rows: Row[] = useMemo(() => {
     const nowMs = Date.now();
+    const cutoffNextMs = nowMs + LOOKAHEAD_HOURS * 3600 * 1000;
 
-    // Group programs by NUMERIC channel id (critical)
+    // Group by numeric channel id (critical)
     const byChannel = new Map<number, Program[]>();
     for (const p of programs) {
       const key = toId(p.channel_id);
@@ -155,12 +155,12 @@ export default function GuidePage() {
       if (!byChannel.has(key)) byChannel.set(key, []);
       byChannel.get(key)!.push(p);
     }
-    // Sort each channel's programs by start_time
+    // Sort each channel's programs by start
     for (const arr of byChannel.values()) {
       arr.sort((a, b) => (parseUtcishMs(a.start_time) || 0) - (parseUtcishMs(b.start_time) || 0));
     }
 
-    // Sort channels numerically by id
+    // Channels sorted 1..30
     const chans = channels.slice().sort((a, b) => toId(a.id) - toId(b.id));
 
     const list: Row[] = [];
@@ -168,9 +168,13 @@ export default function GuidePage() {
       const cid = toId(ch.id);
       const listForChannel = byChannel.get(cid) || [];
 
-      // CH21 hard LIVE override
+      // CH21 Live override
       if (cid === CH21_ID_NUMERIC && ch.youtube_is_live) {
-        const next = listForChannel.find(p => parseUtcishMs(p.start_time) > nowMs) || null;
+        const next = listForChannel.find(p => {
+          const t = parseUtcishMs(p.start_time);
+          return t > nowMs && t <= cutoffNextMs;
+        }) || null;
+
         list.push({
           channel: ch,
           now: null,
@@ -183,14 +187,15 @@ export default function GuidePage() {
 
       let nowProg: Program | undefined;
       let nextProg: Program | undefined;
+
       for (const p of listForChannel) {
+        const t = parseUtcishMs(p.start_time);
         if (!nowProg && isActiveProgram(p, nowMs)) nowProg = p;
-        if (!nextProg && parseUtcishMs(p.start_time) > nowMs) nextProg = p;
+        if (!nextProg && t > nowMs && t <= cutoffNextMs) nextProg = p;
         if (nowProg && nextProg) break;
       }
 
       if (nowProg) {
-        // If we didn't find a next (outside the window), leave it null gracefully
         list.push({
           channel: ch,
           now: nowProg,
@@ -223,7 +228,7 @@ export default function GuidePage() {
   return (
     <div className="min-h-screen bg-black text-white">
       <div className="sticky top-0 z-10 px-4 py-3 bg-gray-900/60 backdrop-blur">
-        <h1 className="text-xl font-semibold">Guide</h1>
+        <h1 className="text-xl font-semibold">Guide — Next 24 Hours</h1>
       </div>
 
       {err && <div className="p-4 text-red-400">Error: {err}</div>}
@@ -250,7 +255,7 @@ export default function GuidePage() {
                 className="block px-4 py-3 hover:bg-gray-900/50 transition"
               >
                 <div className="flex items-center gap-3">
-                  {/* Channel number badge */}
+                  {/* Channel number */}
                   <div className="w-10 h-10 flex items-center justify-center rounded-lg bg-gray-800 border border-gray-700 shrink-0">
                     <span className="font-semibold">{idNum}</span>
                   </div>
@@ -283,7 +288,7 @@ export default function GuidePage() {
                       </div>
                     </div>
 
-                    {/* Now line */}
+                    {/* Now */}
                     <div className="mt-1 text-xs text-gray-300 truncate">
                       {row.status === "live" && "YouTube Live"}
                       {row.status !== "live" && row.now?.title && (
@@ -291,15 +296,13 @@ export default function GuidePage() {
                           <span className="text-gray-400">Now:</span>{" "}
                           <strong className="text-white">{row.now.title}</strong>
                           {" · "}
-                          <span className="text-gray-400">
-                            until {fmtTimeLocal(nowEnd)}
-                          </span>
+                          <span className="text-gray-400">until {fmtTimeLocal(nowEnd)}</span>
                         </>
                       )}
                       {row.status === "idle" && "Standby Programming"}
                     </div>
 
-                    {/* NEW: Next line even when Now exists */}
+                    {/* Next (within 24h) */}
                     {row.next?.title && (
                       <div className="mt-0.5 text-[11px] text-gray-400 truncate">
                         <span className="text-gray-500">Next:</span>{" "}
