@@ -13,9 +13,8 @@ import {
 import type { Program, Channel } from "@/types"
 import { ChevronLeft, Loader2 } from "lucide-react"
 
-const CH21_ID_NUMERIC = 21;
-/** Your 24/7 YouTube Channel ID for Channel 21 */
-const YT_CH21 = "UCMkW239dyAxDyOFDP0D6p2g";
+const CH21_ID_NUMERIC = 21
+const YT_CH21 = "UCMkW239dyAxDyOFDP0D6p2g" // << your YouTube channel ID
 
 export default function WatchPage() {
   const params = useParams()
@@ -29,7 +28,6 @@ export default function WatchPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [videoPlayerKey, setVideoPlayerKey] = useState(Date.now())
-  const [hlsStreamFailedForCh21, setHlsStreamFailedForCh21] = useState(false)
 
   useEffect(() => {
     if (!channelIdString) {
@@ -45,30 +43,16 @@ export default function WatchPage() {
     }
     setValidatedNumericChannelId(numericId)
     setError(null)
-    if (numericId !== CH21_ID_NUMERIC) setHlsStreamFailedForCh21(false)
 
     const loadChannelDetails = async () => {
       setIsLoading(true)
       const details = await fetchChannelDetails(channelIdString)
       setChannelDetails(details)
       if (!details) setError("Could not load channel details.")
+      setIsLoading(false)
     }
     loadChannelDetails()
   }, [channelIdString])
-
-  const getCh21StandbyMp4Program = useCallback(
-    (now: Date): Program => ({
-      id: STANDBY_PLACEHOLDER_ID,
-      title: "Channel 21 - Standby",
-      description: "Live stream currently unavailable. Standby programming will play.",
-      channel_id: CH21_ID_NUMERIC,
-      mp4_url: `channel${CH21_ID_NUMERIC}/standby_blacktruthtv.mp4`,
-      duration: 300,
-      start_time: now.toISOString(),
-      poster_url: null,
-    }),
-    []
-  )
 
   const fetchCurrentProgram = useCallback(
     async (numericChannelId: number) => {
@@ -95,20 +79,6 @@ export default function WatchPage() {
 
         if (activeProgram) {
           programToSet = { ...activeProgram, channel_id: numericChannelId }
-          if (numericChannelId === CH21_ID_NUMERIC) setHlsStreamFailedForCh21(false)
-        } else if (numericChannelId === CH21_ID_NUMERIC) {
-          programToSet = hlsStreamFailedForCh21
-            ? getCh21StandbyMp4Program(now)
-            : {
-                id: "live-ch21-hls",
-                title: "Live Broadcast (Channel 21)",
-                description: "Currently broadcasting live.",
-                channel_id: CH21_ID_NUMERIC,
-                mp4_url: `/api/cors-proxy?url=${encodeURIComponent(HLS_LIVE_STREAM_URL_CH21)}`,
-                duration: 86400 * 7,
-                start_time: new Date(Date.now() - 3600000).toISOString(),
-                poster_url: channelDetails?.image_url || null,
-              }
         } else {
           programToSet = {
             id: STANDBY_PLACEHOLDER_ID,
@@ -134,25 +104,21 @@ export default function WatchPage() {
         })
       } catch (e: any) {
         setError(e.message)
-        if (numericChannelId === CH21_ID_NUMERIC) {
-          setCurrentProgram(getCh21StandbyMp4Program(now))
-        } else {
-          setCurrentProgram({
-            id: STANDBY_PLACEHOLDER_ID,
-            title: "Standby Programming - Error",
-            description: "Error loading schedule. Standby content will play.",
-            channel_id: numericChannelId,
-            mp4_url: `channel${numericChannelId}/standby_blacktruthtv.mp4`,
-            duration: 300,
-            start_time: now.toISOString(),
-            poster_url: channelDetails?.image_url || null,
-          })
-        }
+        setCurrentProgram({
+          id: STANDBY_PLACEHOLDER_ID,
+          title: "Standby Programming - Error",
+          description: "Error loading schedule. Standby content will play.",
+          channel_id: numericChannelId,
+          mp4_url: `channel${numericChannelId}/standby_blacktruthtv.mp4`,
+          duration: 300,
+          start_time: new Date().toISOString(),
+          poster_url: channelDetails?.image_url || null,
+        })
       } finally {
         setIsLoading(false)
       }
     },
-    [hlsStreamFailedForCh21, getCh21StandbyMp4Program, channelDetails]
+    [channelDetails]
   )
 
   const fetchUpcomingPrograms = useCallback(async (numericChannelId: number) => {
@@ -175,43 +141,63 @@ export default function WatchPage() {
   useEffect(() => {
     let pollingInterval: NodeJS.Timeout | undefined
     if (validatedNumericChannelId !== null) {
-      fetchCurrentProgram(validatedNumericChannelId)
-      fetchUpcomingPrograms(validatedNumericChannelId)
-      pollingInterval = setInterval(() => {
-        if (document.visibilityState === "visible") {
-          fetchCurrentProgram(validatedNumericChannelId)
-          fetchUpcomingPrograms(validatedNumericChannelId)
-        }
-      }, 60000)
+      // For Channel 21 we embed YouTube; skip program polling
+      if (validatedNumericChannelId !== CH21_ID_NUMERIC) {
+        fetchCurrentProgram(validatedNumericChannelId)
+        fetchUpcomingPrograms(validatedNumericChannelId)
+        pollingInterval = setInterval(() => {
+          if (document.visibilityState === "visible") {
+            fetchCurrentProgram(validatedNumericChannelId)
+            fetchUpcomingPrograms(validatedNumericChannelId)
+          }
+        }, 60000)
+      } else {
+        // ensure loading spinner clears for CH21
+        setIsLoading(false)
+      }
     }
     return () => pollingInterval && clearInterval(pollingInterval)
   }, [validatedNumericChannelId, fetchCurrentProgram, fetchUpcomingPrograms])
 
-  const handlePrimaryLiveStreamError = useCallback(() => {
-    if (validatedNumericChannelId === CH21_ID_NUMERIC && !hlsStreamFailedForCh21) {
-      setHlsStreamFailedForCh21(true)
-      setCurrentProgram(getCh21StandbyMp4Program(new Date()))
-      setVideoPlayerKey(Date.now())
-    }
-  }, [validatedNumericChannelId, hlsStreamFailedForCh21, getCh21StandbyMp4Program])
-
   const videoSrc = currentProgram ? getVideoUrlForProgram(currentProgram) : undefined
   const posterSrc = currentProgram?.poster_url || channelDetails?.image_url || undefined
   const shouldLoopInPlayer = currentProgram?.id === STANDBY_PLACEHOLDER_ID
-  const isPrimaryHLS = currentProgram?.id === "live-ch21-hls"
-  const showNoLiveNoticeForCh21 =
-    validatedNumericChannelId === CH21_ID_NUMERIC &&
-    hlsStreamFailedForCh21 &&
-    currentProgram?.id === STANDBY_PLACEHOLDER_ID
 
   const handleProgramEnded = useCallback(() => {
-    if (validatedNumericChannelId !== null) {
+    if (
+      validatedNumericChannelId !== null &&
+      validatedNumericChannelId !== CH21_ID_NUMERIC
+    ) {
       fetchCurrentProgram(validatedNumericChannelId)
     }
   }, [validatedNumericChannelId, fetchCurrentProgram])
 
+  // ----- Render -----
+  const isCh21 = validatedNumericChannelId === CH21_ID_NUMERIC
   let content: ReactNode
-  if (error) {
+
+  if (isCh21) {
+    // YouTube Live embed for Channel 21
+    const ytUrl = `https://www.youtube.com/embed/live_stream?channel=${encodeURIComponent(
+      YT_CH21
+    )}&autoplay=1&mute=1&playsinline=1&rel=0&modestbranding=1`
+
+    content = isLoading ? (
+      <div className="flex flex-col items-center justify-center h-full">
+        <Loader2 className="h-10 w-10 animate-spin text-red-500 mb-2" />
+        <p>Loading Channel 21…</p>
+      </div>
+    ) : (
+      <iframe
+        title="YouTube Live (Channel 21)"
+        className="w-full h-full"
+        src={ytUrl}
+        allow="autoplay; encrypted-media; picture-in-picture"
+        allowFullScreen
+        referrerPolicy="origin-when-cross-origin"
+      />
+    )
+  } else if (error) {
     content = <p className="text-red-400 p-4 text-center">Error: {error}</p>
   } else if (isLoading && !currentProgram) {
     content = (
@@ -229,9 +215,6 @@ export default function WatchPage() {
         isStandby={shouldLoopInPlayer}
         programTitle={currentProgram?.title}
         onVideoEnded={handleProgramEnded}
-        isPrimaryLiveStream={isPrimaryHLS && validatedNumericChannelId === CH21_ID_NUMERIC}
-        onPrimaryLiveStreamError={handlePrimaryLiveStreamError}
-        showNoLiveNotice={showNoLiveNoticeForCh21}
       />
     )
   } else {
@@ -247,19 +230,19 @@ export default function WatchPage() {
         <h1 className="text-xl font-semibold truncate px-2">{channelDetails?.name || `Channel ${channelIdString}`}</h1>
         <div className="w-10 h-10" />
       </div>
+
       <div className="w-full aspect-video bg-black flex items-center justify-center">{content}</div>
+
       <div className="p-4 flex-grow">
-        {currentProgram && !isLoading && (
+        {validatedNumericChannelId !== CH21_ID_NUMERIC && currentProgram && !isLoading && (
           <>
             <h2 className="text-2xl font-bold">{currentProgram.title}</h2>
             <p className="text-sm text-gray-400">Channel: {channelDetails?.name || `Channel ${channelIdString}`}</p>
-            {currentProgram.id !== STANDBY_PLACEHOLDER_ID &&
-              currentProgram.id !== "live-ch21-hls" &&
-              currentProgram.start_time && (
-                <p className="text-sm text-gray-400">
-                  Scheduled Start: {new Date(currentProgram.start_time).toLocaleString()}
-                </p>
-              )}
+            {currentProgram.id !== STANDBY_PLACEHOLDER_ID && currentProgram.start_time && (
+              <p className="text-sm text-gray-400">
+                Scheduled Start: {new Date(currentProgram.start_time).toLocaleString()}
+              </p>
+            )}
             <p className="text-xs text-gray-300 mt-1">{currentProgram.description}</p>
 
             {upcomingPrograms.length > 0 && (
