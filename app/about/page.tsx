@@ -1,32 +1,39 @@
 // app/about/page.tsx
 import Link from "next/link";
+import type { Metadata } from "next";
 
-export const metadata = {
+export const metadata: Metadata = {
   title: "About | Black Truth TV",
   description:
     "Why Black Truth TV exists: a 24/7 home for truth, history, culture, independent voices, and community uplift.",
 };
 
 export default function AboutPage() {
+  // If you have a logo at /public/logo-bttv.svg, it will show.
+  // If not, the <img> is hidden by CSS (onError handler), and the heading shows as normal.
+  const logoSrc = "/logo-bttv.svg";
+
   return (
     <main className="min-h-screen bg-black text-white">
       {/* Hero */}
-      <section className="px-6 md:px-10 py-14 md:py-20 border-b border-white/10 bg-[radial-gradient(ellipse_at_top,rgba(239,68,68,0.18),rgba(0,0,0,0))]">
+      <section className="px-6 md:px-10 py-14 md:py-20 border-b border-white/10 bg-zinc-900/30">
         <div className="max-w-5xl">
-          {/* If you have a brand logo asset, point to it here */}
+          {/* Optional logo; hides itself if missing */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src="/logo-bttv.svg"
+            src={logoSrc}
             alt="Black Truth TV"
             className="h-14 md:h-16 mb-6 opacity-90"
+            onError={(e) => ((e.currentTarget.style.display = "none"))}
           />
+
           <h1 className="text-3xl md:text-5xl font-extrabold leading-tight tracking-tight">
             Black Truth TV
           </h1>
           <p className="mt-4 text-white/80 max-w-3xl text-base md:text-lg">
-            We created Black Truth TV to center our stories—unfiltered, unbought, and
-            uninterrupted. 24/7 programming dedicated to truth, culture, history, and
-            community uplift.
+            We created Black Truth TV to center our stories—unfiltered, unbought,
+            and uninterrupted. 24/7 programming dedicated to truth, culture, history,
+            and community uplift.
           </p>
 
           <div className="mt-7 flex flex-wrap gap-3">
@@ -52,9 +59,9 @@ export default function AboutPage() {
           <h2 className="text-2xl md:text-3xl font-bold">Our Mission</h2>
           <p className="mt-4 text-white/80 leading-relaxed">
             Black Truth TV exists to amplify Black truth—past, present, and future.
-            We curate documentaries, lectures, conversations, music, and live events that
-            inform, inspire, and empower. Our goal is simple: give people a place to learn,
-            connect, and grow with programming you can trust.
+            We curate documentaries, lectures, conversations, music, and live events
+            that inform, inspire, and empower. Our goal is simple: give people a
+            place to learn, connect, and grow with programming you can trust.
           </p>
         </div>
       </section>
@@ -67,20 +74,19 @@ export default function AboutPage() {
             <ul className="mt-4 space-y-3 text-white/80">
               <li>
                 <span className="text-white font-medium">Representation with depth:</span>{" "}
-                We center voices, histories, and perspectives that are too often minimized or
-                ignored.
+                we center voices, histories, and perspectives too often minimized or ignored.
               </li>
               <li>
                 <span className="text-white font-medium">Education that travels:</span>{" "}
-                From Freedom School content to classic archives, we make learning accessible 24/7.
+                from Freedom School content to classic archives, learning is accessible 24/7.
               </li>
               <li>
                 <span className="text-white font-medium">Community over clicks:</span>{" "}
-                We program with intention, not algorithms.
+                we program with intention, not algorithms.
               </li>
               <li>
                 <span className="text-white font-medium">Independent truth:</span>{" "}
-                Built to be resilient—our commitment is to truth, not trends.
+                built to be resilient—our commitment is to truth, not trends.
               </li>
             </ul>
           </div>
@@ -103,34 +109,34 @@ export default function AboutPage() {
       <section className="px-6 md:px-10 py-12 border-b border-white/10">
         <div className="max-w-5xl">
           <h2 className="text-2xl md:text-3xl font-bold">What We Offer</h2>
-          <div className="mt-6 grid md:grid-cols-3 gap-4">
-            <div className="rounded-xl border border-white/10 bg-zinc-950/60 p-5">
-              <div className="text-amber-300 text-xs font-bold tracking-wide uppercase mb-2">
-                24/7 Lineup
-              </div>
-              <p className="text-white/80">
-                Scheduled channels that run around the clock. When a slot is open, a
-                curated standby holds the space—so the stream never goes dark.
-              </p>
+        </div>
+        <div className="max-w-5xl mt-6 grid md:grid-cols-3 gap-4">
+          <div className="rounded-xl border border-white/10 bg-zinc-950/60 p-5">
+            <div className="text-amber-300 text-xs font-bold tracking-wide uppercase mb-2">
+              24/7 Lineup
             </div>
-            <div className="rounded-xl border border-white/10 bg-zinc-950/60 p-5">
-              <div className="text-amber-300 text-xs font-bold tracking-wide uppercase mb-2">
-                Independent Curation
-              </div>
-              <p className="text-white/80">
-                We choose for quality and impact, not virality. Our blocks are built to
-                teach, challenge, and heal.
-              </p>
+            <p className="text-white/80">
+              Scheduled channels that run around the clock. When a slot is open, a curated
+              standby holds the space—so the stream never goes dark.
+            </p>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-zinc-950/60 p-5">
+            <div className="text-amber-300 text-xs font-bold tracking-wide uppercase mb-2">
+              Independent Curation
             </div>
-            <div className="rounded-xl border border-white/10 bg-zinc-950/60 p-5">
-              <div className="text-amber-300 text-xs font-bold tracking-wide uppercase mb-2">
-                Community Focus
-              </div>
-              <p className="text-white/80">
-                From elders to young creators, we uplift voices across generations—and make
-                space for new ones.
-              </p>
+            <p className="text-white/80">
+              We choose for quality and impact, not virality. Blocks are built to teach,
+              challenge, and heal.
+            </p>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-zinc-950/60 p-5">
+            <div className="text-amber-300 text-xs font-bold tracking-wide uppercase mb-2">
+              Community Focus
             </div>
+            <p className="text-white/80">
+              From elders to young creators, we uplift voices across generations—and make
+              space for new ones.
+            </p>
           </div>
         </div>
       </section>
