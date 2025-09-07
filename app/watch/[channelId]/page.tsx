@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import VideoPlayer from "@/components/video-player";
 import {
   getCandidateUrlsForProgram,
@@ -17,11 +17,9 @@ type ProgramWithSrc = Program & { _resolved_src?: string };
 
 const CH21_ID_NUMERIC = 21;
 const YT_CH21 = "UCMkW239dyAxDyOFDP0D6p2g";
+const GRACE_MS = 120_000; // 2 minutes grace around start/end
 
-// Make timing forgiving to avoid flicker near boundaries
-const GRACE_MS = 120_000; // 2 minutes
-
-// --- Simple in-memory cache so we don't keep probing the same asset
+// --- In-memory cache so we don't keep probing the same asset
 // key = `${channel_id}|${mp4_url}|${start_time}`
 const urlProbeCache = new Map<string, string | null>();
 
@@ -57,20 +55,53 @@ function isActiveProgram(p: Program, nowMs: number): boolean {
   return (startMs - GRACE_MS) <= nowMs && nowMs < (endMs + GRACE_MS);
 }
 
-/** Try candidate video URLs and return the first that loads metadata */
-async function pickPlayableUrl(candidates: string[]): Promise<string | undefined> {
+/** Try candidate video URLs and return the first that loads metadata (with timeout & CORS). */
+async function pickPlayableUrl(candidates: string[], perUrlTimeoutMs = 4000): Promise<string | undefined> {
   for (const url of candidates) {
     // eslint-disable-next-line no-await-in-loop
     const ok = await new Promise<boolean>((resolve) => {
       const v = document.createElement("video");
-      // iOS autoplay friendliness
-      v.muted = true;
-      v.playsInline = true as any;
+      v.muted = true;                       // allow autoplay for metadata
+      (v as any).playsInline = true;
+      v.crossOrigin = "anonymous";          // avoid CORS metadata issues
       v.preload = "metadata";
-      v.onloadedmetadata = () => resolve(true);
-      v.onerror = () => resolve(false);
+
+      let settled = false;
+      const cleanup = () => {
+        v.onloadedmetadata = null;
+        v.onerror = null;
+        try { v.src = ""; v.load(); } catch {}
+      };
+
+      const to = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          cleanup();
+          resolve(false);
+        }
+      }, perUrlTimeoutMs);
+
+      v.onloadedmetadata = () => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(to);
+          cleanup();
+          resolve(true);
+        }
+      };
+      v.onerror = () => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(to);
+          cleanup();
+          resolve(false);
+        }
+      };
+
       v.src = url;
+      try { v.load(); } catch {}
     });
+
     if (ok) return url;
   }
   return undefined;
@@ -127,13 +158,18 @@ export default function WatchPage() {
     };
   }, [channelId]);
 
-  // Fetch current program (with candidate URL probing + cache + stickiness)
+  // Fetch current program (with probing + cache + stickiness)
   const fetchCurrentProgram = useCallback(
     async (numericChannelId: number) => {
-      try {
-        setIsResolvingSrc(true); // show resolving overlay instead of standby flicker
+      const nowMs = getNowMs();
 
-        const nowMs = getNowMs();
+      // EARLY RETURN: if still within current program window and we have a good URL, do nothing
+      if (currentProgram && isActiveProgram(currentProgram, nowMs) && currentProgram._resolved_src) {
+        return;
+      }
+
+      try {
+        setIsResolvingSrc(true); // show resolving overlay (prevents standby flicker)
 
         const { data, error: dbError } = await supabase
           .from("programs")
@@ -145,19 +181,6 @@ export default function WatchPage() {
 
         const rows = (data || []) as Program[];
         let active = rows.find((p) => isActiveProgram(p, nowMs));
-
-        // If you want even more tolerance, uncomment this near-window clause.
-        // if (!active) {
-        //   const NEAR_BEFORE_MS = 120_000; // 2m early start
-        //   const NEAR_AFTER_MS  = 300_000; // 5m late end
-        //   active = rows.find((p) => {
-        //     const s = parseUtcishMs(p.start_time);
-        //     const d = asSeconds(p.duration);
-        //     if (!Number.isFinite(s) || d <= 0) return false;
-        //     const e = s + d * 1000;
-        //     return (s - NEAR_BEFORE_MS) <= nowMs && nowMs < (e + NEAR_AFTER_MS);
-        //   });
-        // }
 
         // Choose program (active or standby)
         let programToSet: Program =
@@ -229,7 +252,7 @@ export default function WatchPage() {
         setIsResolvingSrc(false);
       }
     },
-    [channelDetails, getNowMs]
+    [channelDetails, getNowMs, currentProgram]
   );
 
   // Fetch next 6 upcoming for this channel
@@ -250,16 +273,16 @@ export default function WatchPage() {
     }
   }, []);
 
-  // Smarter polling: wake near expected end, otherwise every 60s
+  // Smarter polling: wake near expected end, otherwise every 60s; don't poll while probing
   useEffect(() => {
     if (channelId == null) return;
-    if (channelId === CH21_ID_NUMERIC) {
-      setIsLoading(false);
-      return;
-    }
+    if (channelId === CH21_ID_NUMERIC) { setIsLoading(false); return; }
+
     let timer: NodeJS.Timeout | null = null;
 
     const refetch = () => {
+      if (document.visibilityState !== "visible") return;
+      if (isResolvingSrc) return; // do not refetch while we're probing
       fetchCurrentProgram(channelId);
       fetchUpcoming(channelId);
     };
@@ -274,25 +297,17 @@ export default function WatchPage() {
         if (Number.isFinite(s) && d > 0) {
           const endMs = s + d * 1000;
           const wakeIn = Math.max(5_000, endMs - Date.now() - 5_000); // 5s before end
-          timer = setTimeout(() => {
-            refetch();
-            scheduleNext();
-          }, wakeIn);
+          timer = setTimeout(() => { refetch(); scheduleNext(); }, wakeIn);
           return;
         }
       }
       // no active program → poll in 60s
-      timer = setTimeout(() => {
-        refetch();
-        scheduleNext();
-      }, 60_000);
+      timer = setTimeout(() => { refetch(); scheduleNext(); }, 60_000);
     };
 
     scheduleNext();
-    return () => {
-      if (timer) clearTimeout(timer);
-    };
-  }, [channelId, currentProgram, fetchCurrentProgram, fetchUpcoming]);
+    return () => { if (timer) clearTimeout(timer); };
+  }, [channelId, currentProgram, fetchCurrentProgram, fetchUpcoming, isResolvingSrc]);
 
   // Player & render
   const videoSrc = currentProgram?._resolved_src; // <- use the probed, cached URL
@@ -341,15 +356,8 @@ export default function WatchPage() {
         <p>Loading Channel…</p>
       </div>
     );
-  } else if (isResolvingSrc) {
-    // while we probe candidates, show a neutral loader (prevents standby flash)
-    content = (
-      <div className="flex flex-col items-center justify-center h-full">
-        <Loader2 className="h-10 w-10 animate-spin text-red-500 mb-2" />
-        <p>Preparing stream…</p>
-      </div>
-    );
   } else if (currentProgram && videoSrc) {
+    // Show the player if we have a URL (even if a background probe is still resolving)
     content = (
       <VideoPlayer
         key={videoPlayerKey}
@@ -359,6 +367,14 @@ export default function WatchPage() {
         programTitle={currentProgram?.title}
         onVideoEnded={handleEnded}
       />
+    );
+  } else if (isResolvingSrc) {
+    // Only show spinner if we don't yet have any playable URL
+    content = (
+      <div className="flex flex-col items-center justify-center h-full">
+        <Loader2 className="h-10 w-10 animate-spin text-red-500 mb-2" />
+        <p>Preparing stream…</p>
+      </div>
     );
   } else {
     content = <p className="text-gray-400 p-4 text-center">Initializing channel…</p>;
