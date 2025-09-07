@@ -23,6 +23,42 @@ const GRACE_MS = 120_000; // 2 minutes grace around start/end
 // key = `${channel_id}|${mp4_url}|${start_time}`
 const urlProbeCache = new Map<string, string | null>();
 
+/* ---------------- UI overlays (pure UI; safe to add) ---------------- */
+const LoadingOverlay = ({
+  visible,
+  label = "Preparing stream…",
+}: {
+  visible: boolean;
+  label?: string;
+}) => {
+  if (!visible) return null;
+  return (
+    <div
+      className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[1px] pointer-events-none select-none"
+      aria-live="polite"
+      role="status"
+    >
+      <div className="flex items-center gap-3 px-4 py-2 rounded-full bg-black/60">
+        <svg className="h-5 w-5 animate-spin" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" opacity=".25"/>
+          <path d="M22 12a10 10 0 0 1-10 10" fill="none" stroke="currentColor" strokeWidth="4"/>
+        </svg>
+        <span className="text-sm">{label}</span>
+      </div>
+    </div>
+  );
+};
+
+const MobileHint = ({ show }: { show: boolean }) => {
+  if (!show) return null;
+  return (
+    <div className="absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-black/60 text-xs pointer-events-none">
+      Tap for sound if muted
+    </div>
+  );
+};
+/* ------------------------------------------------------------------- */
+
 /* ---------- Time & duration helpers ---------- */
 function asSeconds(v: unknown): number {
   if (v == null) return 0;
@@ -434,9 +470,14 @@ export default function WatchPage() {
         <div className="w-10 h-10" />
       </div>
 
-      {/* Video area */}
-      <div className="w-full aspect-video bg-black flex items-center justify-center">
+      {/* Video area + subtle overlays */}
+      <div className="relative w-full aspect-video bg-black flex items-center justify-center">
         {content}
+        <LoadingOverlay
+          visible={Boolean((isLoading && !currentProgram) || isResolvingSrc)}
+          label={isLoading && !currentProgram ? "Loading channel…" : "Preparing stream…"}
+        />
+        <MobileHint show={!isResolvingSrc && Boolean(currentProgram?._resolved_src)} />
       </div>
 
       {/* Below the player */}
