@@ -9,22 +9,17 @@ export const metadata: Metadata = {
 };
 
 export default function AboutPage() {
-  // If you have a logo at /public/logo-bttv.svg, it will show.
-  // If not, the <img> is hidden by CSS (onError handler), and the heading shows as normal.
-  const logoSrc = "/logo-bttv.svg";
-
   return (
     <main className="min-h-screen bg-black text-white">
       {/* Hero */}
       <section className="px-6 md:px-10 py-14 md:py-20 border-b border-white/10 bg-zinc-900/30">
         <div className="max-w-5xl">
-          {/* Optional logo; hides itself if missing */}
+          {/* Delete this <img> if you don't have /public/logo-bttv.svg */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={logoSrc}
+            src="/logo-bttv.svg"
             alt="Black Truth TV"
             className="h-14 md:h-16 mb-6 opacity-90"
-            onError={(e) => ((e.currentTarget.style.display = "none"))}
           />
 
           <h1 className="text-3xl md:text-5xl font-extrabold leading-tight tracking-tight">
@@ -188,6 +183,8 @@ export default function AboutPage() {
       <section className="px-6 md:px-10 py-12">
         <div className="max-w-5xl">
           <h2 className="text-2xl md:text-3xl font-bold">Get Involved</h2>
+        </div>
+        <div className="max-w-5xl">
           <p className="mt-4 text-white/80">
             Questions, licensing, or content submissions? We’d love to hear from you.
           </p>
