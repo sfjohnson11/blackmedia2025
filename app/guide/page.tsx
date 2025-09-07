@@ -1,19 +1,8 @@
 // app/guide/page.tsx
+"use client";
+
 import Link from "next/link";
-import dynamic from "next/dynamic";
-
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
-
-// Client-only grid to avoid any server rendering hiccups
-const TVGuideGrid = dynamic(() => import("@/components/TVGuideGrid"), {
-  ssr: false,
-  loading: () => (
-    <div className="h-48 grid place-items-center text-white/70">
-      Loading guide…
-    </div>
-  ),
-});
+import TVGuideGrid from "@/components/TVGuideGrid";
 
 export default function GuidePage() {
   return (
@@ -25,6 +14,7 @@ export default function GuidePage() {
           </Link>
         </div>
 
+        {/* Client-only grid; it handles its own loading/diag states */}
         <TVGuideGrid lookBackHours={6} lookAheadHours={6} />
       </main>
     </div>
