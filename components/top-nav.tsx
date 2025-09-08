@@ -42,17 +42,25 @@ export default function TopNav({
             </div>
           </Link>
 
+          {/* Desktop Nav */}
           <nav className="hidden md:flex items-center gap-6 text-sm">
             <Link href="/" className="hover:text-white/90 text-white/70">Home</Link>
             <Link href="/guide" className="hover:text-white/90 text-white/70">Guide</Link>
             <Link href="/channels" className="hover:text-white/90 text-white/70">Channels</Link>
+            <Link href="/freedom-school" className="hover:text-emerald-300 text-emerald-400 font-semibold">
+              Freedom School
+            </Link>
             <Link href="/about" className="hover:text-white/90 text-white/70">About</Link>
             <Link href="/contact" className="hover:text-white/90 text-white/70">Contact</Link>
-            <Link href="/donate" className="hover:text-black bg-amber-300 text-black px-3 py-1 rounded-full font-semibold">
+            <Link
+              href="/donate"
+              className="hover:text-black bg-amber-300 text-black px-3 py-1 rounded-full font-semibold"
+            >
               Donate
             </Link>
           </nav>
 
+          {/* Mobile menu toggle */}
           <button
             className="md:hidden inline-flex items-center justify-center h-9 w-9 rounded-md ring-1 ring-white/20 text-white/80"
             onClick={() => setOpen((v) => !v)}
@@ -62,15 +70,27 @@ export default function TopNav({
           </button>
         </div>
 
+        {/* Mobile Nav */}
         {open && (
           <div className="md:hidden pb-3">
             <nav className="grid gap-2 text-sm">
               <Link onClick={() => setOpen(false)} href="/" className="px-1 py-1.5 text-white/80 hover:text-white">Home</Link>
               <Link onClick={() => setOpen(false)} href="/guide" className="px-1 py-1.5 text-white/80 hover:text-white">Guide</Link>
               <Link onClick={() => setOpen(false)} href="/channels" className="px-1 py-1.5 text-white/80 hover:text-white">Channels</Link>
+              <Link
+                onClick={() => setOpen(false)}
+                href="/freedom-school"
+                className="px-1 py-1.5 text-emerald-400 hover:text-emerald-300 font-semibold"
+              >
+                Freedom School
+              </Link>
               <Link onClick={() => setOpen(false)} href="/about" className="px-1 py-1.5 text-white/80 hover:text-white">About</Link>
               <Link onClick={() => setOpen(false)} href="/contact" className="px-1 py-1.5 text-white/80 hover:text-white">Contact</Link>
-              <Link onClick={() => setOpen(false)} href="/donate" className="mt-1 inline-flex w-max items-center rounded-full bg-amber-300 px-3 py-1 text-black font-semibold">
+              <Link
+                onClick={() => setOpen(false)}
+                href="/donate"
+                className="mt-1 inline-flex w-max items-center rounded-full bg-amber-300 px-3 py-1 text-black font-semibold"
+              >
                 Donate
               </Link>
             </nav>
