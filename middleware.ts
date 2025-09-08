@@ -9,34 +9,8 @@ export async function middleware(req: NextRequest) {
   const res = NextResponse.next();
   const { pathname } = req.nextUrl;
 
-  const supabase = createMiddlewareClient({ req, res });
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-
-  // ---- Gate /freedom-school to students/admins
+  // ✅ Freedom School is PUBLIC now — no gate
   if (pathname === "/freedom-school") {
-    if (!session) {
-      const loginUrl = req.nextUrl.clone();
-      loginUrl.pathname = "/auth/login";
-      loginUrl.searchParams.set("redirect_to", pathname);
-      return NextResponse.redirect(loginUrl);
-    }
-
-    // NOTE: use id (NOT user_id)
-    const { data: profile } = await supabase
-      .from("user_profiles")
-      .select("role")
-      .eq("id", session.user.id)
-      .maybeSingle();
-
-    const role = profile?.role ?? null;
-    if (!role || !["student", "admin"].includes(role)) {
-      const deny = req.nextUrl.clone();
-      deny.pathname = "/";
-      deny.searchParams.set("error", "fs_access_denied");
-      return NextResponse.redirect(deny);
-    }
     return res;
   }
 
@@ -44,6 +18,11 @@ export async function middleware(req: NextRequest) {
   if (!pathname.startsWith("/watch/")) return res;
 
   // Require login for any /watch/*
+  const supabase = createMiddlewareClient({ req, res });
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
   if (!session) {
     const loginUrl = req.nextUrl.clone();
     loginUrl.pathname = "/auth/login";
@@ -70,5 +49,5 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/watch/:path*", "/freedom-school"],
+  matcher: ["/watch/:path*", "/freedom-school"], // keep matching, but it's public
 };
