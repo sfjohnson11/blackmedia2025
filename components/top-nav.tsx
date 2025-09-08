@@ -1,8 +1,9 @@
+// components/top-nav.tsx
 "use client";
 
 import Link from "next/link";
 import { useState, useMemo } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
 const BRAND_NAME = "Black Truth TV";
 const BRAND_LOGO_URL =
@@ -17,6 +18,7 @@ export default function TopNav({
 }) {
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
+  const router = useRouter();
   const finalLogo = (logoSrc && logoSrc.trim()) || BRAND_LOGO_URL;
 
   const isActive = useMemo(
@@ -27,12 +29,22 @@ export default function TopNav({
     [pathname]
   );
 
-  const baseLink =
-    "text-sm transition-colors";
-  const dim =
-    "text-white/70 hover:text-white/90";
-  const highlight =
-    "text-emerald-400 hover:text-emerald-300 font-semibold";
+  // Robust navigator for Freedom School
+  const goFreedomSchool = async (e?: React.MouseEvent) => {
+    if (e) e.preventDefault();
+    // try canonical, then common variants
+    const attempts = ["/freedom-school", "/freedom_school", "/freedomschool"];
+    for (const path of attempts) {
+      try {
+        await router.push(path);
+        return;
+      } catch {
+        // keep trying
+      }
+    }
+    // absolute fallback (forces hard nav)
+    window.location.href = "/freedom-school";
+  };
 
   return (
     <header className="sticky top-0 z-50 bg-black/70 backdrop-blur border-b border-white/10">
@@ -62,31 +74,35 @@ export default function TopNav({
           </Link>
 
           {/* Desktop Nav */}
-          <nav className="hidden md:flex items-center gap-6">
-            <Link href="/" className={`${baseLink} ${isActive("/") ? "text-white" : dim}`}>
+          <nav className="hidden md:flex items-center gap-6 text-sm">
+            <Link href="/" className={`${isActive("/") ? "text-white" : "text-white/70 hover:text-white/90"}`}>
               Home
             </Link>
-            <Link href="/guide" className={`${baseLink} ${isActive("/guide") ? "text-white" : dim}`}>
+            <Link href="/guide" className={`${isActive("/guide") ? "text-white" : "text-white/70 hover:text-white/90"}`}>
               Guide
             </Link>
-            <Link href="/channels" className={`${baseLink} ${isActive("/channels") ? "text-white" : dim}`}>
+            <Link href="/channels" className={`${isActive("/channels") ? "text-white" : "text-white/70 hover:text-white/90"}`}>
               Channels
             </Link>
+
+            {/* Freedom School — robust navigation */}
             <Link
               href="/freedom-school"
-              className={`${baseLink} ${isActive("/freedom-school") ? highlight : "text-emerald-400 hover:text-emerald-300 font-semibold"}`}
+              onClick={goFreedomSchool}
+              className={`${isActive("/freedom-school") ? "text-emerald-300 font-semibold" : "text-emerald-400 hover:text-emerald-300 font-semibold"}`}
             >
               Freedom School
             </Link>
-            <Link href="/about" className={`${baseLink} ${isActive("/about") ? "text-white" : dim}`}>
+
+            <Link href="/about" className={`${isActive("/about") ? "text-white" : "text-white/70 hover:text-white/90"}`}>
               About
             </Link>
-            <Link href="/contact" className={`${baseLink} ${isActive("/contact") ? "text-white" : dim}`}>
+            <Link href="/contact" className={`${isActive("/contact") ? "text-white" : "text-white/70 hover:text-white/90"}`}>
               Contact
             </Link>
             <Link
               href="/donate"
-              className="text-sm hover:text-black bg-amber-300 text-black px-3 py-1 rounded-full font-semibold"
+              className="hover:text-black bg-amber-300 text-black px-3 py-1 rounded-full font-semibold"
             >
               Donate
             </Link>
@@ -106,46 +122,29 @@ export default function TopNav({
         {open && (
           <div className="md:hidden pb-3">
             <nav className="grid gap-2 text-sm">
-              <Link
-                onClick={() => setOpen(false)}
-                href="/"
-                className={`px-1 py-1.5 ${isActive("/") ? "text-white" : "text-white/80 hover:text-white"}`}
-              >
+              <Link onClick={() => setOpen(false)} href="/" className={`px-1 py-1.5 ${isActive("/") ? "text-white" : "text-white/80 hover:text-white"}`}>
                 Home
               </Link>
-              <Link
-                onClick={() => setOpen(false)}
-                href="/guide"
-                className={`px-1 py-1.5 ${isActive("/guide") ? "text-white" : "text-white/80 hover:text-white"}`}
-              >
+              <Link onClick={() => setOpen(false)} href="/guide" className={`px-1 py-1.5 ${isActive("/guide") ? "text-white" : "text-white/80 hover:text-white"}`}>
                 Guide
               </Link>
-              <Link
-                onClick={() => setOpen(false)}
-                href="/channels"
-                className={`px-1 py-1.5 ${isActive("/channels") ? "text-white" : "text-white/80 hover:text-white"}`}
-              >
+              <Link onClick={() => setOpen(false)} href="/channels" className={`px-1 py-1.5 ${isActive("/channels") ? "text-white" : "text-white/80 hover:text-white"}`}>
                 Channels
               </Link>
               <Link
-                onClick={() => setOpen(false)}
                 href="/freedom-school"
+                onClick={(e) => {
+                  goFreedomSchool(e);
+                  setOpen(false);
+                }}
                 className={`px-1 py-1.5 ${isActive("/freedom-school") ? "text-emerald-300 font-semibold" : "text-emerald-400 hover:text-emerald-300 font-semibold"}`}
               >
                 Freedom School
               </Link>
-              <Link
-                onClick={() => setOpen(false)}
-                href="/about"
-                className={`px-1 py-1.5 ${isActive("/about") ? "text-white" : "text-white/80 hover:text-white"}`}
-              >
+              <Link onClick={() => setOpen(false)} href="/about" className={`px-1 py-1.5 ${isActive("/about") ? "text-white" : "text-white/80 hover:text-white"}`}>
                 About
               </Link>
-              <Link
-                onClick={() => setOpen(false)}
-                href="/contact"
-                className={`px-1 py-1.5 ${isActive("/contact") ? "text-white" : "text-white/80 hover:text-white"}`}
-              >
+              <Link onClick={() => setOpen(false)} href="/contact" className={`px-1 py-1.5 ${isActive("/contact") ? "text-white" : "text-white/80 hover:text-white"}`}>
                 Contact
               </Link>
               <Link
