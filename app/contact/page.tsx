@@ -53,7 +53,7 @@ export default function ContactPage() {
     email: "",
     subject: "" as SubjectKey | "",
     message: "",
-    honeypot: "", // anti-bot field (hidden)
+    honeypot: "", // hidden anti-bot
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
@@ -80,30 +80,40 @@ export default function ContactPage() {
     setFormState((prev) => ({ ...prev, [name]: value }));
   }
 
-  function handleSubmit(e: React.FormEvent) {
+  // ✅ NEW: post to /api/contact (saves to Supabase + sends email)
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-
-    // simple guard
-    if (!formState.email || !formState.message || !formState.subject) return;
-
-    // honeypot: if bots fill this, just no-op
-    if (formState.honeypot.trim()) return;
-
     setIsSubmitting(true);
-    // open default email client
-    window.location.href = mailtoHref;
+    setIsSubmitted(false);
 
-    setTimeout(() => {
-      setIsSubmitting(false);
-      setIsSubmitted(true);
-      setFormState({
-        name: "",
-        email: "",
-        subject: "",
-        message: "",
-        honeypot: "",
+    try {
+      const res = await fetch("/api/contact", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: formState.name,
+          email: formState.email,
+          subject: subjectLabel(formState.subject || "general"),
+          message: formState.message,
+          honeypot: formState.honeypot || "",
+        }),
       });
-    }, 600);
+
+      const json = await res.json();
+      if (!res.ok || !json?.ok) {
+        throw new Error(json?.error || "Failed to send");
+      }
+
+      setIsSubmitted(true);
+      setFormState({ name: "", email: "", subject: "", message: "", honeypot: "" });
+    } catch (err: any) {
+      // Optional fallback: open mail client if API fails
+      if (confirm("Could not send via server. Open your email app instead?")) {
+        window.location.href = mailtoHref;
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   return (
@@ -221,10 +231,9 @@ export default function ContactPage() {
                   <div className="rounded-full bg-green-900/30 p-4 ring-1 ring-white/10 mb-3">
                     <CheckCircle2 className="h-10 w-10 text-green-400" />
                   </div>
-                  <h2 className="text-2xl font-bold">Message Ready to Send</h2>
+                  <h2 className="text-2xl font-bold">Message Sent</h2>
                   <p className="text-white/70 mt-2 max-w-md">
-                    We opened your email app with your message pre-filled to{" "}
-                    <span className="font-semibold">{CONTACT_EMAIL}</span>.
+                    Thanks—we’ll reply from <span className="font-semibold">{CONTACT_EMAIL}</span>.
                   </p>
                   <Button
                     onClick={() => setIsSubmitted(false)}
@@ -334,7 +343,7 @@ export default function ContactPage() {
                       {isSubmitting ? (
                         <>
                           <span className="mr-2 inline-block h-4 w-4 animate-spin rounded-full border-2 border-black/60 border-t-black" />
-                          Preparing…
+                          Sending…
                         </>
                       ) : (
                         <>
