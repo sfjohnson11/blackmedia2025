@@ -3,21 +3,51 @@ import { NextRequest, NextResponse } from "next/server";
 import { createMiddlewareClient } from "@supabase/auth-helpers-nextjs";
 import { PROTECTED_CHANNELS } from "./lib/protected-channels";
 
+// ───────────────── Canonical Host Enforcement ─────────────────
+// Set your production domains here. Example:
+//   PRIMARY_HOST = "blackmedia2025.vercel.app"
+//   CUSTOM_DOMAIN = "blacktruthtv.com" (if you have one)
+const PRIMARY_HOST = "PRIMARY_HOST_HERE";          // ← REPLACE ME (required)
+const CUSTOM_DOMAIN = "CUSTOM_DOMAIN_HERE";        // ← optional; leave "" if none
+
+// If you use preview deployments and want to allow them, set to true:
+const ALLOW_VERCEL_PREVIEWS = true;
+
+// ───────────────── App Guards ─────────────────
 const COOKIE_PREFIX = "channel_unlocked_";
 
 export async function middleware(req: NextRequest) {
-  const res = NextResponse.next();
   const { pathname } = req.nextUrl;
 
-  // ✅ Freedom School is PUBLIC now — no gate
-  if (pathname === "/freedom-school") {
-    return res;
+  // 1) Canonical host redirect (prod only)
+  //    This runs before any auth logic.
+  if (process.env.NODE_ENV === "production") {
+    const host = req.headers.get("host") || "";
+    const isPrimary = host === PRIMARY_HOST;
+    const isCustom = CUSTOM_DOMAIN && host === CUSTOM_DOMAIN;
+
+    // (Optional) allow Vercel preview subdomains for this project
+    const isVercelPreview = ALLOW_VERCEL_PREVIEWS && /\.vercel\.app$/i.test(host);
+
+    if (!isPrimary && !isCustom && !isVercelPreview) {
+      const url = new URL(req.url);
+      url.host = PRIMARY_HOST; // always redirect to your primary domain
+      return NextResponse.redirect(url, 308);
+    }
   }
 
-  // ---- Only guard /watch/*
-  if (!pathname.startsWith("/watch/")) return res;
+  // 2) Freedom School is PUBLIC (Option A)
+  if (pathname === "/freedom-school") {
+    return NextResponse.next();
+  }
 
-  // Require login for any /watch/*
+  // 3) Only guard /watch/*
+  if (!pathname.startsWith("/watch/")) {
+    return NextResponse.next();
+  }
+
+  // 4) Require login for any /watch/*
+  const res = NextResponse.next(); // pass a response to supabase helper
   const supabase = createMiddlewareClient({ req, res });
   const {
     data: { session },
@@ -30,7 +60,7 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  // Extra passcode for protected channels (23–29)
+  // 5) Extra passcode for protected channels (23–29)
   const idStr = pathname.split("/")[2] ?? "";
   const id = Number.parseInt(idStr, 10);
 
@@ -45,9 +75,14 @@ export async function middleware(req: NextRequest) {
     }
   }
 
+  // 6) Allow request through
   return res;
 }
 
+// We run middleware on (almost) everything so the canonical redirect works,
+// but we skip Next.js internals and common static files.
 export const config = {
-  matcher: ["/watch/:path*", "/freedom-school"], // keep matching, but it's public
+  matcher: [
+    "/((?!_next/|.*\\.(?:ico|png|jpg|jpeg|svg|gif|webp|mp4|txt|xml)|favicon.ico|robots.txt|sitemap.xml).*)",
+  ],
 };
