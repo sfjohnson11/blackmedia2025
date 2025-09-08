@@ -3,7 +3,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
 const BRAND_NAME = "Black Truth TV";
 const BRAND_LOGO_URL =
@@ -18,6 +18,7 @@ export default function TopNav({
 }) {
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
+  const router = useRouter();
   const finalLogo = (logoSrc && logoSrc.trim()) || BRAND_LOGO_URL;
 
   const isActive = useMemo(
@@ -32,6 +33,22 @@ export default function TopNav({
   const active = "text-white";
   const freedom = "text-emerald-400 hover:text-emerald-300 font-semibold";
   const freedomActive = "text-emerald-300 font-semibold";
+
+  // --- Make sure Freedom School nav stays on the SAME ORIGIN ---
+  function goFreedomSameOrigin(e?: React.MouseEvent) {
+    if (e) e.preventDefault();
+    const base =
+      typeof window !== "undefined" ? window.location.origin : "";
+    const target = `${base}/freedom-school`;
+
+    // Try SPA client navigation first…
+    try {
+      router.push("/freedom-school");
+    } finally {
+      // …then hard-navigate as a fallback to guarantee same-origin
+      window.location.href = target;
+    }
+  }
 
   return (
     <header className="sticky top-0 z-50 bg-black/70 backdrop-blur border-b border-white/10">
@@ -54,24 +71,43 @@ export default function TopNav({
                 {BRAND_NAME}
               </div>
               {channelName ? (
-                <div className="text-[10px] sm:text-xs text-white/70">{channelName}</div>
+                <div className="text-[10px] sm:text-xs text-white/70">
+                  {channelName}
+                </div>
               ) : null}
             </div>
           </Link>
 
           {/* Desktop nav */}
           <nav className="hidden md:flex items-center gap-6 text-sm">
-            <Link href="/" className={isActive("/") ? active : dim}>Home</Link>
-            <Link href="/guide" className={isActive("/guide") ? active : dim}>Guide</Link>
-            <Link href="/channels" className={isActive("/channels") ? active : dim}>Channels</Link>
+            <Link href="/" className={isActive("/") ? active : dim}>
+              Home
+            </Link>
+            <Link href="/guide" className={isActive("/guide") ? active : dim}>
+              Guide
+            </Link>
             <Link
+              href="/channels"
+              className={isActive("/channels") ? active : dim}
+            >
+              Channels
+            </Link>
+
+            {/* Freedom School — hardened same-origin nav */}
+            <a
               href="/freedom-school"
+              onClick={goFreedomSameOrigin}
               className={isActive("/freedom-school") ? freedomActive : freedom}
             >
               Freedom School
+            </a>
+
+            <Link href="/about" className={isActive("/about") ? active : dim}>
+              About
             </Link>
-            <Link href="/about" className={isActive("/about") ? active : dim}>About</Link>
-            <Link href="/contact" className={isActive("/contact") ? active : dim}>Contact</Link>
+            <Link href="/contact" className={isActive("/contact") ? active : dim}>
+              Contact
+            </Link>
             <Link
               href="/donate"
               className="hover:text-black bg-amber-300 text-black px-3 py-1 rounded-full font-semibold"
@@ -94,18 +130,70 @@ export default function TopNav({
         {open && (
           <div className="md:hidden pb-3">
             <nav className="grid gap-2 text-sm">
-              <Link onClick={() => setOpen(false)} href="/" className={`px-1 py-1.5 ${isActive("/") ? active : "text-white/80 hover:text-white"}`}>Home</Link>
-              <Link onClick={() => setOpen(false)} href="/guide" className={`px-1 py-1.5 ${isActive("/guide") ? active : "text-white/80 hover:text-white"}`}>Guide</Link>
-              <Link onClick={() => setOpen(false)} href="/channels" className={`px-1 py-1.5 ${isActive("/channels") ? active : "text-white/80 hover:text-white"}`}>Channels</Link>
               <Link
                 onClick={() => setOpen(false)}
+                href="/"
+                className={`px-1 py-1.5 ${
+                  isActive("/") ? active : "text-white/80 hover:text-white"
+                }`}
+              >
+                Home
+              </Link>
+              <Link
+                onClick={() => setOpen(false)}
+                href="/guide"
+                className={`px-1 py-1.5 ${
+                  isActive("/guide") ? active : "text-white/80 hover:text-white"
+                }`}
+              >
+                Guide
+              </Link>
+              <Link
+                onClick={() => setOpen(false)}
+                href="/channels"
+                className={`px-1 py-1.5 ${
+                  isActive("/channels")
+                    ? active
+                    : "text-white/80 hover:text-white"
+                }`}
+              >
+                Channels
+              </Link>
+
+              {/* Freedom School — same-origin */}
+              <a
                 href="/freedom-school"
-                className={`px-1 py-1.5 ${isActive("/freedom-school") ? freedomActive : freedom}`}
+                onClick={(e) => {
+                  goFreedomSameOrigin(e);
+                  setOpen(false);
+                }}
+                className={`px-1 py-1.5 ${
+                  isActive("/freedom-school") ? freedomActive : freedom
+                }`}
               >
                 Freedom School
+              </a>
+
+              <Link
+                onClick={() => setOpen(false)}
+                href="/about"
+                className={`px-1 py-1.5 ${
+                  isActive("/about") ? active : "text-white/80 hover:text-white"
+                }`}
+              >
+                About
               </Link>
-              <Link onClick={() => setOpen(false)} href="/about" className={`px-1 py-1.5 ${isActive("/about") ? active : "text-white/80 hover:text-white"}`}>About</Link>
-              <Link onClick={() => setOpen(false)} href="/contact" className={`px-1 py-1.5 ${isActive("/contact") ? active : "text-white/80 hover:text-white"}`}>Contact</Link>
+              <Link
+                onClick={() => setOpen(false)}
+                href="/contact"
+                className={`px-1 py-1.5 ${
+                  isActive("/contact")
+                    ? active
+                    : "text-white/80 hover:text-white"
+                }`}
+              >
+                Contact
+              </Link>
               <Link
                 onClick={() => setOpen(false)}
                 href="/donate"
