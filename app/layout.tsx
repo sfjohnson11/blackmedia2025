@@ -1,21 +1,22 @@
 // app/layout.tsx
 import "./globals.css";
+import type { Metadata } from "next";
 import TopNav from "@/components/top-nav";
-import SupabaseProvider from "@/components/SupabaseProvider";
 
-export const metadata = {
+export const metadata: Metadata = {
   title: "Black Truth TV",
-  description: "Multi-channel streaming network.",
+  description:
+    "24/7 programming dedicated to truth, culture, history, and community uplift.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className="bg-black">
-      <body className="min-h-screen bg-black text-white">
-        <SupabaseProvider>
-          <TopNav />
-          {children}
-        </SupabaseProvider>
+    <html lang="en">
+      <body className="bg-black text-white">
+        {/* ✅ Nav appears exactly once on every page */}
+        <TopNav />
+        {/* Page content */}
+        {children}
       </body>
     </html>
   );
