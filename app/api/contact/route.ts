@@ -2,10 +2,9 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
-import { Resend } from "resend";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
 const CONTACT_TO = process.env.CONTACT_TO || "director@sfjfamilyservices.org";
+const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
 
 // Helper: normalize/guard inputs
 function sanitize(s?: string) {
@@ -17,9 +16,7 @@ export async function POST(req: Request) {
     const { name, email, subject, message, honeypot } = await req.json();
 
     // Basic anti-bot: if honeypot has content, pretend success.
-    if (honeypot) {
-      return NextResponse.json({ ok: true });
-    }
+    if (honeypot) return NextResponse.json({ ok: true });
 
     const _name = sanitize(name);
     const _email = sanitize(email);
@@ -33,7 +30,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // 1) Save to Supabase (server-side client)
+    // 1) Save to Supabase
     const supabase = createRouteHandlerClient({ cookies });
     const { error: insertErr } = await supabase
       .from("contact_messages")
@@ -44,25 +41,37 @@ export async function POST(req: Request) {
       console.error("contact_messages insert error:", insertErr);
     }
 
-    // 2) Send email via Resend
-    const subj = `[Black Truth TV] ${_subject} — ${_name || "Viewer"}`;
-    const text = [`From: ${_name || "Viewer"} <${_email}>`, "", _message].join("\n");
+    // 2) Send email via Resend HTTP API (no SDK)
+    if (!RESEND_API_KEY) {
+      console.warn("RESEND_API_KEY missing; skipping email send.");
+    } else {
+      const subj = `[Black Truth TV] ${_subject} — ${_name || "Viewer"}`;
+      const text = [`From: ${_name || "Viewer"} <${_email}>`, "", _message].join("\n");
 
-    const { error: emailErr } = await resend.emails.send({
-      // Use Resend's default sender while you set up a verified domain:
-      from: "Black Truth TV <onboarding@resend.dev>",
-      to: CONTACT_TO,
-      reply_to: _email,
-      subject: subj,
-      text,
-    });
+      const res = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${RESEND_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          // Use Resend’s onboarding sender until your domain is verified
+          from: "Black Truth TV <onboarding@resend.dev>",
+          to: CONTACT_TO,
+          subject: subj,
+          text,
+          reply_to: _email,
+        }),
+      });
 
-    if (emailErr) {
-      console.error("Resend send error:", emailErr);
-      return NextResponse.json(
-        { ok: false, error: "Email failed to send" },
-        { status: 500 }
-      );
+      if (!res.ok) {
+        const errText = await res.text().catch(() => "");
+        console.error("Resend HTTP error:", res.status, errText);
+        return NextResponse.json(
+          { ok: false, error: "Email failed to send" },
+          { status: 500 }
+        );
+      }
     }
 
     return NextResponse.json({ ok: true });
