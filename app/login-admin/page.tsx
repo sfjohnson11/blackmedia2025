@@ -2,13 +2,14 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { AlertCircle, Lock } from "lucide-react";
 
+export const dynamic = "force-dynamic";
+
 export default function AdminLoginPage() {
   const router = useRouter();
-  const params = useSearchParams();
   const supabase = createClientComponentClient();
 
   const [email, setEmail] = useState("");
@@ -21,22 +22,20 @@ export default function AdminLoginPage() {
     setErr("");
     setLoading(true);
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-
+    // 1) Sign in with Supabase
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
       setErr(error.message);
       setLoading(false);
       return;
     }
 
-    // Optional: double-check role on the client (server layout enforces it anyway)
+    // 2) Optional: confirm this user is an admin
+    const { data: authUser } = await supabase.auth.getUser();
     const { data: profile, error: pErr } = await supabase
       .from("user_profiles")
       .select("role")
-      .eq("id", (await supabase.auth.getUser()).data.user?.id)
+      .eq("id", authUser.user?.id)
       .maybeSingle();
 
     if (pErr || !profile || profile.role !== "admin") {
@@ -45,8 +44,8 @@ export default function AdminLoginPage() {
       return;
     }
 
-    const dest = params.get("redirect") || "/admin";
-    router.replace(dest);
+    // 3) Go straight to /admin (layout will guard it)
+    router.replace("/admin");
   }
 
   return (
