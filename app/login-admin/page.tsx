@@ -23,28 +23,21 @@ export default function AdminLoginPage() {
     setLoading(true);
 
     // 1) Sign in with Supabase
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
     if (error) {
       setErr(error.message);
       setLoading(false);
       return;
     }
 
-    // 2) Optional: confirm this user is an admin
-    const { data: authUser } = await supabase.auth.getUser();
-    const { data: profile, error: pErr } = await supabase
-      .from("user_profiles")
-      .select("role")
-      .eq("id", authUser.user?.id)
-      .maybeSingle();
+    // 2) ✅ Do NOT check role here anymore.
+    //    The /admin layout will enforce admin-only access on the server.
 
-    if (pErr || !profile || profile.role !== "admin") {
-      setErr("This account is not an admin.");
-      setLoading(false);
-      return;
-    }
-
-    // 3) Go straight to /admin (layout will guard it)
+    // 3) Go straight to /admin
     router.replace("/admin");
   }
 
