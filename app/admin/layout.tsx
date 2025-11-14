@@ -20,7 +20,7 @@ export default async function AdminLayout({
   } = await supabase.auth.getUser();
 
   if (userError || !user) {
-    // 🔴 CHANGE IS HERE — go to /login-admin, NOT /admin/login
+    // Not logged in → go to admin login (outside /admin) and come back to /admin
     redirect("/login-admin?redirect=/admin");
   }
 
