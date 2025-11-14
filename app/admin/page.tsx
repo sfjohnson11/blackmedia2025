@@ -5,11 +5,27 @@ import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import {
-  Settings, Upload, Database, Image as ImageIcon, Users, Calendar,
-  RefreshCw, Lock, Radio, Clock, FileVideo, Code, Edit, Music2
+  Settings,
+  Upload,
+  Database,
+  Image as ImageIcon,
+  Users,
+  Calendar,
+  RefreshCw,
+  Lock,
+  Radio,
+  FileVideo,
+  Code,
+  Edit,
+  Music2,
 } from "lucide-react";
 import {
-  Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
 } from "@/components/ui/card";
 import ConfirmLink from "@/components/ConfirmLink";
 import ClearCacheCard from "@/components/ClearCacheCard";
@@ -61,36 +77,66 @@ export default function AdminDashboard() {
         if (!cancelled) setStats((s) => ({ ...s, loading: false }));
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const adminLinks: AdminSection[] = [
+  const adminSections: AdminSection[] = [
     {
       title: "Scheduling & Programs",
       description: "Build and adjust the 24/7 lineup quickly.",
-      icon: <Calendar className="h-8 w-8 text-green-500" />,
+      icon: <Calendar className="h-8 w-8 text-emerald-400" />,
       links: [
         {
           name: "Programs Manager",
           href: "/admin/programs",
           icon: <Edit className="h-4 w-4" />,
           accent: "primary",
-          description: "Per-channel day view with create / edit / delete / CSV import",
+          description:
+            "Per-channel day view with create / edit / delete / CSV import",
         },
-        { name: "Import Programs (CSV)", href: "/setup/import-programs", icon: <Upload className="h-4 w-4" /> },
-        { name: "Refresh Programs", href: "/admin/refresh-programs", icon: <RefreshCw className="h-4 w-4" /> },
-        { name: "View Guide", href: "/browse", icon: <Calendar className="h-4 w-4" /> },
+        {
+          name: "Import Programs (CSV)",
+          href: "/setup/import-programs",
+          icon: <Upload className="h-4 w-4" />,
+        },
+        {
+          name: "Refresh Programs",
+          href: "/admin/refresh-programs",
+          icon: <RefreshCw className="h-4 w-4" />,
+          description: "Rebuild scheduled start times for all channels",
+        },
+        {
+          name: "View Guide",
+          href: "/browse",
+          icon: <Calendar className="h-4 w-4" />,
+          description: "Public 24-hour guide so you can verify changes",
+        },
       ],
     },
     {
       title: "Channels",
       description: "Logos, descriptions, and live flags.",
-      icon: <Users className="h-8 w-8 text-blue-500" />,
+      icon: <Users className="h-8 w-8 text-sky-400" />,
       links: [
-        { name: "Channel Manager", href: "/admin/channel-manager", icon: <Edit className="h-4 w-4" /> },
-        { name: "Update Channel Images", href: "/setup/upload-channel-image", icon: <ImageIcon className="h-4 w-4" /> },
-        { name: "Browse Channels", href: "/channels", icon: <Users className="h-4 w-4" /> },
-        // Quick action: add Channel 31 (Music Only)
+        {
+          name: "Channel Manager",
+          href: "/admin/channel-manager",
+          icon: <Edit className="h-4 w-4" />,
+          description: "Edit channel titles, descriptions, and visibility",
+        },
+        {
+          name: "Update Channel Images",
+          href: "/setup/upload-channel-image",
+          icon: <ImageIcon className="h-4 w-4" />,
+          description: "Upload or replace channel thumbnails",
+        },
+        {
+          name: "Browse Channels",
+          href: "/channels",
+          icon: <Users className="h-4 w-4" />,
+        },
         {
           name: "Add Channel 31 — Music Only",
           href: "/admin/channel-manager?create=31&name=Music%20Only&bucket=channel31",
@@ -102,112 +148,198 @@ export default function AdminDashboard() {
     {
       title: "Live & News",
       description: "Live streams and breaking news banners.",
-      icon: <Radio className="h-8 w-8 text-rose-500" />,
+      icon: <Radio className="h-8 w-8 text-rose-400" />,
       links: [
-        { name: "Live Stream Manager", href: "/admin/live-streams", icon: <Radio className="h-4 w-4" /> },
-        { name: "Breaking News", href: "/admin/news", icon: <Radio className="h-4 w-4" /> },
+        {
+          name: "Live Stream Manager",
+          href: "/admin/live-streams",
+          icon: <Radio className="h-4 w-4" />,
+          description: "Configure and update live stream entries",
+        },
+        {
+          name: "Breaking News",
+          href: "/admin/news",
+          icon: <Radio className="h-4 w-4" />,
+          description: "Set ticker / banners for urgent updates",
+        },
       ],
     },
     {
       title: "System",
       description: "Database tools and power features.",
-      icon: <Settings className="h-8 w-8 text-red-500" />,
+      icon: <Settings className="h-8 w-8 text-amber-400" />,
       links: [
-        { name: "SQL Setup", href: "/setup/sql-setup", icon: <Database className="h-4 w-4" /> },
-        { name: "Debug Storage", href: "/debug", icon: <RefreshCw className="h-4 w-4" /> },
-        { name: "Invite Codes", href: "/admin/invite-codes", icon: <Lock className="h-4 w-4" /> },
-        { name: "SQL Query Tool", href: "/admin/sql-query", icon: <Code className="h-4 w-4" />, flag: "beta" },
-        // Keep Video Processor behind beta if you still want it around
-        { name: "Video Processor", href: "/admin/video-processor", icon: <FileVideo className="h-4 w-4" />, flag: "beta" },
+        {
+          name: "SQL Setup",
+          href: "/setup/sql-setup",
+          icon: <Database className="h-4 w-4" />,
+          description: "Initial schema / migration helpers",
+        },
+        {
+          name: "Debug Storage",
+          href: "/debug",
+          icon: <RefreshCw className="h-4 w-4" />,
+          description: "Storage + buckets debugging tools",
+        },
+        {
+          name: "Invite Codes",
+          href: "/admin/invite-codes",
+          icon: <Lock className="h-4 w-4" />,
+          description: "Manage invite / access codes",
+        },
+        {
+          name: "SQL Query Tool",
+          href: "/admin/sql-query",
+          icon: <Code className="h-4 w-4" />,
+          flag: "beta",
+          description: "Run read-only SQL for quick diagnostics",
+        },
+        {
+          name: "Video Processor",
+          href: "/admin/video-processor",
+          icon: <FileVideo className="h-4 w-4" />,
+          flag: "beta",
+          description: "Experimental video processing tools",
+        },
       ],
     },
   ];
 
   return (
-    <div className="pb-8">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold mb-2">Admin Dashboard</h1>
-        <p className="text-gray-400">Operate your Black Truth TV platform</p>
-      </div>
-
-      {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-        <div className="bg-gray-800 p-6 rounded-lg border border-gray-700">
-          <h2 className="text-2xl font-bold text-red-500 mb-1">
-            {stats.loading ? "…" : stats.channelCount}
-          </h2>
-          <p className="text-gray-400">Total Channels</p>
-        </div>
-        <div className="bg-gray-800 p-6 rounded-lg border border-gray-700">
-          <h2 className="text-2xl font-bold text-red-500 mb-1">
-            {stats.loading ? "…" : stats.programCount}
-          </h2>
-          <p className="text-gray-400">Total Programs</p>
-        </div>
-      </div>
-
-      {/* Sections */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {adminLinks.map((section, index) => (
-          <div
-            key={index}
-            className="bg-gray-800 rounded-lg overflow-hidden border border-gray-700"
-          >
-            <div className="p-6">
-              <div className="flex items-center mb-4">
-                <div className="mr-4">{section.icon}</div>
-                <h2 className="text-xl font-bold">{section.title}</h2>
-              </div>
-              <p className="text-gray-400 mb-6">{section.description}</p>
-              <div className="space-y-2">
-                {section.links.map((link, linkIndex) => {
-                  if (link.flag === "beta" && !ADMIN_BETA) return null;
-                  return (
-                    <Link key={linkIndex} href={link.href} className="block">
-                      <Button
-                        variant="outline"
-                        className={`w-full justify-start text-left bg-gray-700 hover:bg-gray-600 border-gray-600 ${
-                          link.accent === "primary"
-                            ? "ring-1 ring-amber-400/40"
-                            : link.accent === "danger"
-                            ? "ring-1 ring-red-500/40"
-                            : ""
-                        }`}
-                        title={link.description || undefined}
-                      >
-                        {link.icon}
-                        <span className="ml-2">{link.name}</span>
-                      </Button>
-                    </Link>
-                  );
-                })}
-              </div>
-            </div>
+    <div className="min-h-screen bg-gradient-to-b from-[#040814] via-[#050b1a] to-black text-white pb-10">
+      <div className="mx-auto max-w-6xl px-4 pt-8">
+        {/* Header */}
+        <header className="mb-8 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">
+              Black Truth TV Admin
+            </h1>
+            <p className="mt-1 text-sm text-gray-300">
+              Operate your Black Truth TV platform – channels, programs, and
+              system tools.
+            </p>
           </div>
-        ))}
+        </header>
 
-        {/* Reset Programs (danger-gated + confirmed) */}
-        {ALLOW_DANGER && (
-          <Card className="bg-red-900/10 border-red-900/30">
-            <CardHeader>
-              <CardTitle className="text-red-400">Reset Programs</CardTitle>
-              <CardDescription>Delete all programs and start fresh</CardDescription>
+        {/* Stats */}
+        <section className="mb-8 grid grid-cols-1 gap-6 md:grid-cols-2">
+          <Card className="border border-slate-700 bg-slate-900/60">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">
+                Total Channels
+              </CardTitle>
+              <Users className="h-4 w-4 text-sky-400" />
             </CardHeader>
             <CardContent>
-              <p className="text-sm text-gray-400 mb-4">
-                Completely reset program data to fix issues with old or duplicate programs.
+              <div className="text-3xl font-bold text-amber-400">
+                {stats.loading ? "…" : stats.channelCount}
+              </div>
+              <p className="mt-1 text-xs text-slate-400">
+                Channels currently configured in the system.
               </p>
             </CardContent>
-            <CardFooter>
-              <ConfirmLink href="/admin/reset-programs" label="Reset Programs" />
-            </CardFooter>
           </Card>
-        )}
-      </div>
 
-      {/* Client-side Clear Cache (no route) */}
-      <div className="mt-8">
-        <ClearCacheCard />
+          <Card className="border border-slate-700 bg-slate-900/60">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">
+                Total Programs
+              </CardTitle>
+              <Calendar className="h-4 w-4 text-emerald-400" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-bold text-amber-400">
+                {stats.loading ? "…" : stats.programCount}
+              </div>
+              <p className="mt-1 text-xs text-slate-400">
+                On-air and scheduled programs across all channels.
+              </p>
+            </CardContent>
+          </Card>
+        </section>
+
+        {/* Sections */}
+        <section className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+          {adminSections.map((section, index) => (
+            <Card
+              key={index}
+              className="flex h-full flex-col border border-slate-700 bg-slate-900/70"
+            >
+              <CardHeader>
+                <div className="mb-3 flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-800">
+                    {section.icon}
+                  </div>
+                  <div>
+                    <CardTitle className="text-base font-semibold">
+                      {section.title}
+                    </CardTitle>
+                    <CardDescription className="text-xs text-slate-300">
+                      {section.description}
+                    </CardDescription>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="pt-0 pb-5">
+                <div className="space-y-2">
+                  {section.links.map((link, linkIndex) => {
+                    if (link.flag === "beta" && !ADMIN_BETA) return null;
+
+                    const accentClasses =
+                      link.accent === "primary"
+                        ? "border-amber-400/40 bg-slate-800/80 ring-1 ring-amber-400/40"
+                        : link.accent === "danger"
+                        ? "border-red-500/50 bg-red-950/50 ring-1 ring-red-500/40"
+                        : "border-slate-700 bg-slate-800/80";
+
+                    return (
+                      <Link key={linkIndex} href={link.href} className="block">
+                        <Button
+                          variant="outline"
+                          className={`flex w-full items-center justify-start gap-2 text-left text-sm hover:bg-slate-700 ${accentClasses}`}
+                          title={link.description || undefined}
+                        >
+                          {link.icon}
+                          <span>{link.name}</span>
+                        </Button>
+                      </Link>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+
+          {/* Reset Programs (danger-gated + confirmed) */}
+          {ALLOW_DANGER && (
+            <Card className="border border-red-900/60 bg-red-950/40">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base font-semibold text-red-300">
+                  <RefreshCw className="h-4 w-4" />
+                  Reset Programs
+                </CardTitle>
+                <CardDescription className="text-xs text-red-200/80">
+                  Delete all programs and start fresh.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <p className="text-xs text-red-100/80">
+                  This is irreversible. Use this only if your schedule is badly
+                  broken or full of duplicate data. All programs will be
+                  deleted and can only be restored from backups or re-imports.
+                </p>
+              </CardContent>
+              <CardFooter>
+                <ConfirmLink href="/admin/reset-programs" label="Reset Programs" />
+              </CardFooter>
+            </Card>
+          )}
+        </section>
+
+        {/* Client-side Clear Cache */}
+        <section className="mt-10">
+          <ClearCacheCard />
+        </section>
       </div>
     </div>
   );
