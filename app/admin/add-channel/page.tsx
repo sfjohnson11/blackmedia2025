@@ -5,11 +5,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import {
-  ArrowLeft,
-  PlusCircle,
-  Info,
-} from "lucide-react";
+import { ArrowLeft, PlusCircle, Info } from "lucide-react";
 
 export default function AddChannelPage() {
   const router = useRouter();
@@ -63,11 +59,10 @@ export default function AddChannelPage() {
         {/* Header */}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">
-              Add Channel
-            </h1>
+            <h1 className="text-2xl font-bold tracking-tight">Add Channel</h1>
             <p className="mt-1 text-sm text-slate-300">
-              Quickly create a new Black Truth TV channel by sending details to your existing Channel Manager.
+              Quickly create a new Black Truth TV channel by sending details to
+              your existing Channel Manager.
             </p>
           </div>
           <div className="flex gap-2">
@@ -93,10 +88,11 @@ export default function AddChannelPage() {
         </div>
 
         {/* Info box */}
-        <div className="rounded-lg border border-slate-700 bg-slate-900/70 px-4 py-3 text-xs text-slate-200 flex gap-2">
-          <Info className="h-4 w-4 text-amber-300 mt-0.5 flex-shrink-0" />
+        <div className="flex gap-2 rounded-lg border border-slate-700 bg-slate-900/70 px-4 py-3 text-xs text-slate-200">
+          <Info className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-300" />
           <p>
-            This page does not talk to the database directly. It just builds a URL like{" "}
+            This page does not talk to the database directly. It builds a URL
+            like{" "}
             <code className="text-amber-300">
               /admin/channel-manager?create=16&amp;name=My%20Channel&amp;bucket=channel16
             </code>{" "}
@@ -111,7 +107,7 @@ export default function AddChannelPage() {
         >
           {/* Channel ID */}
           <div>
-            <label className="block text-xs font-medium text-slate-200 mb-1">
+            <label className="mb-1 block text-xs font-medium text-slate-200">
               Channel ID (number)
             </label>
             <input
@@ -124,13 +120,14 @@ export default function AddChannelPage() {
               required
             />
             <p className="mt-1 text-[10px] text-slate-400">
-              This should match the numeric channel ID you use in your guide / viewer (1–29, etc.).
+              This should match the numeric channel ID you use in your guide /
+              viewer (1–29, etc.).
             </p>
           </div>
 
           {/* Channel Name */}
           <div>
-            <label className="block text-xs font-medium text-slate-200 mb-1">
+            <label className="mb-1 block text-xs font-medium text-slate-200">
               Channel Name
             </label>
             <input
@@ -148,7 +145,7 @@ export default function AddChannelPage() {
 
           {/* Storage Bucket */}
           <div>
-            <label className="block text-xs font-medium text-slate-200 mb-1">
+            <label className="mb-1 block text-xs font-medium text-slate-200">
               Storage Bucket
             </label>
             <input
@@ -160,15 +157,16 @@ export default function AddChannelPage() {
               required
             />
             <p className="mt-1 text-[10px] text-slate-400">
-              Supabase bucket where this channel&apos;s MP4s live. For regular channels, use
-              <span className="text-amber-300"> channel&lt;id&gt;</span> (like <code>channel16</code>).
+              Supabase bucket where this channel&apos;s MP4s live. For regular
+              channels, use <span className="text-amber-300">channel&lt;id&gt;</span>{" "}
+              (like <code>channel16</code>).
             </p>
           </div>
 
           <div className="pt-2">
             <Button
               type="submit"
-              className="bg-emerald-600 hover:bg-emerald-700 text-sm"
+              className="bg-emerald-600 text-sm hover:bg-emerald-700"
             >
               <PlusCircle className="mr-2 h-4 w-4" />
               Create Channel via Channel Manager
