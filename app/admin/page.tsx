@@ -18,6 +18,7 @@ import {
   Code,
   Edit,
   Music2,
+  PlayCircle, // ⬅️ added
 } from "lucide-react";
 import {
   Card,
@@ -106,6 +107,12 @@ export default function AdminDashboard() {
           href: "/admin/refresh-programs",
           icon: <RefreshCw className="h-4 w-4" />,
           description: "Rebuild scheduled start times for all channels",
+        },
+        {
+          name: "Auto-Schedule from Buckets",          // ⬅️ new link
+          href: "/admin/auto-schedule",
+          icon: <PlayCircle className="h-4 w-4" />,
+          description: "Build a full schedule from channel bucket MP4s",
         },
         {
           name: "View Guide",
