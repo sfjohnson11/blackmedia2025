@@ -1,4 +1,3 @@
-// app/admin/auto-schedule/page.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -23,11 +22,12 @@ type BucketFile = {
 };
 
 const CHANNEL_BUCKETS = [
-  "channel1","channel2","channel3","channel4","channel5","channel6","channel7",
-  "channel8","channel9","channel10","channel11","channel12","channel13","channel14",
-  "channel15","channel16","channel17","channel18","channel19","channel20","channel21",
-  "channel22","channel23","channel24","channel25","channel26","channel27","channel28",
-  "channel29","freedom-school",
+  "channel1","channel2","channel3","channel4","channel5",
+  "channel6","channel7","channel8","channel9","channel10",
+  "channel11","channel12","channel13","channel14","channel15",
+  "channel16","channel17","channel18","channel19","channel20",
+  "channel21","channel22","channel23","channel24","channel25",
+  "channel26","channel27","channel28","channel29","freedom-school",
 ];
 
 export default function AutoSchedulePage() {
@@ -35,7 +35,7 @@ export default function AutoSchedulePage() {
 
   const [channelId, setChannelId] = useState<string>("");
   const [bucketName, setBucketName] = useState<string>("channel1");
-  const [baseStart, setBaseStart] = useState<string>(""); // datetime-local
+  const [baseStart, setBaseStart] = useState<string>(""); // datetime-local WITH seconds
   const [files, setFiles] = useState<BucketFile[]>([]);
   const [loadingFiles, setLoadingFiles] = useState(false);
   const [savingSchedule, setSavingSchedule] = useState(false);
@@ -44,7 +44,6 @@ export default function AutoSchedulePage() {
 
   const hiddenVideoRef = useRef<HTMLVideoElement | null>(null);
 
-  // Load files from chosen bucket
   async function loadFiles() {
     setErr(null);
     setSuccessMsg(null);
@@ -58,25 +57,26 @@ export default function AutoSchedulePage() {
 
       if (error) {
         setErr(error.message);
-        return;
+        setFiles([]);
+      } else {
+        const mp4s =
+          (data || [])
+            .filter((f) => f.name.toLowerCase().endsWith(".mp4"))
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map<BucketFile>((f) => ({
+              name: f.name,
+              selected: true,
+            })) || [];
+
+        if (mp4s.length === 0) {
+          setErr("No .mp4 files found in this bucket.");
+        }
+
+        setFiles(mp4s);
       }
-
-      const mp4s =
-        (data || [])
-          .filter((f) => f.name.toLowerCase().endsWith(".mp4"))
-          .sort((a, b) => a.name.localeCompare(b.name))
-          .map<BucketFile>((f) => ({
-            name: f.name,
-            selected: true,
-          })) || [];
-
-      if (mp4s.length === 0) {
-        setErr("No .mp4 files found in this bucket.");
-      }
-
-      setFiles(mp4s);
     } catch (e: any) {
       setErr(e?.message || "Unexpected error listing files.");
+      setFiles([]);
     } finally {
       setLoadingFiles(false);
     }
@@ -93,7 +93,6 @@ export default function AutoSchedulePage() {
   async function detectDurationForFile(file: BucketFile) {
     const videoEl =
       hiddenVideoRef.current || document.createElement("video");
-
     hiddenVideoRef.current = videoEl;
     videoEl.preload = "metadata";
     videoEl.crossOrigin = "anonymous";
@@ -122,7 +121,7 @@ export default function AutoSchedulePage() {
     });
 
     const sec = videoEl.duration;
-    if (!Number.isFinite(sec)) throw new Error("No duration available.");
+    if (!Number.isFinite(sec)) throw new Error("Invalid duration.");
 
     setFiles((prev) =>
       prev.map((f) =>
@@ -132,6 +131,9 @@ export default function AutoSchedulePage() {
   }
 
   async function handleDetectDuration(name: string) {
+    setErr(null);
+    setSuccessMsg(null);
+
     setFiles((prev) =>
       prev.map((f) =>
         f.name === name ? { ...f, detecting: true } : f
@@ -154,6 +156,9 @@ export default function AutoSchedulePage() {
   }
 
   async function handleDetectAll() {
+    setErr(null);
+    setSuccessMsg(null);
+
     const targets = files.filter((f) => f.selected && !f.duration);
 
     for (const file of targets) {
@@ -166,8 +171,7 @@ export default function AutoSchedulePage() {
       try {
         await detectDurationForFile(file);
       } catch (e: any) {
-        if (!err)
-          setErr(`Could not detect duration for ${file.name}.`);
+        setErr(`Could not detect duration for ${file.name}.`);
       } finally {
         setFiles((prev) =>
           prev.map((f) =>
@@ -182,7 +186,7 @@ export default function AutoSchedulePage() {
     const sec = value ? Number(value) : undefined;
     setFiles((prev) =>
       prev.map((f) =>
-        f.name === name ? { ...f, duration: sec } : f
+        f.name === name ? { ...f, duration: Number.isFinite(sec) ? sec : undefined } : f
       )
     );
   }
@@ -202,6 +206,12 @@ export default function AutoSchedulePage() {
       return;
     }
 
+    const base = new Date(baseStart);
+    if (Number.isNaN(base.getTime())) {
+      setErr("Invalid base start time format.");
+      return;
+    }
+
     const selectedFiles = files.filter((f) => f.selected);
     if (selectedFiles.length === 0) {
       setErr("Select at least one file.");
@@ -210,12 +220,6 @@ export default function AutoSchedulePage() {
 
     if (selectedFiles.some((f) => !f.duration)) {
       setErr("All selected files must have durations.");
-      return;
-    }
-
-    const base = new Date(baseStart);
-    if (Number.isNaN(base.getTime())) {
-      setErr("Invalid date/time format.");
       return;
     }
 
@@ -234,15 +238,10 @@ export default function AutoSchedulePage() {
     let currentStart = new Date(base);
 
     for (const file of ordered) {
-      const durationSec = Math.round(file.duration || 0);
-
-      const { data } = supabase.storage
-        .from(bucketName)
-        .getPublicUrl(file.name);
-
+      const { data } = supabase.storage.from(bucketName).getPublicUrl(file.name);
       const publicUrl = data?.publicUrl;
       if (!publicUrl) {
-        setErr(`No public URL for ${file.name}.`);
+        setErr("Missing public URL.");
         return;
       }
 
@@ -251,23 +250,22 @@ export default function AutoSchedulePage() {
         start_time: currentStart.toISOString(),
         title: file.name,
         mp4_url: publicUrl,
-        duration: durationSec,
+        duration: file.duration!,
       });
 
       currentStart = new Date(
-        currentStart.getTime() + durationSec * 1000
+        currentStart.getTime() + file.duration! * 1000
       );
     }
 
     setSavingSchedule(true);
-    try {
-      const { error } = await supabase.from("programs").insert(rows);
-      if (error) setErr(error.message);
-      else setSuccessMsg(`Created ${rows.length} programs.`);
-    } catch (e: any) {
-      setErr(e?.message || "Unexpected insert error.");
-    } finally {
-      setSavingSchedule(false);
+    const { error } = await supabase.from("programs").insert(rows);
+    setSavingSchedule(false);
+
+    if (error) {
+      setErr(error.message);
+    } else {
+      setSuccessMsg(`Created ${rows.length} program(s).`);
     }
   }
 
@@ -285,29 +283,23 @@ export default function AutoSchedulePage() {
     <div className="min-h-screen bg-gradient-to-b from-[#040814] via-[#050b1a] to-black text-white pb-10">
       <div className="mx-auto max-w-6xl px-4 pt-8 space-y-6">
 
-        {/* HEADER */}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">
-              Auto-Schedule from Buckets
-            </h1>
+            <h1 className="text-2xl font-bold tracking-tight">Auto-Schedule from Buckets</h1>
             <p className="mt-1 text-sm text-slate-300">
-              Detect durations + auto-build sequential program schedules.
+              Detect durations, sort files, and auto-create a schedule.
             </p>
           </div>
           <Link href="/admin">
             <Button variant="outline" className="border-slate-600 bg-slate-900">
-              <ArrowLeft className="mr-2 h-4 w-4" />
-              Back to Admin
+              <ArrowLeft className="mr-2 h-4 w-4" /> Back to Admin
             </Button>
           </Link>
         </div>
 
-        {/* CONTROL PANEL */}
         <section className="rounded-lg border border-slate-700 bg-slate-900/70 p-4 space-y-4">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
 
-            {/* CHANNEL ID */}
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-1">
                 Channel ID
@@ -317,11 +309,9 @@ export default function AutoSchedulePage() {
                 value={channelId}
                 onChange={(e) => setChannelId(e.target.value)}
                 className="w-full rounded-md border border-slate-600 bg-slate-950 px-3 py-1.5 text-sm text-white"
-                placeholder="e.g. 1"
               />
             </div>
 
-            {/* BUCKET */}
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-1">
                 Storage Bucket
@@ -332,46 +322,44 @@ export default function AutoSchedulePage() {
                 className="w-full rounded-md border border-slate-600 bg-slate-950 px-3 py-1.5 text-sm text-white"
               >
                 {CHANNEL_BUCKETS.map((b) => (
-                  <option key={b} value={b}>{b}</option>
+                  <option key={b}>{b}</option>
                 ))}
               </select>
             </div>
 
-            {/* BASE START with seconds enabled */}
             <div>
-  <label className="block text-xs font-medium text-slate-300 mb-1">
-    Base Start (local time)
-  </label>
+              <label className="block text-xs font-medium text-slate-300 mb-1">
+                Base Start (with seconds)
+              </label>
 
-  <input
-    type="datetime-local"
-    value={baseStart}
-    onChange={(e) => {
-      console.log("Picked datetime:", e.target.value);
-      setBaseStart(e.target.value);
-    }}
-    step={1} // <-- THIS ALLOWS SECONDS
-    className="w-full rounded-md border border-slate-600 bg-slate-950 px-3 py-1.5 text-sm text-white 
-               focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
-    required
-  />
+              <input
+                type="datetime-local"
+                step="1"  // <-- IMPORTANT: seconds enabled
+                value={baseStart}
+                onChange={(e) => {
+                  console.log("Picked:", e.target.value);
+                  setBaseStart(e.target.value);
+                }}
+                className="w-full rounded-md border border-slate-600 bg-slate-950 px-3 py-1.5 text-sm text-white"
+              />
 
-  <p className="mt-1 text-[10px] text-slate-400">
-    Format must be: <code className="text-amber-300">YYYY-MM-DDTHH:MM:SS</code>
-  </p>
+              <p className="mt-1 text-[10px] text-amber-300">
+                Must look like: <br />
+                <code>2025-11-16T10:00:00</code>
+              </p>
 
-  {/* Debug output so you can SEE what the browser sends */}
-  <p className="mt-1 text-[10px] text-emerald-300">
-    Current Value: {baseStart || "(none)"}
-  </p>
-</div>
+              <p className="mt-1 text-[10px] text-emerald-300">
+                Current Value: {baseStart || "(none)"}
+              </p>
+            </div>
 
-          <div className="flex flex-wrap items-center gap-3">
+          </div>
+
+          <div className="flex items-center gap-3">
             <Button
-              type="button"
-              variant="outline"
               onClick={loadFiles}
               disabled={loadingFiles}
+              variant="outline"
               className="border-slate-600 bg-slate-950 text-sm"
             >
               {loadingFiles ? (
@@ -388,14 +376,13 @@ export default function AutoSchedulePage() {
             </Button>
 
             <Button
-              type="button"
-              variant="outline"
               onClick={handleDetectAll}
-              disabled={loadingFiles || savingSchedule || files.length === 0}
+              variant="outline"
               className="border-slate-600 bg-slate-950 text-sm"
+              disabled={files.length === 0}
             >
               <Clock className="mr-2 h-4 w-4" />
-              Detect Duration for Selected
+              Detect Durations
             </Button>
 
             <span className="ml-auto text-xs text-slate-400">
@@ -406,31 +393,25 @@ export default function AutoSchedulePage() {
 
           {err && (
             <div className="flex items-start gap-2 rounded-md border border-red-500/60 bg-red-950/50 px-3 py-2 text-xs text-red-200">
-              <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
-              <p>{err}</p>
+              <AlertCircle className="mt-0.5 h-4 w-4" />
+              {err}
             </div>
           )}
 
           {successMsg && (
             <div className="flex items-start gap-2 rounded-md border border-emerald-500/60 bg-emerald-950/40 px-3 py-2 text-xs text-emerald-200">
-              <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0" />
-              <p>{successMsg}</p>
+              <CheckCircle2 className="mt-0.5 h-4 w-4" />
+              {successMsg}
             </div>
           )}
 
           <video ref={hiddenVideoRef} style={{ display: "none" }} />
         </section>
 
-        {/* FILE LIST */}
         <section className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-slate-100">
-              Files in "{bucketName}"
-            </h2>
-            <p className="text-xs text-slate-400">
-              Only .mp4 files shown
-            </p>
-          </div>
+          <h2 className="text-sm font-semibold text-slate-100">
+            Files in “{bucketName}”
+          </h2>
 
           <div className="max-h-[420px] overflow-y-auto rounded-lg border border-slate-700 bg-slate-900/70">
             {loadingFiles ? (
@@ -454,22 +435,28 @@ export default function AutoSchedulePage() {
                 </thead>
                 <tbody>
                   {files.map((file) => (
-                    <tr key={file.name} className="border-t border-slate-800/80 hover:bg-slate-800/60">
-                      <td className="px-3 py-2 align-top">
+                    <tr key={file.name} className="border-t border-slate-800/80">
+                      <td className="px-3 py-2">
                         <input
                           type="checkbox"
                           checked={file.selected}
                           onChange={() => toggleFileSelected(file.name)}
                         />
                       </td>
-                      <td className="px-3 py-2 align-top text-slate-100">
+
+                      <td className="px-3 py-2 text-slate-100">
                         {file.name}
                       </td>
-                      <td className="px-3 py-2 align-top">
+
+                      <td className="px-3 py-2">
                         <input
                           type="number"
                           min={0}
-                          value={file.duration ?? ""}
+                          value={
+                            file.duration != null
+                              ? String(Math.round(file.duration))
+                              : ""
+                          }
                           onChange={(e) =>
                             handleManualDurationChange(file.name, e.target.value)
                           }
@@ -477,14 +464,14 @@ export default function AutoSchedulePage() {
                           placeholder="sec"
                         />
                       </td>
-                      <td className="px-3 py-2 align-top">
+
+                      <td className="px-3 py-2">
                         <Button
-                          type="button"
                           size="sm"
                           variant="outline"
                           disabled={file.detecting}
                           onClick={() => handleDetectDuration(file.name)}
-                          className="border-slate-600 bg-slate-950 text-[11px] px-2 py-1"
+                          className="border-slate-600 bg-slate-950 text-[11px]"
                         >
                           {file.detecting ? (
                             <>
@@ -507,10 +494,8 @@ export default function AutoSchedulePage() {
           </div>
         </section>
 
-        {/* CREATE SCHEDULE BUTTON */}
         <section className="flex justify-end">
           <Button
-            type="button"
             onClick={handleCreateSchedule}
             disabled={savingSchedule || files.length === 0 || selectedCount === 0}
             className="bg-emerald-600 hover:bg-emerald-700 text-sm"
@@ -518,12 +503,12 @@ export default function AutoSchedulePage() {
             {savingSchedule ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Creating schedule…
+                Creating…
               </>
             ) : (
               <>
                 <PlayCircle className="mr-2 h-4 w-4" />
-                Create Schedule in Programs Table
+                Create Schedule
               </>
             )}
           </Button>
