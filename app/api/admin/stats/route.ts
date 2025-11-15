@@ -1,28 +1,28 @@
 // app/api/admin/stats/route.ts
-import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
+
+export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const [
-    { count: channelCount, error: chErr },
-    { count: programCount, error: prErr },
-    { count: activeChannelCount, error: actErr },
-  ] = await Promise.all([
-    supabase.from('channels').select('*', { count: 'exact', head: true }),
-    supabase.from('programs').select('*', { count: 'exact', head: true }),
-    supabase.from('channels').select('*', { count: 'exact', head: true }).eq('is_active', true),
-  ]);
+  const supabase = createRouteHandlerClient({ cookies });
 
-  if (chErr || prErr || actErr) {
-    return NextResponse.json(
-      { error: chErr?.message || prErr?.message || actErr?.message },
-      { status: 500 }
-    );
+  // 🔹 Adjust table names if yours are different
+  const { count: channelCount, error: channelError } = await supabase
+    .from("channels") // change to your channels table name if needed
+    .select("*", { count: "exact", head: true });
+
+  const { count: programCount, error: programError } = await supabase
+    .from("programs")
+    .select("*", { count: "exact", head: true });
+
+  if (channelError || programError) {
+    console.error("Admin stats error", { channelError, programError });
   }
 
   return NextResponse.json({
     channelCount: channelCount ?? 0,
     programCount: programCount ?? 0,
-    activeChannelCount: activeChannelCount ?? 0,
   });
 }
