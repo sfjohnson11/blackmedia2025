@@ -2,14 +2,12 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { AlertCircle, Lock } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
 export default function AdminLoginPage() {
-  const router = useRouter();
   const supabase = createClientComponentClient();
 
   const [email, setEmail] = useState("");
@@ -33,8 +31,10 @@ export default function AdminLoginPage() {
       return;
     }
 
-    // ✅ Just send to /admin. The admin layout (or future guard) will handle access.
-    router.replace("/admin");
+    // Hard redirect to /admin after login
+    if (typeof window !== "undefined") {
+      window.location.href = "/admin";
+    }
   }
 
   return (
