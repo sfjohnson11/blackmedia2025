@@ -1,9 +1,9 @@
+// app/channels/[channelId]/watch/page.tsx
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import VideoPlayer from "@/components/video-player";
-import NewsTicker from "@/components/NewsTicker"; // ⬅️ NEW IMPORT
 import {
   getCandidateUrlsForProgram,
   getVideoUrlForProgram,
@@ -11,6 +11,7 @@ import {
   supabase,
   STANDBY_PLACEHOLDER_ID,
 } from "@/lib/supabase";
+import { getNewsItems } from "@/lib/news-data"; // 🔴 NEW: pull ticker text from same source
 import type { Channel, Program } from "@/types";
 import { ChevronLeft, Loader2 } from "lucide-react";
 
@@ -41,8 +42,8 @@ const LoadingOverlay = ({
     >
       <div className="flex items-center gap-3 px-4 py-2 rounded-full bg-black/60">
         <svg className="h-5 w-5 animate-spin" viewBox="0 0 24 24" aria-hidden="true">
-          <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" opacity=".25"/>
-          <path d="M22 12a10 10 0 0 1-10 10" fill="none" stroke="currentColor" strokeWidth="4"/>
+          <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" opacity=".25" />
+          <path d="M22 12a10 10 0 0 1-10 10" fill="none" stroke="currentColor" strokeWidth="4" />
         </svg>
         <span className="text-sm">{label}</span>
       </div>
@@ -113,7 +114,7 @@ function isActiveProgram(p: Program, nowMs: number): boolean {
   const durSec = asSeconds(p.duration);
   if (!Number.isFinite(startMs) || durSec <= 0) return false;
   const endMs = startMs + durSec * 1000;
-  return (startMs - GRACE_MS) <= nowMs && nowMs < (endMs + GRACE_MS);
+  return startMs - GRACE_MS <= nowMs && nowMs < endMs + GRACE_MS;
 }
 
 /** Quick HEAD check; ok = fast positive signal, but not required */
@@ -121,7 +122,12 @@ async function headOk(url: string, timeoutMs = 4500): Promise<boolean> {
   try {
     const ctrl = new AbortController();
     const to = setTimeout(() => ctrl.abort(), timeoutMs);
-    const res = await fetch(url, { method: "HEAD", mode: "cors", redirect: "follow", signal: ctrl.signal as any });
+    const res = await fetch(url, {
+      method: "HEAD",
+      mode: "cors",
+      redirect: "follow",
+      signal: ctrl.signal as any,
+    });
     clearTimeout(to);
     return res.ok;
   } catch {
@@ -148,7 +154,10 @@ async function resolvePlayableUrl(candidates: string[]): Promise<string | undefi
       const cleanup = () => {
         v.onloadedmetadata = null;
         v.onerror = null;
-        try { v.src = ""; v.load(); } catch {}
+        try {
+          v.src = "";
+          v.load();
+        } catch {}
       };
 
       const to = setTimeout(() => {
@@ -177,12 +186,83 @@ async function resolvePlayableUrl(candidates: string[]): Promise<string | undefi
       };
 
       v.src = url;
-      try { v.load(); } catch {}
+      try {
+        v.load();
+      } catch {}
     });
     if (ok) return url;
   }
   return undefined; // we'll still try the first candidate in the player if needed
 }
+
+/* ---------------------- NEWS TICKER COMPONENT ---------------------- */
+
+function NewsTicker() {
+  const [items, setItems] = useState<string[]>([]);
+  const [index, setIndex] = useState(0);
+
+  // Load ticker items from the same source the admin page uses
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const found = await getNewsItems();
+        if (!cancelled && Array.isArray(found)) {
+          setItems(found.filter((s) => typeof s === "string" && s.trim().length > 0));
+        }
+      } catch (e) {
+        console.error("Error loading news ticker items", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Rotate every 10 seconds if multiple items
+  useEffect(() => {
+    if (items.length <= 1) return;
+    const id = setInterval(() => {
+      setIndex((prev) => (prev + 1) % items.length);
+    }, 10_000);
+    return () => clearInterval(id);
+  }, [items]);
+
+  if (!items.length) return null;
+
+  const current = items[index];
+
+  return (
+    <div className="w-full border-y border-red-800/60 bg-gradient-to-r from-red-900/40 via-black to-red-900/40 text-xs sm:text-sm text-red-100">
+      <div className="flex items-center gap-3 px-3 py-2 overflow-hidden">
+        <span className="inline-flex items-center rounded-full bg-red-700 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide">
+          Live News
+        </span>
+        <div className="relative flex-1 overflow-hidden">
+          <div className="ticker-inner whitespace-nowrap">
+            {current}
+          </div>
+        </div>
+      </div>
+      <style jsx>{`
+        .ticker-inner {
+          display: inline-block;
+          animation: ticker-slide 18s linear infinite;
+        }
+        @keyframes ticker-slide {
+          0% {
+            transform: translateX(100%);
+          }
+          100% {
+            transform: translateX(-120%);
+          }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+/* --------------------------- MAIN PAGE ----------------------------- */
 
 export default function WatchPage() {
   const params = useParams();
@@ -230,7 +310,9 @@ export default function WatchPage() {
         if (!cancelled) setIsLoading(false);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [channelId]);
 
   // Fetch current program (with probing + cache + stickiness)
@@ -299,11 +381,15 @@ export default function WatchPage() {
           resolvedSrc = getVideoUrlForProgram(programToSet) || "";
         }
 
-        const finalProgram: ProgramWithSrc = { ...(programToSet as ProgramWithSrc), _resolved_src: resolvedSrc || "" };
+        const finalProgram: ProgramWithSrc = {
+          ...(programToSet as ProgramWithSrc),
+          _resolved_src: resolvedSrc || "",
+        };
 
         setCurrentProgram((prev) => {
           const prevSrc = prev?._resolved_src;
-          const changed = prevSrc !== finalProgram._resolved_src || prev?.start_time !== finalProgram.start_time;
+          const changed =
+            prevSrc !== finalProgram._resolved_src || prev?.start_time !== finalProgram.start_time;
           if (changed) setVideoPlayerKey(Date.now());
           return finalProgram;
         });
@@ -318,10 +404,11 @@ export default function WatchPage() {
           duration: 300,
           start_time: new Date().toISOString(),
           poster_url: (channelDetails as any)?.logo_url || null,
-          _resolved_src: getVideoUrlForProgram({
-            channel_id: numericChannelId,
-            mp4_url: `channel${numericChannelId}/standby_blacktruthtv.mp4`,
-          } as Program) || "",
+          _resolved_src:
+            getVideoUrlForProgram({
+              channel_id: numericChannelId,
+              mp4_url: `channel${numericChannelId}/standby_blacktruthtv.mp4`,
+            } as Program) || "",
         } as ProgramWithSrc);
       } finally {
         setIsResolvingSrc(false);
@@ -351,7 +438,10 @@ export default function WatchPage() {
   // Polling: wake near expected end, otherwise every 60s; don't poll while probing
   useEffect(() => {
     if (channelId == null) return;
-    if (channelId === CH21_ID_NUMERIC) { setIsLoading(false); return; }
+    if (channelId === CH21_ID_NUMERIC) {
+      setIsLoading(false);
+      return;
+    }
 
     let timer: NodeJS.Timeout | null = null;
 
@@ -372,24 +462,30 @@ export default function WatchPage() {
         if (Number.isFinite(s) && d > 0) {
           const endMs = s + d * 1000;
           const wakeIn = Math.max(5_000, endMs - Date.now() - 5_000); // 5s before end
-          timer = setTimeout(() => { refetch(); scheduleNext(); }, wakeIn);
+          timer = setTimeout(() => {
+            refetch();
+            scheduleNext();
+          }, wakeIn);
           return;
         }
       }
       // no active program → poll in 60s
-      timer = setTimeout(() => { refetch(); scheduleNext(); }, 60_000);
+      timer = setTimeout(() => {
+        refetch();
+        scheduleNext();
+      }, 60_000);
     };
 
     scheduleNext();
-    return () => { if (timer) clearTimeout(timer); };
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
   }, [channelId, currentProgram, fetchCurrentProgram, fetchUpcoming, isResolvingSrc]);
 
   // Player & render
   const videoSrc = currentProgram?._resolved_src; // use the probed or fallback candidate
   const posterSrc =
-    (currentProgram as any)?.poster_url ||
-    (channelDetails as any)?.logo_url ||
-    undefined;
+    (currentProgram as any)?.poster_url || (channelDetails as any)?.logo_url || undefined;
   const isStandby = (currentProgram as any)?.id === STANDBY_PLACEHOLDER_ID;
 
   const handleEnded = useCallback(() => {
@@ -457,6 +553,7 @@ export default function WatchPage() {
 
   return (
     <div className="bg-black min-h-screen flex flex-col text-white">
+      {/* Top bar */}
       <div className="p-4 flex items-center justify-between bg-gray-900/50 sticky top-0 z-10">
         <button
           onClick={() => router.back()}
@@ -471,7 +568,7 @@ export default function WatchPage() {
         <div className="w-10 h-10" />
       </div>
 
-      {/* ⬇️ NEW: Ticker sits right under the header bar */}
+      {/* 🔴 NEW: News ticker under header */}
       <NewsTicker />
 
       {/* Video area + subtle overlays */}
@@ -490,7 +587,8 @@ export default function WatchPage() {
           <>
             <h2 className="text-2xl font-bold">{currentProgram.title}</h2>
             <p className="text-sm text-gray-400">
-              Channel: {channelDetails?.name || (channelId != null ? `Channel ${channelId}` : "")}
+              Channel:{" "}
+              {channelDetails?.name || (channelId != null ? `Channel ${channelId}` : "")}
             </p>
             {!isStandby && currentProgram.start_time && (
               <p className="text-sm text-gray-400">
