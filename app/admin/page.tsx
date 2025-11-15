@@ -18,7 +18,8 @@ import {
   Code,
   Edit,
   Music2,
-  PlayCircle, // ⬅️ added
+  PlayCircle,
+  PlusCircle,
 } from "lucide-react";
 import {
   Card,
@@ -109,7 +110,7 @@ export default function AdminDashboard() {
           description: "Rebuild scheduled start times for all channels",
         },
         {
-          name: "Auto-Schedule from Buckets",          // ⬅️ new link
+          name: "Auto-Schedule from Buckets",
           href: "/admin/auto-schedule",
           icon: <PlayCircle className="h-4 w-4" />,
           description: "Build a full schedule from channel bucket MP4s",
@@ -132,6 +133,13 @@ export default function AdminDashboard() {
           href: "/admin/channel-manager",
           icon: <Edit className="h-4 w-4" />,
           description: "Edit channel titles, descriptions, and visibility",
+        },
+        {
+          name: "Quick Add Channel",
+          href: "/admin/add-channel",
+          icon: <PlusCircle className="h-4 w-4" />,
+          description:
+            "Send details to Channel Manager to create a new channel",
         },
         {
           name: "Update Channel Images",
@@ -215,11 +223,12 @@ export default function AdminDashboard() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#040814] via-[#050b1a] to-black text-white pb-10">
       <div className="mx-auto max-w-6xl px-4 pt-8">
-
         {/* DEBUG BANNER – you can remove this once everything is working */}
         <div className="mb-6 rounded-lg border border-amber-400/60 bg-amber-500/10 px-4 py-3">
           <p className="text-sm font-semibold text-amber-300">
-            ✅ You are on the <span className="font-bold">Black Truth TV Admin Dashboard</span> (/admin)
+            ✅ You are on the{" "}
+            <span className="font-bold">Black Truth TV Admin Dashboard</span>{" "}
+            (/admin)
           </p>
         </div>
 
@@ -295,7 +304,7 @@ export default function AdminDashboard() {
                   </div>
                 </div>
               </CardHeader>
-              <CardContent className="pt-0 pb-5">
+              <CardContent className="pb-5 pt-0">
                 <div className="space-y-2">
                   {section.links.map((link, linkIndex) => {
                     if (link.flag === "beta" && !ADMIN_BETA) return null;
@@ -345,7 +354,10 @@ export default function AdminDashboard() {
                 </p>
               </CardContent>
               <CardFooter>
-                <ConfirmLink href="/admin/reset-programs" label="Reset Programs" />
+                <ConfirmLink
+                  href="/admin/reset-programs"
+                  label="Reset Programs"
+                />
               </CardFooter>
             </Card>
           )}
