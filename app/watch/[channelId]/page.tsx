@@ -1,4 +1,3 @@
-// app/channels/[channelId]/watch/page.tsx
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
@@ -11,7 +10,7 @@ import {
   supabase,
   STANDBY_PLACEHOLDER_ID,
 } from "@/lib/supabase";
-import { getNewsItems } from "@/lib/news-data"; // 🔴 NEW: pull ticker text from same source
+import { getNewsItems } from "@/lib/news-data";
 import type { Channel, Program } from "@/types";
 import { ChevronLeft, Loader2 } from "lucide-react";
 
@@ -195,75 +194,6 @@ async function resolvePlayableUrl(candidates: string[]): Promise<string | undefi
   return undefined; // we'll still try the first candidate in the player if needed
 }
 
-/* ---------------------- NEWS TICKER COMPONENT ---------------------- */
-
-function NewsTicker() {
-  const [items, setItems] = useState<string[]>([]);
-  const [index, setIndex] = useState(0);
-
-  // Load ticker items from the same source the admin page uses
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const found = await getNewsItems();
-        if (!cancelled && Array.isArray(found)) {
-          setItems(found.filter((s) => typeof s === "string" && s.trim().length > 0));
-        }
-      } catch (e) {
-        console.error("Error loading news ticker items", e);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Rotate every 10 seconds if multiple items
-  useEffect(() => {
-    if (items.length <= 1) return;
-    const id = setInterval(() => {
-      setIndex((prev) => (prev + 1) % items.length);
-    }, 10_000);
-    return () => clearInterval(id);
-  }, [items]);
-
-  if (!items.length) return null;
-
-  const current = items[index];
-
-  return (
-    <div className="w-full border-y border-red-800/60 bg-gradient-to-r from-red-900/40 via-black to-red-900/40 text-xs sm:text-sm text-red-100">
-      <div className="flex items-center gap-3 px-3 py-2 overflow-hidden">
-        <span className="inline-flex items-center rounded-full bg-red-700 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide">
-          Live News
-        </span>
-        <div className="relative flex-1 overflow-hidden">
-          <div className="ticker-inner whitespace-nowrap">
-            {current}
-          </div>
-        </div>
-      </div>
-      <style jsx>{`
-        .ticker-inner {
-          display: inline-block;
-          animation: ticker-slide 18s linear infinite;
-        }
-        @keyframes ticker-slide {
-          0% {
-            transform: translateX(100%);
-          }
-          100% {
-            transform: translateX(-120%);
-          }
-        }
-      `}</style>
-    </div>
-  );
-}
-
-/* --------------------------- MAIN PAGE ----------------------------- */
-
 export default function WatchPage() {
   const params = useParams();
   const router = useRouter();
@@ -277,6 +207,8 @@ export default function WatchPage() {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isResolvingSrc, setIsResolvingSrc] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [newsItems, setNewsItems] = useState<string[]>([]);
 
   const getNowMs = useCallback(() => Date.now(), []);
 
@@ -314,6 +246,18 @@ export default function WatchPage() {
       cancelled = true;
     };
   }, [channelId]);
+
+  // Load news ticker items
+  useEffect(() => {
+    (async () => {
+      try {
+        const items = await getNewsItems();
+        setNewsItems(items);
+      } catch (e) {
+        console.warn("Error loading news ticker", e);
+      }
+    })();
+  }, []);
 
   // Fetch current program (with probing + cache + stickiness)
   const fetchCurrentProgram = useCallback(
@@ -553,8 +497,8 @@ export default function WatchPage() {
 
   return (
     <div className="bg-black min-h-screen flex flex-col text-white">
-      {/* Top bar */}
-      <div className="p-4 flex items-center justify-between bg-gray-900/50 sticky top-0 z-10">
+      {/* Top header bar */}
+      <div className="p-4 flex items-center justify-between bg-gray-900/50 sticky top-0 z-20">
         <button
           onClick={() => router.back()}
           className="p-2 rounded-full hover:bg-gray-700"
@@ -563,20 +507,45 @@ export default function WatchPage() {
           <ChevronLeft className="h-6 w-6" />
         </button>
         <h1 className="text-xl font-semibold truncate px-2">
-          {channelDetails?.name || (channelId != null ? `Channel ${channelId}` : "Channel")}
+          {channelDetails?.name ||
+            (channelId != null ? `Channel ${channelId}` : "Channel")}
         </h1>
         <div className="w-10 h-10" />
       </div>
 
-      {/* 🔴 NEW: News ticker under header */}
-      <NewsTicker />
+      {/* FULL-WIDTH TICKER STRIP */}
+      <div className="h-8 w-full overflow-hidden bg-gray-950 border-y border-gray-800 z-10">
+        {newsItems.length === 0 ? (
+          <div className="h-full flex items-center px-4 text-xs text-gray-400">
+            No breaking news set.
+          </div>
+        ) : (
+          <div className="h-full flex items-center">
+            <div className="btv-ticker-track animate-btv-ticker">
+              <span className="mr-6 font-semibold text-amber-300 uppercase tracking-wide">
+                Breaking News:
+              </span>
+              {newsItems.map((item, idx) => (
+                <span
+                  key={`${item}-${idx}`}
+                  className="mr-8 text-xs text-gray-200"
+                >
+                  {item}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Video area + subtle overlays */}
       <div className="relative w-full aspect-video bg-black flex items-center justify-center">
         {content}
         <LoadingOverlay
           visible={Boolean((isLoading && !currentProgram) || isResolvingSrc)}
-          label={isLoading && !currentProgram ? "Loading channel…" : "Preparing stream…"}
+          label={
+            isLoading && !currentProgram ? "Loading channel…" : "Preparing stream…"
+          }
         />
         <MobileHint show={!isResolvingSrc && Boolean(currentProgram?._resolved_src)} />
       </div>
@@ -588,22 +557,30 @@ export default function WatchPage() {
             <h2 className="text-2xl font-bold">{currentProgram.title}</h2>
             <p className="text-sm text-gray-400">
               Channel:{" "}
-              {channelDetails?.name || (channelId != null ? `Channel ${channelId}` : "")}
+              {channelDetails?.name ||
+                (channelId != null ? `Channel ${channelId}` : "")}
             </p>
             {!isStandby && currentProgram.start_time && (
               <p className="text-sm text-gray-400">
-                Scheduled Start: {new Date(currentProgram.start_time).toLocaleString()}
+                Scheduled Start:{" "}
+                {new Date(currentProgram.start_time).toLocaleString()}
               </p>
             )}
             {currentProgram?.description && (
-              <p className="text-xs text-gray-300 mt-1">{currentProgram.description}</p>
+              <p className="text-xs text-gray-300 mt-1">
+                {currentProgram.description}
+              </p>
             )}
             {upcomingPrograms.length > 0 && (
               <div className="mt-6">
-                <h3 className="text-lg font-semibold text-white mb-2">Upcoming Programs</h3>
+                <h3 className="text-lg font-semibold text-white mb-2">
+                  Upcoming Programs
+                </h3>
                 <ul className="text-sm text-gray-300 space-y-1">
                   {upcomingPrograms.map((p, idx) => (
-                    <li key={`${p.channel_id}-${p.start_time}-${p.title}-${idx}`}>
+                    <li
+                      key={`${p.channel_id}-${p.start_time}-${p.title}-${idx}`}
+                    >
                       <span className="font-medium">{p.title}</span>{" "}
                       <span className="text-gray-400">
                         —{" "}
