@@ -10,7 +10,6 @@ import {
   supabase,
   STANDBY_PLACEHOLDER_ID,
 } from "@/lib/supabase";
-import { getNewsItems } from "@/lib/news-data";
 import type { Channel, Program } from "@/types";
 import { ChevronLeft, Loader2 } from "lucide-react";
 
@@ -41,7 +40,15 @@ const LoadingOverlay = ({
     >
       <div className="flex items-center gap-3 px-4 py-2 rounded-full bg-black/60">
         <svg className="h-5 w-5 animate-spin" viewBox="0 0 24 24" aria-hidden="true">
-          <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" opacity=".25" />
+          <circle
+            cx="12"
+            cy="12"
+            r="10"
+            stroke="currentColor"
+            strokeWidth="4"
+            fill="none"
+            opacity=".25"
+          />
           <path d="M22 12a10 10 0 0 1-10 10" fill="none" stroke="currentColor" strokeWidth="4" />
         </svg>
         <span className="text-sm">{label}</span>
@@ -208,7 +215,9 @@ export default function WatchPage() {
   const [isResolvingSrc, setIsResolvingSrc] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
+  // NEWS STATE
   const [newsItems, setNewsItems] = useState<string[]>([]);
+  const [newsLoading, setNewsLoading] = useState<boolean>(true);
 
   const getNowMs = useCallback(() => Date.now(), []);
 
@@ -247,16 +256,31 @@ export default function WatchPage() {
     };
   }, [channelId]);
 
-  // Load news ticker items
+  // Load news items for ticker
   useEffect(() => {
+    let cancelled = false;
     (async () => {
       try {
-        const items = await getNewsItems();
-        setNewsItems(items);
+        const res = await fetch("/api/news", { cache: "no-store" });
+        if (!res.ok) throw new Error("Failed to load news");
+        const json = await res.json();
+        if (!cancelled) {
+          const items = Array.isArray(json.items) ? json.items : [];
+          setNewsItems(items);
+        }
       } catch (e) {
-        console.warn("Error loading news ticker", e);
+        if (!cancelled) {
+          setNewsItems([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setNewsLoading(false);
+        }
       }
     })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Fetch current program (with probing + cache + stickiness)
@@ -274,7 +298,7 @@ export default function WatchPage() {
 
         const { data, error: dbError } = await supabase
           .from("programs")
-          .select("channel_id,title,mp4_url,start_time,duration")
+          .select("channel_id,title,mp4_url,start_time,duration,description,poster_url")
           .eq("channel_id", numericChannelId)
           .order("start_time", { ascending: true });
 
@@ -285,18 +309,17 @@ export default function WatchPage() {
 
         // Choose program (active or standby)
         let programToSet: Program =
-          active
-            ? { ...active, channel_id: numericChannelId }
-            : ({
-                id: STANDBY_PLACEHOLDER_ID as any,
-                title: "Standby Programming",
-                description: "Programming will resume shortly.",
-                channel_id: numericChannelId,
-                mp4_url: `channel${numericChannelId}/standby_blacktruthtv.mp4`,
-                duration: 300,
-                start_time: new Date().toISOString(),
-                poster_url: (channelDetails as any)?.logo_url || null,
-              } as unknown as Program);
+          active ??
+          ({
+            id: STANDBY_PLACEHOLDER_ID as any,
+            title: "Standby Programming",
+            description: "Programming will resume shortly.",
+            channel_id: numericChannelId,
+            mp4_url: `channel${numericChannelId}/standby_blacktruthtv.mp4`,
+            duration: 300,
+            start_time: new Date().toISOString(),
+            poster_url: (channelDetails as any)?.logo_url || null,
+          } as unknown as Program);
 
         // Build a cache key specific to this asset instance
         const cacheKey = `${programToSet.channel_id}|${programToSet.mp4_url}|${programToSet.start_time}`;
@@ -306,7 +329,10 @@ export default function WatchPage() {
         if (resolvedSrc === undefined) {
           const candidates = getCandidateUrlsForProgram(programToSet);
           // Try to resolve; if still undefined, fall back to first candidate (play optimistically)
-          resolvedSrc = (await resolvePlayableUrl(candidates)) ?? candidates[0] ?? null;
+          resolvedSrc =
+            (await resolvePlayableUrl(candidates)) ??
+            candidates[0] ??
+            null;
           urlProbeCache.set(cacheKey, resolvedSrc);
         }
 
@@ -333,7 +359,8 @@ export default function WatchPage() {
         setCurrentProgram((prev) => {
           const prevSrc = prev?._resolved_src;
           const changed =
-            prevSrc !== finalProgram._resolved_src || prev?.start_time !== finalProgram.start_time;
+            prevSrc !== finalProgram._resolved_src ||
+            prev?.start_time !== finalProgram.start_time;
           if (changed) setVideoPlayerKey(Date.now());
           return finalProgram;
         });
@@ -429,7 +456,9 @@ export default function WatchPage() {
   // Player & render
   const videoSrc = currentProgram?._resolved_src; // use the probed or fallback candidate
   const posterSrc =
-    (currentProgram as any)?.poster_url || (channelDetails as any)?.logo_url || undefined;
+    (currentProgram as any)?.poster_url ||
+    (channelDetails as any)?.logo_url ||
+    undefined;
   const isStandby = (currentProgram as any)?.id === STANDBY_PLACEHOLDER_ID;
 
   const handleEnded = useCallback(() => {
@@ -495,10 +524,27 @@ export default function WatchPage() {
     content = <p className="text-gray-400 p-4 text-center">Initializing channel…</p>;
   }
 
+  // Placeholder news if none yet
+  const effectiveNews =
+    newsItems && newsItems.length > 0
+      ? newsItems
+      : [
+          "Black Truth TV • Democracy on Trial – Tonight 8PM PST",
+          "Freedom School • New civil rights lecture series now streaming.",
+          "Construction Queen TV • Manhour Mondays live training upcoming.",
+        ];
+
+  // Slightly slower if many items
+  const tickerDuration =
+    effectiveNews.length >= 6 ? "60s" : effectiveNews.length >= 3 ? "45s" : "30s";
+
+  const channelLabel =
+    channelDetails?.name || (channelId != null ? `Channel ${channelId}` : "Channel");
+
   return (
     <div className="bg-black min-h-screen flex flex-col text-white">
-      {/* Top header bar */}
-      <div className="p-4 flex items-center justify-between bg-gray-900/50 sticky top-0 z-20">
+      {/* Top bar */}
+      <div className="p-4 flex items-center justify-between bg-gray-900/50 sticky top-0 z-10">
         <button
           onClick={() => router.back()}
           className="p-2 rounded-full hover:bg-gray-700"
@@ -507,35 +553,9 @@ export default function WatchPage() {
           <ChevronLeft className="h-6 w-6" />
         </button>
         <h1 className="text-xl font-semibold truncate px-2">
-          {channelDetails?.name ||
-            (channelId != null ? `Channel ${channelId}` : "Channel")}
+          {channelDetails?.name || (channelId != null ? `Channel ${channelId}` : "Channel")}
         </h1>
         <div className="w-10 h-10" />
-      </div>
-
-      {/* FULL-WIDTH TICKER STRIP */}
-      <div className="h-8 w-full overflow-hidden bg-gray-950 border-y border-gray-800 z-10">
-        {newsItems.length === 0 ? (
-          <div className="h-full flex items-center px-4 text-xs text-gray-400">
-            No breaking news set.
-          </div>
-        ) : (
-          <div className="h-full flex items-center">
-            <div className="btv-ticker-track animate-btv-ticker">
-              <span className="mr-6 font-semibold text-amber-300 uppercase tracking-wide">
-                Breaking News:
-              </span>
-              {newsItems.map((item, idx) => (
-                <span
-                  key={`${item}-${idx}`}
-                  className="mr-8 text-xs text-gray-200"
-                >
-                  {item}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Video area + subtle overlays */}
@@ -543,22 +563,18 @@ export default function WatchPage() {
         {content}
         <LoadingOverlay
           visible={Boolean((isLoading && !currentProgram) || isResolvingSrc)}
-          label={
-            isLoading && !currentProgram ? "Loading channel…" : "Preparing stream…"
-          }
+          label={isLoading && !currentProgram ? "Loading channel…" : "Preparing stream…"}
         />
         <MobileHint show={!isResolvingSrc && Boolean(currentProgram?._resolved_src)} />
       </div>
 
-      {/* Below the player */}
+      {/* Below the player (program info + upcoming) */}
       <div className="p-4 flex-grow">
         {channelId !== CH21_ID_NUMERIC && currentProgram && !isLoading && (
           <>
             <h2 className="text-2xl font-bold">{currentProgram.title}</h2>
             <p className="text-sm text-gray-400">
-              Channel:{" "}
-              {channelDetails?.name ||
-                (channelId != null ? `Channel ${channelId}` : "")}
+              Channel: {channelLabel}
             </p>
             {!isStandby && currentProgram.start_time && (
               <p className="text-sm text-gray-400">
@@ -567,9 +583,7 @@ export default function WatchPage() {
               </p>
             )}
             {currentProgram?.description && (
-              <p className="text-xs text-gray-300 mt-1">
-                {currentProgram.description}
-              </p>
+              <p className="text-xs text-gray-300 mt-1">{currentProgram.description}</p>
             )}
             {upcomingPrograms.length > 0 && (
               <div className="mt-6">
@@ -578,9 +592,7 @@ export default function WatchPage() {
                 </h3>
                 <ul className="text-sm text-gray-300 space-y-1">
                   {upcomingPrograms.map((p, idx) => (
-                    <li
-                      key={`${p.channel_id}-${p.start_time}-${p.title}-${idx}`}
-                    >
+                    <li key={`${p.channel_id}-${p.start_time}-${p.title}-${idx}`}>
                       <span className="font-medium">{p.title}</span>{" "}
                       <span className="text-gray-400">
                         —{" "}
@@ -598,6 +610,53 @@ export default function WatchPage() {
           </>
         )}
       </div>
+
+      {/* ======================= BLACK TRUTH TV TICKER BAR ======================= */}
+      <div className="mt-auto w-full btv-ticker-shell">
+        <div className="mx-auto max-w-6xl">
+          {/* ROW 1: CNN-style BREAKING bar */}
+          <div className="flex items-center gap-3 px-4 py-1.5 border-b border-slate-900/80">
+            <span className="btv-breaking-pill btv-breaking-pulse">
+              <span className="h-2 w-2 rounded-full bg-red-300 shadow shadow-red-500" />
+              Live • Breaking
+            </span>
+            <span className="text-[11px] text-slate-200/90 truncate">
+              {channelLabel} •{" "}
+              {new Date().toLocaleString("en-US", {
+                month: "short",
+                day: "2-digit",
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+            </span>
+            <span className="ml-auto btv-fox-label hidden sm:inline-flex">
+              Black Truth TV • Newsroom
+            </span>
+          </div>
+
+          {/* ROW 2: FOX-style scrolling ticker */}
+          <div className="relative overflow-hidden bg-black/80">
+            {/* gradient fades at edges */}
+            <div className="pointer-events-none absolute inset-y-0 left-0 w-16 bg-gradient-to-r from-black via-black/80 to-transparent" />
+            <div className="pointer-events-none absolute inset-y-0 right-0 w-16 bg-gradient-to-l from-black via-black/80 to-transparent" />
+
+            <div
+              className="btv-ticker-track animate-btv-ticker text-xs text-slate-100 flex items-center gap-8 px-4 py-2"
+              style={{ animationDuration: tickerDuration }}
+            >
+              {effectiveNews.map((item, idx) => (
+                <span key={`${item}-${idx}`} className="inline-flex items-center gap-2">
+                  <span className="btv-fox-label">
+                    BTV
+                  </span>
+                  <span className="whitespace-nowrap">{item}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+      {/* ===================================================================== */}
     </div>
   );
 }
