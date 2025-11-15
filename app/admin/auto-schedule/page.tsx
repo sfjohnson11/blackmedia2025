@@ -339,18 +339,32 @@ export default function AutoSchedulePage() {
 
             {/* BASE START with seconds enabled */}
             <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1">
-                Base Start (local time)
-              </label>
-              <input
-                type="datetime-local"
-                step="1"         // <-- enables seconds
-                value={baseStart}
-                onChange={(e) => setBaseStart(e.target.value)}
-                className="w-full rounded-md border border-slate-600 bg-slate-950 px-3 py-1.5 text-sm text-white"
-              />
-            </div>
-          </div>
+  <label className="block text-xs font-medium text-slate-300 mb-1">
+    Base Start (local time)
+  </label>
+
+  <input
+    type="datetime-local"
+    value={baseStart}
+    onChange={(e) => {
+      console.log("Picked datetime:", e.target.value);
+      setBaseStart(e.target.value);
+    }}
+    step={1} // <-- THIS ALLOWS SECONDS
+    className="w-full rounded-md border border-slate-600 bg-slate-950 px-3 py-1.5 text-sm text-white 
+               focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
+    required
+  />
+
+  <p className="mt-1 text-[10px] text-slate-400">
+    Format must be: <code className="text-amber-300">YYYY-MM-DDTHH:MM:SS</code>
+  </p>
+
+  {/* Debug output so you can SEE what the browser sends */}
+  <p className="mt-1 text-[10px] text-emerald-300">
+    Current Value: {baseStart || "(none)"}
+  </p>
+</div>
 
           <div className="flex flex-wrap items-center gap-3">
             <Button
