@@ -3,6 +3,7 @@
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import VideoPlayer from "@/components/video-player";
+import NewsTicker from "@/components/NewsTicker"; // ⬅️ NEW IMPORT
 import {
   getCandidateUrlsForProgram,
   getVideoUrlForProgram,
@@ -469,6 +470,9 @@ export default function WatchPage() {
         </h1>
         <div className="w-10 h-10" />
       </div>
+
+      {/* ⬇️ NEW: Ticker sits right under the header bar */}
+      <NewsTicker />
 
       {/* Video area + subtle overlays */}
       <div className="relative w-full aspect-video bg-black flex items-center justify-center">
