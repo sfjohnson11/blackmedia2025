@@ -16,7 +16,11 @@
 
 body {
   color: rgb(var(--foreground-rgb));
-  background: linear-gradient(to bottom, transparent, rgb(var(--background-end-rgb)))
+  background: linear-gradient(
+      to bottom,
+      transparent,
+      rgb(var(--background-end-rgb))
+    )
     rgb(var(--background-start-rgb));
 }
 
@@ -188,17 +192,18 @@ input[type="range"]::-moz-range-thumb:hover {
 }
 
 /* ===================================================================== */
-/* ===== BLACK TRUTH TV — NEWS TICKER (REPLACES OLD ONE COMPLETELY) ===== */
+/* ===== BLACK TRUTH TV — ADVANCED NEWS TICKER SYSTEM ================== */
 /* ===================================================================== */
 
+/* Track that scrolls all news items — full width, starts off-screen */
 .btv-ticker-track {
   display: inline-flex;
   align-items: center;
   white-space: nowrap;
-  padding-left: 100%; /* Start fully off-screen on the right */
+  padding-left: 100%; /* start fully to the right */
 }
 
-/* Full-screen continuous motion */
+/* Main marquee animation */
 @keyframes btv-ticker {
   0% {
     transform: translateX(0%);
@@ -208,11 +213,53 @@ input[type="range"]::-moz-range-thumb:hover {
   }
 }
 
+/* Default motion (can override duration via inline style) */
 .animate-btv-ticker {
   animation: btv-ticker 40s linear infinite;
   will-change: transform;
 }
 
+/* Pause on hover if we ever want it */
 .animate-btv-ticker.paused {
   animation-play-state: paused;
+}
+
+/* CNN-style BREAKING pill */
+.btv-breaking-pill {
+  @apply inline-flex items-center gap-1 rounded-full px-3 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em];
+  background: linear-gradient(to right, #b91c1c, #ef4444);
+  color: #fef2f2;
+  box-shadow: 0 0 12px rgba(248, 113, 113, 0.4);
+}
+
+/* Flashing effect for LIVE dot / BREAKING text */
+.btv-breaking-pulse {
+  animation: btv-pulse 1.3s ease-in-out infinite;
+}
+
+@keyframes btv-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.55;
+    transform: scale(0.98);
+  }
+}
+
+/* FOX-ish label chip for channel branding */
+.btv-fox-label {
+  @apply inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em];
+  background: linear-gradient(to right, #1d4ed8, #0f172a);
+  color: #e5e7eb;
+  border: 1px solid rgba(191, 219, 254, 0.5);
+}
+
+/* Shell bar for the ticker at the bottom */
+.btv-ticker-shell {
+  background: radial-gradient(circle at top, rgba(148, 163, 184, 0.22), transparent),
+    linear-gradient(to right, #020617, #020617, #020617);
+  border-top: 1px solid rgba(15, 23, 42, 0.9);
 }
