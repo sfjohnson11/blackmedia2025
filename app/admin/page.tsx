@@ -208,6 +208,14 @@ export default function AdminDashboard() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#040814] via-[#050b1a] to-black text-white pb-10">
       <div className="mx-auto max-w-6xl px-4 pt-8">
+
+        {/* DEBUG BANNER – you can remove this once everything is working */}
+        <div className="mb-6 rounded-lg border border-amber-400/60 bg-amber-500/10 px-4 py-3">
+          <p className="text-sm font-semibold text-amber-300">
+            ✅ You are on the <span className="font-bold">Black Truth TV Admin Dashboard</span> (/admin)
+          </p>
+        </div>
+
         {/* Header */}
         <header className="mb-8 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
           <div>
