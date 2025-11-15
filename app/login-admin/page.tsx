@@ -2,7 +2,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { AlertCircle, Lock } from "lucide-react";
 
@@ -10,7 +10,6 @@ export const dynamic = "force-dynamic";
 
 export default function AdminLoginPage() {
   const router = useRouter();
-  const params = useSearchParams();
   const supabase = createClientComponentClient();
 
   const [email, setEmail] = useState("");
@@ -34,9 +33,8 @@ export default function AdminLoginPage() {
       return;
     }
 
-    // ✅ Let the SERVER layout enforce "admin" role.
-    const dest = params.get("redirect") || "/admin";
-    router.replace(dest);
+    // ✅ Just send to /admin. The admin layout (or future guard) will handle access.
+    router.replace("/admin");
   }
 
   return (
