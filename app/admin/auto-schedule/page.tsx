@@ -1,7 +1,7 @@
 // app/admin/auto-schedule/page.tsx
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import {
@@ -52,15 +52,29 @@ const CHANNEL_BUCKETS = [
   "channel27",
   "channel28",
   "channel29",
-  "freedom-school",
+  "freedom-school", // channel 30
 ];
+
+// 🔧 Helper: format Date → "YYYY-MM-DD HH:mm:ss" for Postgres
+function formatForPostgresTimestamp(date: Date): string {
+  const pad = (n: number) => n.toString().padStart(2, "0");
+
+  const year = date.getFullYear();
+  const month = pad(date.getMonth() + 1);
+  const day = pad(date.getDate());
+  const hour = pad(date.getHours());
+  const minute = pad(date.getMinutes());
+  const second = pad(date.getSeconds());
+
+  return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
+}
 
 export default function AutoSchedulePage() {
   const supabase = createClientComponentClient();
 
   const [channelId, setChannelId] = useState<string>("");
   const [bucketName, setBucketName] = useState<string>("channel1");
-  const [baseStart, setBaseStart] = useState<string>(""); // datetime-local
+  const [baseStart, setBaseStart] = useState<string>(""); // datetime-local value
   const [files, setFiles] = useState<BucketFile[]>([]);
   const [loadingFiles, setLoadingFiles] = useState(false);
   const [savingSchedule, setSavingSchedule] = useState(false);
@@ -229,7 +243,9 @@ export default function AutoSchedulePage() {
     const sec = value ? Number(value) : undefined;
     setFiles((prev) =>
       prev.map((f) =>
-        f.name === name ? { ...f, duration: Number.isFinite(sec) ? sec : undefined } : f
+        f.name === name
+          ? { ...f, duration: Number.isFinite(sec) ? sec : undefined }
+          : f
       )
     );
   }
@@ -264,7 +280,8 @@ export default function AutoSchedulePage() {
       return;
     }
 
-    // Build schedule
+    // baseStart from <input type="datetime-local"> is like "2025-11-15T00:00"
+    // This is fine for new Date(...)
     const base = new Date(baseStart);
     if (Number.isNaN(base.getTime())) {
       setErr("Base start time is invalid.");
@@ -302,16 +319,15 @@ export default function AutoSchedulePage() {
 
       rows.push({
         channel_id: chId,
-        start_time: currentStart.toISOString(),
+        // 🔑 Use Postgres-friendly "YYYY-MM-DD HH:mm:ss"
+        start_time: formatForPostgresTimestamp(currentStart),
         title: file.name,
         mp4_url: publicUrl,
         duration: durationSec,
       });
 
-      // Advance currentStart by duration
-      currentStart = new Date(
-        currentStart.getTime() + durationSec * 1000
-      );
+      // Advance currentStart by duration (in milliseconds)
+      currentStart = new Date(currentStart.getTime() + durationSec * 1000);
     }
 
     // Insert into programs table
@@ -387,7 +403,7 @@ export default function AutoSchedulePage() {
                 placeholder="e.g. 1"
               />
               <p className="mt-1 text-[10px] text-slate-400">
-                Use the numeric channel ID your viewer uses (1–29, etc.).
+                Use the numeric channel ID your viewer uses (1–30).
               </p>
             </div>
 
@@ -454,9 +470,7 @@ export default function AutoSchedulePage() {
               variant="outline"
               onClick={handleDetectAll}
               disabled={
-                files.length === 0 ||
-                savingSchedule ||
-                loadingFiles
+                files.length === 0 || savingSchedule || loadingFiles
               }
               className="border-slate-600 bg-slate-950 text-sm"
             >
@@ -597,9 +611,7 @@ export default function AutoSchedulePage() {
             type="button"
             onClick={handleCreateSchedule}
             disabled={
-              savingSchedule ||
-              files.length === 0 ||
-              selectedCount === 0
+              savingSchedule || files.length === 0 || selectedCount === 0
             }
             className="bg-emerald-600 hover:bg-emerald-700 text-sm"
           >
