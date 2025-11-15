@@ -1,215 +1,221 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import { supabase } from "@/lib/supabase"
-import { Button } from "@/components/ui/button"
-import Link from "next/link"
-import { ArrowLeft, CheckCircle, XCircle, ImageIcon, Upload } from "lucide-react"
+import React, { useState, useEffect } from "react";
+import { supabase } from "@/lib/supabase";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useToast } from "@/components/ui/use-toast";
 
-export default function UploadChannelImagePage() {
-  const [isLoading, setIsLoading] = useState(false)
-  const [result, setResult] = useState<{ success: boolean; message: string } | null>(null)
-  const [channelId, setChannelId] = useState("")
-  const [channelName, setChannelName] = useState("")
-  const [uploadStep, setUploadStep] = useState<string | null>(null)
+type Channel = {
+  id: number;
+  name: string | null;
+};
 
-  const uploadAndUpdateChannel = async () => {
-    if (!channelId) {
-      setResult({
-        success: false,
-        message: "Please enter a channel ID",
-      })
-      return
+export default function UpdateChannelImage() {
+  const [channelId, setChannelId] = useState<string>("");
+  const [file, setFile] = useState<File | null>(null);
+  const [channels, setChannels] = useState<Channel[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loadingChannels, setLoadingChannels] = useState(true);
+  const { toast } = useToast();
+
+  // ✅ Fetch channels when component mounts
+  useEffect(() => {
+    async function fetchChannels() {
+      try {
+        const { data, error } = await supabase
+          .from("channels")
+          .select("id, name")
+          .order("id");
+
+        if (error) throw error;
+        setChannels(data || []);
+      } catch (error) {
+        console.error("Error fetching channels:", error);
+        toast({
+          title: "Error",
+          description: "Failed to load channels",
+          variant: "destructive",
+        });
+      } finally {
+        setLoadingChannels(false);
+      }
     }
 
-    setIsLoading(true)
-    setResult(null)
+    fetchChannels();
+  }, [toast]);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      setFile(e.target.files[0]);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!channelId) {
+      toast({
+        title: "Error",
+        description: "Please select a channel",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!file) {
+      toast({
+        title: "Error",
+        description: "Please select an image file",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setLoading(true);
 
     try {
-      // Step 1: Check if the channel exists
-      setUploadStep("Checking channel...")
-      const { data: channel, error: channelError } = await supabase
+      // Upload file to Supabase Storage
+      const fileExt = file.name.split(".").pop();
+      const fileName = `channel-${channelId}-${Date.now()}.${fileExt}`;
+      const filePath = `channel-images/${fileName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from("channel-images")
+        .upload(filePath, file);
+
+      if (uploadError) throw uploadError;
+
+      // Get public URL
+      const { data } = supabase.storage
+        .from("channel-images")
+        .getPublicUrl(filePath);
+
+      const publicUrl = data?.publicUrl;
+      if (!publicUrl) {
+        throw new Error("Could not get public URL for uploaded image.");
+      }
+
+      // Update channel record with new image URL
+      const { error: updateError } = await supabase
         .from("channels")
-        .select("*")
-        .eq("id", channelId)
-        .single()
+        .update({ logo_url: publicUrl })
+        .eq("id", Number(channelId));
 
-      if (channelError || !channel) {
-        throw new Error(`Channel with ID ${channelId} not found`)
-      }
+      if (updateError) throw updateError;
 
-      setChannelName(channel.name)
+      toast({
+        title: "Success",
+        description: "Channel image updated successfully",
+      });
 
-      // Step 2: Check if the bucket exists, create if not
-      setUploadStep("Checking storage bucket...")
-      const bucketName = `channel${channelId}`
+      // Reset form
+      setFile(null);
+      setChannelId("");
 
-      // List buckets to check if it exists
-      const { data: buckets, error: bucketsError } = await supabase.storage.listBuckets()
-
-      if (bucketsError) {
-        throw new Error(`Error checking buckets: ${bucketsError.message}`)
-      }
-
-      const bucketExists = buckets.some((bucket) => bucket.name === bucketName)
-
-      // Create bucket if it doesn't exist
-      if (!bucketExists) {
-        setUploadStep("Creating storage bucket...")
-        const { error: createBucketError } = await supabase.storage.createBucket(bucketName, {
-          public: true,
-        })
-
-        if (createBucketError) {
-          throw new Error(`Error creating bucket: ${createBucketError.message}`)
-        }
-      }
-
-      // Step 3: Fetch the image from the public folder
-      setUploadStep("Preparing image...")
-      const imageResponse = await fetch("/images/panthers-vanguard.jpeg")
-      const imageBlob = await imageResponse.blob()
-
-      // Step 4: Upload the image to Supabase storage
-      setUploadStep("Uploading image to Supabase...")
-      const fileName = "panthers-vanguard.jpeg"
-      const { error: uploadError } = await supabase.storage.from(bucketName).upload(fileName, imageBlob, {
-        upsert: true,
-        contentType: "image/jpeg",
-      })
-
-      if (uploadError) {
-        throw new Error(`Error uploading image: ${uploadError.message}`)
-      }
-
-      // Step 5: Get the public URL
-      const { data: publicUrlData } = supabase.storage.from(bucketName).getPublicUrl(fileName)
-
-      const imageUrl = publicUrlData.publicUrl
-
-      // Step 6: Update the channel with the new image URL
-      setUploadStep("Updating channel record...")
-      const { error: updateError } = await supabase.from("channels").update({ logo_url: imageUrl }).eq("id", channelId)
-
-      if (updateError) {
-        throw new Error(`Error updating channel: ${updateError.message}`)
-      }
-
-      setResult({
-        success: true,
-        message: `Successfully uploaded image and updated channel ${channelId}: ${channel.name}`,
-      })
+      const fileInput = document.getElementById(
+        "image-upload"
+      ) as HTMLInputElement | null;
+      if (fileInput) fileInput.value = "";
     } catch (error) {
-      console.error("Error in upload process:", error)
-      setResult({
-        success: false,
-        message: error instanceof Error ? error.message : "An unknown error occurred",
-      })
+      console.error("Error updating channel image:", error);
+      toast({
+        title: "Error",
+        description: "Failed to update channel image",
+        variant: "destructive",
+      });
     } finally {
-      setIsLoading(false)
-      setUploadStep(null)
+      setLoading(false);
     }
-  }
+  };
 
   return (
-    <div className="pt-24 px-4 md:px-10 flex flex-col items-center justify-center min-h-[80vh]">
-      <div className="bg-gray-800 p-6 rounded-lg max-w-2xl w-full">
-        <div className="flex items-center mb-6">
-          <Link href="/" className="mr-4">
-            <Button variant="ghost" size="sm">
-              <ArrowLeft className="h-4 w-4 mr-2" />
-              Back
-            </Button>
-          </Link>
-          <h1 className="text-2xl font-bold">Upload Channel Image to Supabase</h1>
-        </div>
+    <div className="container mx-auto py-8 text-white">
+      <h1 className="mb-6 text-2xl font-bold">Update Channel Image</h1>
 
-        <div className="mb-6">
-          <p className="mb-4">
-            This tool will upload the Black Panthers image to a Supabase storage bucket for your channel and update the
-            channel record.
-          </p>
-
-          <div className="bg-gray-900 p-4 rounded mb-6">
-            <h3 className="font-semibold mb-2 flex items-center">
-              <ImageIcon className="h-4 w-4 mr-2" />
-              Image to Upload
-            </h3>
-            <div className="aspect-video bg-black rounded overflow-hidden">
-              <img src="/images/panthers-vanguard.jpeg" alt="Black Panthers" className="w-full h-full object-cover" />
-            </div>
-          </div>
-
-          <div className="mb-4">
-            <label htmlFor="channelId" className="block text-sm font-medium mb-1">
-              Enter the Channel ID for Resistance TV:
-            </label>
-            <input
-              id="channelId"
-              type="text"
-              value={channelId}
-              onChange={(e) => setChannelId(e.target.value)}
-              placeholder="Enter channel ID (e.g., 5)"
-              className="w-full p-2 bg-gray-900 border border-gray-700 rounded-md"
-            />
-            <p className="text-xs text-gray-400 mt-1">
-              This is usually a number like 1, 2, 3, etc. Check your channels page to find the correct ID.
-            </p>
-          </div>
-
-          <div className="flex justify-center">
-            <Button
-              onClick={uploadAndUpdateChannel}
-              disabled={isLoading}
-              className="bg-red-600 hover:bg-red-700 w-full max-w-xs"
-            >
-              {isLoading ? (
-                <>
-                  <Upload className="h-4 w-4 mr-2 animate-spin" />
-                  Uploading...
-                </>
+      <form onSubmit={handleSubmit} className="max-w-md space-y-6">
+        {/* Channel selector */}
+        <div className="space-y-2">
+          <Label htmlFor="channel">Select Channel</Label>
+          <Select
+            value={channelId}
+            onValueChange={(val) => {
+              if (val !== "loading" && val !== "none") setChannelId(val);
+            }}
+          >
+            <SelectTrigger id="channel" className="w-full">
+              <SelectValue placeholder="Select a channel" />
+            </SelectTrigger>
+            <SelectContent>
+              {loadingChannels ? (
+                <SelectItem value="loading" disabled>
+                  Loading channels...
+                </SelectItem>
+              ) : channels.length > 0 ? (
+                channels.map((channel) => (
+                  <SelectItem
+                    key={channel.id}
+                    value={String(channel.id)} // ✅ Ensure this is a string
+                  >
+                    Channel {channel.id}
+                    {channel.name ? `: ${channel.name}` : ""}
+                  </SelectItem>
+                ))
               ) : (
-                <>
-                  <Upload className="h-4 w-4 mr-2" />
-                  Upload to Supabase
-                </>
+                <SelectItem value="none" disabled>
+                  No channels found
+                </SelectItem>
               )}
-            </Button>
-          </div>
-
-          {uploadStep && (
-            <div className="mt-4 p-3 bg-blue-900/30 text-blue-400 rounded-md">
-              <div className="flex items-center">
-                <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-blue-400 mr-2"></div>
-                <p>{uploadStep}</p>
-              </div>
-            </div>
-          )}
-
-          {result && (
-            <div
-              className={`mt-6 p-4 rounded-md ${
-                result.success ? "bg-green-900/30 text-green-400" : "bg-red-900/30 text-red-400"
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                {result.success ? <CheckCircle className="h-5 w-5" /> : <XCircle className="h-5 w-5" />}
-                <p>{result.message}</p>
-              </div>
-              {result.success && (
-                <div className="mt-4 text-center">
-                  <p className="mb-2">
-                    The image has been uploaded to Supabase and linked to channel: <strong>{channelName}</strong>
-                  </p>
-                  <Link href="/">
-                    <Button className="bg-green-600 hover:bg-green-700">Return to Home</Button>
-                  </Link>
-                </div>
-              )}
-            </div>
-          )}
+            </SelectContent>
+          </Select>
         </div>
-      </div>
+
+        {/* File upload */}
+        <div className="space-y-2">
+          <Label htmlFor="image-upload">Upload Image</Label>
+          <Input
+            id="image-upload"
+            type="file"
+            accept="image/*"
+            onChange={handleFileChange}
+            className="cursor-pointer bg-slate-900"
+          />
+          <p className="text-sm text-gray-400">
+            Recommended: 16:9 aspect ratio, at least 1280×720px. Keep under
+            2MB if you’re reusing thumbnails.
+          </p>
+        </div>
+
+        {/* Preview */}
+        {file && (
+          <div className="mt-4">
+            <p className="mb-2 text-sm">Preview:</p>
+            <div className="aspect-video overflow-hidden rounded-md bg-gray-800">
+              <img
+                src={URL.createObjectURL(file)}
+                alt="Preview"
+                className="h-full w-full object-cover"
+              />
+            </div>
+          </div>
+        )}
+
+        <Button
+          type="submit"
+          disabled={loading || !channelId || !file}
+          className="w-full"
+        >
+          {loading ? "Uploading..." : "Update Channel Image"}
+        </Button>
+      </form>
     </div>
-  )
+  );
 }
