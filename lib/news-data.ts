@@ -1,35 +1,43 @@
 // lib/news-data.ts
-const KEY = "btv_news_items";
+import { supabase } from "@/lib/supabase";
 
-// Default message so the bar always appears
-const DEFAULT_ITEMS = [
-  "Welcome to Black Truth TV — streaming 24/7.",
-];
+/** Load all ticker items from Supabase */
+export async function getNewsItems(): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("news_ticker")
+    .select("text")
+    .order("created_at", { ascending: true });
 
-export function getNewsItems(): string[] {
-  try {
-    if (typeof window === "undefined") {
-      // During SSR return default (BreakingNews runs on client anyway)
-      return DEFAULT_ITEMS;
-    }
-    const raw = window.localStorage.getItem(KEY);
-    if (!raw) return DEFAULT_ITEMS;
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed) && parsed.every((s) => typeof s === "string")) {
-      return parsed.length > 0 ? parsed : DEFAULT_ITEMS;
-    }
-    return DEFAULT_ITEMS;
-  } catch {
-    return DEFAULT_ITEMS;
+  if (error) {
+    console.error("Error loading news:", error);
+    return [];
   }
+
+  return data?.map((row: any) => row.text) ?? [];
 }
 
-export function saveNewsItems(items: string[]) {
+/** Save entire list (CLEAR + INSERT NEW) */
+export async function saveNewsItems(items: string[]) {
   try {
-    if (typeof window === "undefined") return;
-    const clean = (Array.isArray(items) ? items : []).filter((s) => !!s && typeof s === "string");
-    window.localStorage.setItem(KEY, JSON.stringify(clean));
-  } catch {
-    // ignore
+    // Remove all existing rows
+    const del = await supabase
+      .from("news_ticker")
+      .delete()
+      .neq("id", "00000000-0000-0000-0000-000000000000"); // dummy condition to delete all
+
+    if (del.error) throw del.error;
+
+    // Insert new list if any
+    if (items.length > 0) {
+      const { error } = await supabase.from("news_ticker").insert(
+        items.map((text) => ({ text }))
+      );
+      if (error) throw error;
+    }
+
+    return { ok: true };
+  } catch (err: any) {
+    console.error("Save error:", err);
+    return { ok: false, error: err.message };
   }
 }
