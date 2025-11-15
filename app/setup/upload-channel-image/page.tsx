@@ -27,7 +27,12 @@ export default function UpdateChannelImagePage() {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingChannels, setLoadingChannels] = useState(true);
+
   const [uploadedUrl, setUploadedUrl] = useState<string>("");
+  const [statusText, setStatusText] = useState<string>("");
+  const [statusType, setStatusType] = useState<"idle" | "success" | "error">(
+    "idle"
+  );
 
   const { toast } = useToast();
 
@@ -44,6 +49,8 @@ export default function UpdateChannelImagePage() {
         setChannels(data || []);
       } catch (err) {
         console.error("Error fetching channels:", err);
+        setStatusType("error");
+        setStatusText("Failed to load channels from database.");
         toast({
           title: "Error",
           description: "Failed to load channels",
@@ -60,6 +67,8 @@ export default function UpdateChannelImagePage() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files?.length) {
       setFile(e.target.files[0]);
+      setStatusType("idle");
+      setStatusText("");
     }
   };
 
@@ -76,13 +85,19 @@ export default function UpdateChannelImagePage() {
     }
   };
 
+  // 🔧 Upload logo directly into the channel’s bucket
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    setStatusType("idle");
+    setStatusText("");
+
     if (!channelId || !file) {
+      setStatusType("error");
+      setStatusText("Please select a channel and an image file first.");
       toast({
         title: "Error",
-        description: "Please select a channel and an image file.",
+        description: "Select a channel and image first.",
         variant: "destructive",
       });
       return;
@@ -91,54 +106,61 @@ export default function UpdateChannelImagePage() {
     setLoading(true);
 
     try {
-      const ext = file.name.split(".").pop();
-      const fileName = `channel-${channelId}-${Date.now()}.${ext}`;
-      const filePath = `channel-images/${fileName}`;
+      // Determine the correct bucket
+      let bucketName = `channel${channelId}`;
 
-      // Upload to storage
+      // 🎓 Freedom School → channel id 30
+      if (channelId === "30") {
+        bucketName = "freedom-school";
+      }
+
+      const fileExt = file.name.split(".").pop() || "png";
+      const filePath = `logo.${fileExt}`; // predictable per bucket
+
+      // Upload into that bucket (replace old logo)
       const { error: uploadError } = await supabase.storage
-        .from("channel-images")
-        .upload(filePath, file);
+        .from(bucketName)
+        .upload(filePath, file, { upsert: true });
 
-      if (uploadError) throw uploadError;
+      if (uploadError) {
+        console.error("Upload error:", uploadError);
+        throw new Error(uploadError.message);
+      }
 
       // Get public URL
-      const { data } = supabase.storage
-        .from("channel-images")
-        .getPublicUrl(filePath);
-
+      const { data } = supabase.storage.from(bucketName).getPublicUrl(filePath);
       const publicUrl = data?.publicUrl;
+
       if (!publicUrl) {
         throw new Error("Could not get public URL for uploaded image.");
       }
 
-      // Save to channels table
+      // Save into channels table
       const { error: updateError } = await supabase
         .from("channels")
         .update({ logo_url: publicUrl })
         .eq("id", Number(channelId));
 
-      if (updateError) throw updateError;
+      if (updateError) {
+        console.error("DB update error:", updateError);
+        throw new Error(updateError.message);
+      }
 
       setUploadedUrl(publicUrl);
+      setStatusType("success");
+      setStatusText(`Image saved for Channel ${channelId} in bucket "${bucketName}".`);
 
       toast({
         title: "Success",
         description: "Channel image updated successfully.",
       });
-
-      // Clear form
-      setChannelId("");
-      setFile(null);
-      const fileInput = document.getElementById(
-        "image-upload"
-      ) as HTMLInputElement | null;
-      if (fileInput) fileInput.value = "";
-    } catch (err) {
+    } catch (err: any) {
       console.error("Error updating channel image:", err);
+      setStatusType("error");
+      setStatusText(err?.message || "Upload failed.");
       toast({
         title: "Error",
-        description: "Failed to update channel image.",
+        description: err?.message || "Failed to update channel image.",
         variant: "destructive",
       });
     } finally {
@@ -161,35 +183,42 @@ export default function UpdateChannelImagePage() {
         </Link>
       </div>
 
-      <h1 className="mb-6 text-2xl font-bold">Update Channel Image</h1>
+      <h1 className="mb-4 text-2xl font-bold">Update Channel Image</h1>
+      <p className="mb-6 text-sm text-slate-300">
+        Select a channel, upload a thumbnail, and it will be stored inside the channel’s bucket  
+        (e.g. <strong>channel5/logo.png</strong> or <strong>freedom-school/logo.png</strong>).
+      </p>
 
-      {/* Success panel */}
+      {/* STATUS BAR */}
+      {statusType !== "idle" && (
+        <div
+          className={`mb-6 rounded-md border px-4 py-3 text-sm ${
+            statusType === "success"
+              ? "border-emerald-500 bg-emerald-500/10 text-emerald-100"
+              : "border-red-500 bg-red-500/10 text-red-100"
+          }`}
+        >
+          {statusText}
+        </div>
+      )}
+
+      {/* SUCCESS PREVIEW */}
       {uploadedUrl && (
         <div className="mb-8 rounded-lg border border-emerald-500 bg-emerald-500/10 p-4">
           <h2 className="text-lg font-semibold text-emerald-300">
             ✅ Upload Successful
           </h2>
-          <p className="mt-1 text-sm text-emerald-100">
-            This image is now saved on your channel.
-          </p>
           <div className="mt-3">
             <img
               src={uploadedUrl}
-              alt="Uploaded channel logo"
+              alt="Channel logo"
               className="max-w-md rounded-md border border-emerald-500"
             />
           </div>
+
           <div className="mt-4 flex items-center gap-2">
-            <Input
-              value={uploadedUrl}
-              readOnly
-              className="flex-1 bg-slate-900 text-xs"
-            />
-            <Button
-              type="button"
-              onClick={handleCopy}
-              className="bg-emerald-600 hover:bg-emerald-700"
-            >
+            <Input value={uploadedUrl} readOnly className="flex-1 bg-slate-900 text-xs" />
+            <Button onClick={handleCopy} className="bg-emerald-600 hover:bg-emerald-700">
               <Copy className="mr-1 h-4 w-4" />
               Copy URL
             </Button>
@@ -197,20 +226,18 @@ export default function UpdateChannelImagePage() {
         </div>
       )}
 
+      {/* FORM */}
       <form onSubmit={handleSubmit} className="max-w-md space-y-6">
-        {/* Channel selector */}
+        {/* CHANNEL SELECT */}
         <div className="space-y-2">
-          <Label htmlFor="channel">Select Channel</Label>
+          <Label>Select Channel</Label>
           <Select
             value={channelId}
-            onValueChange={(val) => {
-              if (val !== "loading" && val !== "none") setChannelId(val);
+            onValueChange={(v) => {
+              if (v !== "loading" && v !== "none") setChannelId(v);
             }}
           >
-            <SelectTrigger
-              id="channel"
-              className="w-full border-slate-700 bg-slate-900"
-            >
+            <SelectTrigger className="w-full border-slate-700 bg-slate-900">
               <SelectValue placeholder="Select a channel" />
             </SelectTrigger>
             <SelectContent>
@@ -221,8 +248,7 @@ export default function UpdateChannelImagePage() {
               ) : channels.length > 0 ? (
                 channels.map((ch) => (
                   <SelectItem key={ch.id} value={String(ch.id)}>
-                    Channel {ch.id}
-                    {ch.name ? ` — ${ch.name}` : ""}
+                    Channel {ch.id} {ch.name ? ` — ${ch.name}` : ""}
                   </SelectItem>
                 ))
               ) : (
@@ -234,7 +260,7 @@ export default function UpdateChannelImagePage() {
           </Select>
         </div>
 
-        {/* File upload */}
+        {/* FILE UPLOAD */}
         <div className="space-y-2">
           <Label htmlFor="image-upload">Upload Image</Label>
           <Input
@@ -244,19 +270,16 @@ export default function UpdateChannelImagePage() {
             onChange={handleFileChange}
             className="cursor-pointer bg-slate-900"
           />
-          <p className="text-sm text-gray-400">
-            Recommended: 16:9, at least 1280×720, under 2MB.
-          </p>
+          <p className="text-sm text-gray-400">Recommended: 1280×720, under 2MB.</p>
         </div>
 
-        {/* Local preview before upload */}
+        {/* LOCAL PREVIEW */}
         {file && (
-          <div className="mt-4">
-            <p className="mb-2 text-sm">Preview before upload:</p>
+          <div>
+            <p className="mb-2 text-sm">Preview:</p>
             <div className="aspect-video overflow-hidden rounded-md bg-gray-800">
               <img
                 src={URL.createObjectURL(file)}
-                alt="Preview"
                 className="h-full w-full object-cover"
               />
             </div>
@@ -265,7 +288,7 @@ export default function UpdateChannelImagePage() {
 
         <Button
           type="submit"
-          disabled={loading || !channelId || !file}
+          disabled={loading || !file || !channelId}
           className="w-full"
         >
           {loading ? "Uploading…" : "Update Channel Image"}
