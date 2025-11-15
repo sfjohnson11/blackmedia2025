@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,6 +14,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/components/ui/use-toast";
+import { ArrowLeft, Copy } from "lucide-react";
 
 type Channel = {
   id: number;
@@ -25,9 +27,10 @@ export default function UpdateChannelImage() {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingChannels, setLoadingChannels] = useState(true);
+  const [uploadedUrl, setUploadedUrl] = useState<string>("");
+
   const { toast } = useToast();
 
-  // ✅ Fetch channels when component mounts
   useEffect(() => {
     async function fetchChannels() {
       try {
@@ -38,8 +41,7 @@ export default function UpdateChannelImage() {
 
         if (error) throw error;
         setChannels(data || []);
-      } catch (error) {
-        console.error("Error fetching channels:", error);
+      } catch {
         toast({
           title: "Error",
           description: "Failed to load channels",
@@ -51,30 +53,28 @@ export default function UpdateChannelImage() {
     }
 
     fetchChannels();
-  }, [toast]);
+  }, []);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
+    if (e.target.files?.length) {
       setFile(e.target.files[0]);
+    }
+  };
+
+  const handleCopy = async () => {
+    if (uploadedUrl) {
+      await navigator.clipboard.writeText(uploadedUrl);
+      toast({ title: "Copied!", description: "URL copied to clipboard." });
     }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!channelId) {
+    if (!channelId || !file) {
       toast({
         title: "Error",
-        description: "Please select a channel",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    if (!file) {
-      toast({
-        title: "Error",
-        description: "Please select an image file",
+        description: "Select a channel and image first.",
         variant: "destructive",
       });
       return;
@@ -83,104 +83,120 @@ export default function UpdateChannelImage() {
     setLoading(true);
 
     try {
-      // Upload file to Supabase Storage
-      const fileExt = file.name.split(".").pop();
-      const fileName = `channel-${channelId}-${Date.now()}.${fileExt}`;
+      const ext = file.name.split(".").pop();
+      const fileName = `channel-${channelId}-${Date.now()}.${ext}`;
       const filePath = `channel-images/${fileName}`;
 
+      // Upload
       const { error: uploadError } = await supabase.storage
         .from("channel-images")
         .upload(filePath, file);
 
       if (uploadError) throw uploadError;
 
-      // Get public URL
+      // Public URL
       const { data } = supabase.storage
         .from("channel-images")
         .getPublicUrl(filePath);
 
-      const publicUrl = data?.publicUrl;
-      if (!publicUrl) {
-        throw new Error("Could not get public URL for uploaded image.");
-      }
+      const publicUrl = data.publicUrl;
+      setUploadedUrl(publicUrl);
 
-      // Update channel record with new image URL
+      // Write to DB
       const { error: updateError } = await supabase
         .from("channels")
         .update({ logo_url: publicUrl })
-        .eq("id", Number(channelId));
+        .eq("id", channelId);
 
       if (updateError) throw updateError;
 
       toast({
         title: "Success",
-        description: "Channel image updated successfully",
+        description: "Channel image updated!",
       });
 
-      // Reset form
       setFile(null);
       setChannelId("");
-
-      const fileInput = document.getElementById(
-        "image-upload"
-      ) as HTMLInputElement | null;
-      if (fileInput) fileInput.value = "";
     } catch (error) {
-      console.error("Error updating channel image:", error);
       toast({
         title: "Error",
-        description: "Failed to update channel image",
+        description: "Upload failed.",
         variant: "destructive",
       });
-    } finally {
-      setLoading(false);
     }
+
+    setLoading(false);
   };
 
   return (
     <div className="container mx-auto py-8 text-white">
-      <h1 className="mb-6 text-2xl font-bold">Update Channel Image</h1>
+      {/* BACK BUTTON */}
+      <div className="mb-4">
+        <Link href="/admin">
+          <Button variant="outline" className="border-slate-600 bg-slate-900 text-sm">
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back to Admin Dashboard
+          </Button>
+        </Link>
+      </div>
 
-      <form onSubmit={handleSubmit} className="max-w-md space-y-6">
-        {/* Channel selector */}
+      <h1 className="text-2xl font-bold mb-6">Update Channel Image</h1>
+
+      {/* SUCCESS PANEL */}
+      {uploadedUrl && (
+        <div className="mb-8 rounded-lg border border-green-500 bg-green-500/10 p-4">
+          <h2 className="text-lg font-semibold text-green-300">
+            ✅ Upload Successful!
+          </h2>
+
+          <p className="mt-1 text-sm text-green-200">
+            This image is now LIVE on your channel.
+          </p>
+
+          <div className="mt-3">
+            <img
+              src={uploadedUrl}
+              alt="Uploaded"
+              className="rounded-md border border-green-600 max-w-md"
+            />
+          </div>
+
+          <div className="mt-4 flex items-center gap-2">
+            <Input value={uploadedUrl} readOnly className="flex-1 bg-slate-900" />
+            <Button onClick={handleCopy} className="bg-green-600 hover:bg-green-700">
+              <Copy className="h-4 w-4 mr-1" /> Copy
+            </Button>
+          </div>
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit} className="space-y-6 max-w-md">
+        {/* SELECT CHANNEL */}
         <div className="space-y-2">
-          <Label htmlFor="channel">Select Channel</Label>
-          <Select
-            value={channelId}
-            onValueChange={(val) => {
-              if (val !== "loading" && val !== "none") setChannelId(val);
-            }}
-          >
-            <SelectTrigger id="channel" className="w-full">
+          <Label>Select Channel</Label>
+          <Select value={channelId} onValueChange={setChannelId}>
+            <SelectTrigger className="w-full bg-slate-900 border-slate-700">
               <SelectValue placeholder="Select a channel" />
             </SelectTrigger>
             <SelectContent>
               {loadingChannels ? (
                 <SelectItem value="loading" disabled>
-                  Loading channels...
+                  Loading channels…
                 </SelectItem>
-              ) : channels.length > 0 ? (
-                channels.map((channel) => (
-                  <SelectItem
-                    key={channel.id}
-                    value={String(channel.id)} // ✅ Ensure this is a string
-                  >
-                    Channel {channel.id}
-                    {channel.name ? `: ${channel.name}` : ""}
+              ) : (
+                channels.map((c) => (
+                  <SelectItem key={c.id} value={String(c.id)}>
+                    Channel {c.id} — {c.name}
                   </SelectItem>
                 ))
-              ) : (
-                <SelectItem value="none" disabled>
-                  No channels found
-                </SelectItem>
               )}
             </SelectContent>
           </Select>
         </div>
 
-        {/* File upload */}
+        {/* FILE UPLOAD */}
         <div className="space-y-2">
-          <Label htmlFor="image-upload">Upload Image</Label>
+          <Label>Upload Image</Label>
           <Input
             id="image-upload"
             type="file"
@@ -188,32 +204,24 @@ export default function UpdateChannelImage() {
             onChange={handleFileChange}
             className="cursor-pointer bg-slate-900"
           />
-          <p className="text-sm text-gray-400">
-            Recommended: 16:9 aspect ratio, at least 1280×720px. Keep under
-            2MB if you’re reusing thumbnails.
-          </p>
+          <p className="text-sm text-gray-400">Recommended: 1280×720, < 2MB</p>
         </div>
 
-        {/* Preview */}
+        {/* LIVE PREVIEW BEFORE UPLOAD */}
         {file && (
           <div className="mt-4">
-            <p className="mb-2 text-sm">Preview:</p>
-            <div className="aspect-video overflow-hidden rounded-md bg-gray-800">
+            <p className="text-sm mb-2">Preview before Upload:</p>
+            <div className="aspect-video bg-gray-800 rounded-md overflow-hidden">
               <img
                 src={URL.createObjectURL(file)}
-                alt="Preview"
-                className="h-full w-full object-cover"
+                className="w-full h-full object-cover"
               />
             </div>
           </div>
         )}
 
-        <Button
-          type="submit"
-          disabled={loading || !channelId || !file}
-          className="w-full"
-        >
-          {loading ? "Uploading..." : "Update Channel Image"}
+        <Button type="submit" disabled={loading || !channelId || !file} className="w-full">
+          {loading ? "Uploading…" : "Update Channel Image"}
         </Button>
       </form>
     </div>
