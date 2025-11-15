@@ -2,7 +2,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { AlertCircle, Lock } from "lucide-react";
 
@@ -10,6 +10,7 @@ export const dynamic = "force-dynamic";
 
 export default function AdminLoginPage() {
   const router = useRouter();
+  const params = useSearchParams();
   const supabase = createClientComponentClient();
 
   const [email, setEmail] = useState("");
@@ -22,7 +23,6 @@ export default function AdminLoginPage() {
     setErr("");
     setLoading(true);
 
-    // 1) Sign in with Supabase
     const { error } = await supabase.auth.signInWithPassword({
       email,
       password,
@@ -34,11 +34,9 @@ export default function AdminLoginPage() {
       return;
     }
 
-    // 2) ✅ Do NOT check role here anymore.
-    //    The /admin layout will enforce admin-only access on the server.
-
-    // 3) Go straight to /admin
-    router.replace("/admin");
+    // ✅ Let the SERVER layout enforce "admin" role.
+    const dest = params.get("redirect") || "/admin";
+    router.replace(dest);
   }
 
   return (
