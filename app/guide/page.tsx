@@ -4,10 +4,11 @@ import Link from "next/link";
 import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { ChevronRight } from "lucide-react";
 
 /* ------- Types (match your schema) ------- */
 type Channel = {
-  id: number | string;         // TEXT in DB, values "1".."30"
+  id: number | string; // TEXT in DB, values "1".."30"
   name?: string | null;
   logo_url?: string | null;
   youtube_is_live?: boolean | null;
@@ -18,13 +19,13 @@ type Program = {
   title?: string | null;
   mp4_url?: string | null;
   duration?: number | string | null; // seconds or "HH:MM:SS"
-  start_time?: string | null;        // timestamptz-ish
+  start_time?: string | null; // timestamptz-ish
 };
 
 const CH21_ID_NUMERIC = 21;
-const GRACE_MS = 120_000;        // 2 min grace
-const LOOKAHEAD_HOURS = 24;      // show all upcoming within 24h
-const LOOKBACK_HOURS = 6;        // fetch a little earlier to correctly detect "Now"
+const GRACE_MS = 120_000; // 2 min grace
+const LOOKAHEAD_HOURS = 24; // show all upcoming within 24h
+const LOOKBACK_HOURS = 6; // fetch a little earlier to correctly detect "Now"
 
 /* ---------- Helpers ---------- */
 function toId(v: number | string | null | undefined): number {
@@ -76,7 +77,7 @@ function isActiveProgram(p: Program, nowMs: number): boolean {
   const durSec = asSeconds(p.duration);
   if (!Number.isFinite(startMs) || durSec <= 0) return false;
   const endMs = startMs + durSec * 1000;
-  return (startMs - GRACE_MS) <= nowMs && nowMs < (endMs + GRACE_MS);
+  return startMs - GRACE_MS <= nowMs && nowMs < endMs + GRACE_MS;
 }
 
 function fmtTimeLocal(ms: number) {
@@ -141,7 +142,9 @@ export default function GuidePage() {
         if (!cancelled) setLoading(false);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const rows: Row[] = useMemo(() => {
@@ -158,11 +161,17 @@ export default function GuidePage() {
     }
     // Sort each channel's programs by start
     for (const arr of byChannel.values()) {
-      arr.sort((a, b) => (parseUtcishMs(a.start_time) || 0) - (parseUtcishMs(b.start_time) || 0));
+      arr.sort(
+        (a, b) =>
+          (parseUtcishMs(a.start_time) || 0) -
+          (parseUtcishMs(b.start_time) || 0),
+      );
     }
 
     // Channels sorted 1..30
-    const chans = channels.slice().sort((a, b) => toId(a.id) - toId(b.id));
+    const chans = channels
+      .slice()
+      .sort((a, b) => toId(a.id) - toId(b.id));
 
     const list: Row[] = [];
     for (const ch of chans) {
@@ -171,7 +180,7 @@ export default function GuidePage() {
 
       // CH21 Live override
       if (cid === CH21_ID_NUMERIC && ch.youtube_is_live) {
-        const upcoming = listForChannel.filter(p => {
+        const upcoming = listForChannel.filter((p) => {
           const t = parseUtcishMs(p.start_time);
           return t > nowMs && t <= cutoffNextMs;
         });
@@ -206,7 +215,7 @@ export default function GuidePage() {
           next,
           later,
           status: "on",
-          badge: "On now",
+          badge: "On Now",
         });
       } else if (next) {
         const at = fmtTimeLocal(parseUtcishMs(next.start_time));
@@ -216,7 +225,7 @@ export default function GuidePage() {
           next,
           later: upcoming.slice(1),
           status: "upcoming",
-          badge: `Upcoming at ${at}`,
+          badge: `Upcoming · ${at}`,
         });
       } else {
         list.push({
@@ -234,41 +243,66 @@ export default function GuidePage() {
 
   return (
     <div className="min-h-screen bg-black text-white">
-      <div className="sticky top-0 z-10 px-4 py-3 bg-gray-900/60 backdrop-blur">
-        <h1 className="text-xl font-semibold">Guide — Next 24 Hours</h1>
+      {/* Header */}
+      <div className="sticky top-0 z-10 border-b border-gray-800 bg-gray-900/80 px-4 py-3 backdrop-blur">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-lg font-semibold sm:text-xl">
+              Black Truth TV Guide
+            </h1>
+            <p className="text-xs text-gray-300 sm:text-sm">
+              Next 24 hours · Tap a row to jump to that channel
+            </p>
+          </div>
+          <span className="rounded-full bg-red-700 px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-white">
+            Live Lineup
+          </span>
+        </div>
       </div>
 
-      {err && <div className="p-4 text-red-400">Error: {err}</div>}
-      {loading && <div className="p-6 text-center text-gray-300">Loading guide…</div>}
+      {err && (
+        <div className="p-4 text-center text-sm text-red-400">Error: {err}</div>
+      )}
+      {loading && (
+        <div className="p-6 text-center text-sm text-gray-300">
+          Loading guide…
+        </div>
+      )}
 
       {!loading && !err && (
-        <div className="divide-y divide-gray-800">
+        <div className="divide-y divide-gray-900">
           {rows.map((row) => {
             const idNum = toId(row.channel.id);
             const href = `/watch/${row.channel.id}`;
             const tone =
-              row.status === "live" ? "text-red-400"
-              : row.status === "on" ? "text-emerald-400"
-              : row.status === "upcoming" ? "text-gray-300"
-              : "text-gray-400";
+              row.status === "live"
+                ? "bg-red-900/40 border-red-500/60 text-red-300"
+                : row.status === "on"
+                  ? "bg-emerald-900/30 border-emerald-500/60 text-emerald-200"
+                  : row.status === "upcoming"
+                    ? "bg-slate-800/60 border-slate-500/60 text-slate-100"
+                    : "bg-slate-900/80 border-slate-600/60 text-slate-200";
 
             const nowStart = row.now ? parseUtcishMs(row.now.start_time) : NaN;
-            const nowEnd = row.now ? nowStart + asSeconds(row.now.duration) * 1000 : NaN;
+            const nowEnd =
+              row.now && Number.isFinite(nowStart)
+                ? nowStart + asSeconds(row.now.duration) * 1000
+                : NaN;
 
             return (
               <Link
                 key={row.channel.id}
                 href={href}
-                className="block px-4 py-3 hover:bg-gray-900/50 transition"
+                className="block px-3 py-3 text-sm transition hover:bg-gray-900/70 sm:px-4"
               >
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 sm:gap-4">
                   {/* Channel number */}
-                  <div className="w-10 h-10 flex items-center justify-center rounded-lg bg-gray-800 border border-gray-700 shrink-0">
-                    <span className="font-semibold">{idNum}</span>
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-gray-700 bg-gray-900/80 text-sm font-semibold sm:h-11 sm:w-11">
+                    {idNum}
                   </div>
 
                   {/* Logo */}
-                  <div className="relative w-12 h-12 rounded-lg overflow-hidden bg-black/40 shrink-0">
+                  <div className="relative h-11 w-11 shrink-0 overflow-hidden rounded-md bg-black/50 sm:h-12 sm:w-12">
                     {row.channel.logo_url ? (
                       <Image
                         src={row.channel.logo_url}
@@ -278,55 +312,80 @@ export default function GuidePage() {
                         sizes="48px"
                       />
                     ) : (
-                      <div className="w-full h-full flex items-center justify-center text-xs text-gray-500">
+                      <div className="flex h-full w-full items-center justify-center text-[10px] text-gray-500">
                         Logo
                       </div>
                     )}
                   </div>
 
                   {/* Info */}
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-0 flex-1 space-y-1">
                     <div className="flex items-center gap-2">
-                      <div className="truncate font-semibold">
-                        {row.channel.name || { idNum }}
+                      <div className="truncate text-sm font-semibold sm:text-base">
+                        {row.channel.name || `Channel ${idNum}`}
                       </div>
-                      <div className={`text-xs px-2 py-0.5 rounded-full bg-gray-800 border border-gray-700 ${tone}`}>
+                      <div
+                        className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${tone}`}
+                      >
                         {row.badge}
                       </div>
                     </div>
 
                     {/* Now */}
-                    <div className="mt-1 text-xs text-gray-300 truncate">
-                      {row.status === "live" && "YouTube Live"}
+                    <div className="text-xs text-gray-200 sm:text-sm">
+                      {row.status === "live" && (
+                        <span className="font-medium text-red-300">
+                          YouTube Live Stream
+                        </span>
+                      )}
                       {row.status !== "live" && row.now?.title && (
                         <>
                           <span className="text-gray-400">Now:</span>{" "}
-                          <strong className="text-white">{row.now.title}</strong>
-                          {" · "}
-                          <span className="text-gray-400">until {fmtTimeLocal(nowEnd)}</span>
+                          <span className="font-semibold text-white">
+                            {row.now.title}
+                          </span>
+                          {Number.isFinite(nowEnd) && (
+                            <>
+                              {" "}
+                              <span className="text-gray-500">· ends</span>{" "}
+                              <span className="text-gray-300">
+                                {fmtTimeLocal(nowEnd)}
+                              </span>
+                            </>
+                          )}
                         </>
                       )}
-                      {row.status === "idle" && "Standby Programming"}
+                      {row.status === "idle" && !row.now && !row.next && (
+                        <span className="text-gray-400">
+                          Standby programming
+                        </span>
+                      )}
                     </div>
 
                     {/* Next */}
                     {row.next?.title && (
-                      <div className="mt-0.5 text-[11px] text-gray-400 truncate">
+                      <div className="text-[11px] text-gray-300">
                         <span className="text-gray-500">Next:</span>{" "}
-                        <span className="text-gray-200">{row.next.title}</span>
-                        {" · "}
-                        <span>{fmtTimeLocal(parseUtcishMs(row.next.start_time))}</span>
+                        <span className="font-medium text-gray-100">
+                          {row.next.title}
+                        </span>{" "}
+                        <span className="text-gray-400">
+                          · {fmtTimeLocal(parseUtcishMs(row.next.start_time))}
+                        </span>
                       </div>
                     )}
 
                     {/* Later list (compact) */}
                     {row.later && row.later.length > 0 && (
-                      <div className="mt-0.5 text-[11px] text-gray-500 truncate">
+                      <div className="text-[11px] text-gray-400">
                         <span className="text-gray-600">Later:</span>{" "}
                         {row.later.map((p, i) => {
                           const t = fmtTimeLocal(parseUtcishMs(p.start_time));
                           return (
-                            <span key={`${p.start_time}-${i}`} className="whitespace-nowrap">
+                            <span
+                              key={`${p.start_time}-${i}`}
+                              className="whitespace-nowrap"
+                            >
                               {t} {p.title}
                               {i < row.later!.length - 1 ? " · " : ""}
                             </span>
@@ -336,8 +395,18 @@ export default function GuidePage() {
                     )}
                   </div>
 
-                  {/* Chevron */}
-                  <div className="text-gray-600">›</div>
+                  {/* Watch pill (instead of a naked arrow) */}
+                  <div className="hidden flex-col items-end gap-1 text-[11px] text-gray-400 sm:flex">
+                    <span>Go to channel</span>
+                    <div className="inline-flex items-center gap-1 rounded-full bg-red-700 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide">
+                      <span>Watch</span>
+                      <ChevronRight className="h-3 w-3" />
+                    </div>
+                  </div>
+                  {/* On very small screens just show a simple chevron */}
+                  <div className="flex items-center text-gray-500 sm:hidden">
+                    <ChevronRight className="h-4 w-4" />
+                  </div>
                 </div>
               </Link>
             );
