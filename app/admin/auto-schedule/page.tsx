@@ -1,7 +1,7 @@
 // app/admin/auto-schedule/page.tsx
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import {
@@ -55,12 +55,31 @@ const CHANNEL_BUCKETS = [
   "freedom-school",
 ];
 
+// 🔹 NEW: helper to turn "my_show-part_01.mp4" → "My Show Part 01"
+function makePrettyTitle(fileName: string): string {
+  // 1) Strip extension
+  let base = fileName.replace(/\.[^./]+$/, "");
+
+  // 2) Replace underscores/dashes with spaces & collapse double spaces
+  base = base.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+
+  // 3) Title-case each word
+  const words = base.split(" ");
+  const titled = words
+    .map((w) =>
+      w.length === 0 ? "" : w[0].toUpperCase() + w.slice(1)
+    )
+    .join(" ");
+
+  return titled || fileName; // fallback to original if something goes weird
+}
+
 export default function AutoSchedulePage() {
   const supabase = createClientComponentClient();
 
   const [channelId, setChannelId] = useState<string>("");
   const [bucketName, setBucketName] = useState<string>("channel1");
-  const [baseStart, setBaseStart] = useState<string>(""); // ISO string: 2025-11-16T10:00:00
+  const [baseStart, setBaseStart] = useState<string>(""); // datetime-local
   const [files, setFiles] = useState<BucketFile[]>([]);
   const [loadingFiles, setLoadingFiles] = useState(false);
   const [savingSchedule, setSavingSchedule] = useState(false);
@@ -229,9 +248,7 @@ export default function AutoSchedulePage() {
     const sec = value ? Number(value) : undefined;
     setFiles((prev) =>
       prev.map((f) =>
-        f.name === name
-          ? { ...f, duration: Number.isFinite(sec) ? sec : undefined }
-          : f
+        f.name === name ? { ...f, duration: Number.isFinite(sec) ? sec : undefined } : f
       )
     );
   }
@@ -247,15 +264,7 @@ export default function AutoSchedulePage() {
     }
 
     if (!baseStart) {
-      setErr("Select a base start date/time. It cannot be empty.");
-      return;
-    }
-
-    const base = new Date(baseStart);
-    if (Number.isNaN(base.getTime())) {
-      setErr(
-        "Base start time is invalid. It must look like 2025-11-16T10:00:00 (YYYY-MM-DDTHH:MM:SS)."
-      );
+      setErr("Select a base start date/time for the first program.");
       return;
     }
 
@@ -274,7 +283,14 @@ export default function AutoSchedulePage() {
       return;
     }
 
-    // Sort selected files by name (you can change this to your own ordering)
+    // Build schedule
+    const base = new Date(baseStart);
+    if (Number.isNaN(base.getTime())) {
+      setErr("Base start time is invalid.");
+      return;
+    }
+
+    // Sort selected files by name (you can change this ordering if you want)
     const ordered = [...selectedFiles].sort((a, b) =>
       a.name.localeCompare(b.name)
     );
@@ -303,10 +319,13 @@ export default function AutoSchedulePage() {
         return;
       }
 
+      // 🔹 Use pretty title instead of raw filename
+      const prettyTitle = makePrettyTitle(file.name);
+
       rows.push({
         channel_id: chId,
         start_time: currentStart.toISOString(),
-        title: file.name,
+        title: prettyTitle,
         mp4_url: publicUrl,
         duration: durationSec,
       });
@@ -378,7 +397,6 @@ export default function AutoSchedulePage() {
         {/* Controls */}
         <section className="rounded-lg border border-slate-700 bg-slate-900/70 p-4 space-y-4">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-            {/* CHANNEL ID */}
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-1">
                 Channel ID (for programs.channel_id)
@@ -391,11 +409,10 @@ export default function AutoSchedulePage() {
                 placeholder="e.g. 1"
               />
               <p className="mt-1 text-[10px] text-slate-400">
-                Use the numeric channel ID your viewer uses (1–29, 30 for Freedom School, etc.).
+                Use the numeric channel ID your viewer uses (1–29, etc.).
               </p>
             </div>
 
-            {/* BUCKET NAME */}
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-1">
                 Storage Bucket
@@ -416,76 +433,19 @@ export default function AutoSchedulePage() {
               </p>
             </div>
 
-            {/* BASE START WITH PRESETS */}
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-1">
-                Base Start (YYYY-MM-DDTHH:MM:SS)
+                Base Start (local time)
               </label>
-
-              <div className="flex gap-2">
-                {/* Main input */}
-                <input
-                  type="text"
-                  value={baseStart}
-                  onChange={(e) => setBaseStart(e.target.value)}
-                  placeholder="2025-11-16T10:00:00"
-                  className="flex-1 rounded-md border border-slate-600 bg-slate-950 px-3 py-1.5 
-                             text-sm text-white focus:border-amber-400 focus:outline-none focus:ring-1 
-                             focus:ring-amber-400"
-                />
-
-                {/* PRESET TIMES DROPDOWN */}
-                <select
-                  className="rounded-md border border-slate-600 bg-slate-900 text-sm px-2"
-                  onChange={(e) => {
-                    const preset = e.target.value;
-                    if (preset === "") return;
-
-                    const today = new Date();
-                    const date = today.toISOString().split("T")[0]; // YYYY-MM-DD
-                    setBaseStart(`${date}T${preset}`);
-                  }}
-                >
-                  <option value="">Presets</option>
-                  <option value="00:00:00">Midnight (00:00:00)</option>
-                  <option value="06:00:00">6 AM</option>
-                  <option value="10:00:00">10 AM</option>
-                  <option value="12:00:00">Noon</option>
-                  <option value="18:00:00">6 PM</option>
-                  <option value="23:00:00">11 PM</option>
-                </select>
-
-                {/* NOW BUTTON */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    const now = new Date();
-                    const pad = (n: number) => String(n).padStart(2, "0");
-
-                    const year = now.getFullYear();
-                    const month = pad(now.getMonth() + 1);
-                    const day = pad(now.getDate());
-                    const hr = pad(now.getHours());
-                    const min = pad(now.getMinutes());
-                    const sec = pad(now.getSeconds());
-
-                    setBaseStart(`${year}-${month}-${day}T${hr}:${min}:${sec}`);
-                  }}
-                  className="rounded-md bg-amber-600 px-3 py-1.5 text-xs hover:bg-amber-700"
-                >
-                  Now
-                </button>
-              </div>
-
+              <input
+                type="datetime-local"
+                value={baseStart}
+                onChange={(e) => setBaseStart(e.target.value)}
+                className="w-full rounded-md border border-slate-600 bg-slate-950 px-3 py-1.5 text-sm text-white focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
+              />
               <p className="mt-1 text-[10px] text-slate-400">
-                Must look EXACTLY like{" "}
-                <span className="font-mono text-amber-300">
-                  2025-11-16T10:00:00
-                </span>{" "}
-                (no spaces).
-              </p>
-              <p className="text-xs text-amber-400 mt-1">
-                Current Value: {baseStart || "(none)"}
+                The first program will start here, then each one follows based on
+                duration.
               </p>
             </div>
           </div>
@@ -543,7 +503,7 @@ export default function AutoSchedulePage() {
 
           {successMsg && (
             <div className="flex items-start gap-2 rounded-md border border-emerald-500/60 bg-emerald-950/40 px-3 py-2 text-xs text-emerald-200">
-            <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0" />
+              <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0" />
               <p>{successMsg}</p>
             </div>
           )}
@@ -576,10 +536,7 @@ export default function AutoSchedulePage() {
             ) : files.length === 0 ? (
               <div className="py-8 text-center text-xs text-slate-400">
                 No files loaded. Choose a bucket and click{" "}
-                <span className="text-amber-300">
-                  Load Files from Bucket
-                </span>
-                .
+                <span className="text-amber-300">Load Files from Bucket</span>.
               </div>
             ) : (
               <table className="min-w-full text-xs">
