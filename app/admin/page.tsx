@@ -116,6 +116,13 @@ export default function AdminDashboard() {
           description: "Build a full schedule from channel bucket MP4s",
         },
         {
+          name: "Program Title Editor",
+          href: "/admin/program-titles",
+          icon: <Edit className="h-4 w-4" />,
+          description:
+            "Clean up program titles without touching schedule details",
+        },
+        {
           name: "View Guide",
           href: "/browse",
           icon: <Calendar className="h-4 w-4" />,
