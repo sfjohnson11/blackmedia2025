@@ -55,23 +55,18 @@ const CHANNEL_BUCKETS = [
   "freedom-school",
 ];
 
-// 🔹 NEW: helper to turn "my_show-part_01.mp4" → "My Show Part 01"
-function makePrettyTitle(fileName: string): string {
-  // 1) Strip extension
-  let base = fileName.replace(/\.[^./]+$/, "");
-
-  // 2) Replace underscores/dashes with spaces & collapse double spaces
-  base = base.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
-
-  // 3) Title-case each word
-  const words = base.split(" ");
-  const titled = words
-    .map((w) =>
-      w.length === 0 ? "" : w[0].toUpperCase() + w.slice(1)
-    )
+// 🔹 Helper: turn file name into a nicer title
+function fileNameToPrettyTitle(name: string): string {
+  // strip extension
+  const withoutExt = name.replace(/\.[^.]+$/, "");
+  // replace underscores / dashes with spaces
+  const spaced = withoutExt.replace(/[_-]+/g, " ");
+  // basic title-case: "pbs jim_crow pt1" -> "Pbs Jim Crow Pt1"
+  return spaced
+    .split(" ")
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
     .join(" ");
-
-  return titled || fileName; // fallback to original if something goes weird
 }
 
 export default function AutoSchedulePage() {
@@ -290,7 +285,7 @@ export default function AutoSchedulePage() {
       return;
     }
 
-    // Sort selected files by name (you can change this ordering if you want)
+    // Sort selected files by name (you can change this to your own ordering)
     const ordered = [...selectedFiles].sort((a, b) =>
       a.name.localeCompare(b.name)
     );
@@ -319,13 +314,10 @@ export default function AutoSchedulePage() {
         return;
       }
 
-      // 🔹 Use pretty title instead of raw filename
-      const prettyTitle = makePrettyTitle(file.name);
-
       rows.push({
         channel_id: chId,
         start_time: currentStart.toISOString(),
-        title: prettyTitle,
+        title: fileNameToPrettyTitle(file.name), // 🔹 use pretty title here
         mp4_url: publicUrl,
         duration: durationSec,
       });
