@@ -1,7 +1,7 @@
 // app/admin/auto-schedule/page.tsx
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import {
@@ -54,6 +54,17 @@ const CHANNEL_BUCKETS = [
   "channel29",
   "freedom-school",
 ];
+
+// Helper: format JS Date → "YYYY-MM-DDTHH:MM" for <input type="datetime-local">
+function formatDateTimeLocal(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const y = date.getFullYear();
+  const m = pad(date.getMonth() + 1);
+  const d = pad(date.getDate());
+  const hh = pad(date.getHours());
+  const mm = pad(date.getMinutes());
+  return `${y}-${m}-${d}T${hh}:${mm}`;
+}
 
 export default function AutoSchedulePage() {
   const supabase = createClientComponentClient();
@@ -270,12 +281,11 @@ export default function AutoSchedulePage() {
     // datetime-local usually gives "YYYY-MM-DDTHH:MM" (no seconds), which new Date() understands
     let base = new Date(baseStart);
     if (Number.isNaN(base.getTime())) {
-      // try a simple fallback: replace space with "T" if needed
       const alt = baseStart.replace(" ", "T");
       base = new Date(alt);
     }
     if (Number.isNaN(base.getTime())) {
-      setErr("Base start time is invalid. Please use the date/time picker.");
+      setErr("Base start time is invalid. Please use the date/time picker or preset buttons.");
       return;
     }
 
@@ -333,7 +343,7 @@ export default function AutoSchedulePage() {
         );
       }
     } catch (e: any) {
-      console.error("Unexpected insert error", e);
+      console.error("Unexpected error creating schedule", e);
       setErr(e?.message || "Unexpected error creating schedule.");
     } finally {
       setSavingSchedule(false);
@@ -349,6 +359,25 @@ export default function AutoSchedulePage() {
     () => files.filter((f) => f.selected).every((f) => !!f.duration),
     [files]
   );
+
+  // Preset handlers
+  function setNowPreset() {
+    const d = new Date();
+    setBaseStart(formatDateTimeLocal(d));
+  }
+
+  function setMidnightPreset() {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    setBaseStart(formatDateTimeLocal(d));
+  }
+
+  function setTopOfNextHourPreset() {
+    const d = new Date();
+    d.setMinutes(0, 0, 0);
+    d.setHours(d.getHours() + 1);
+    setBaseStart(formatDateTimeLocal(d));
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#040814] via-[#050b1a] to-black text-white pb-10">
@@ -428,9 +457,33 @@ export default function AutoSchedulePage() {
                 className="w-full rounded-md border border-slate-600 bg-slate-950 px-3 py-1.5 text-sm text-white focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
               />
               <p className="mt-1 text-[10px] text-slate-400">
-                Pick the local date & time for the first program. Everything
-                else will follow in order using the durations.
+                Pick the local date & time for the first program, or use a quick
+                preset below.
               </p>
+              {/* Preset buttons */}
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={setNowPreset}
+                  className="text-[11px] px-2 py-1 rounded border border-amber-400/60 bg-amber-500/10 hover:bg-amber-500/20"
+                >
+                  Now (local)
+                </button>
+                <button
+                  type="button"
+                  onClick={setMidnightPreset}
+                  className="text-[11px] px-2 py-1 rounded border border-slate-500/60 bg-slate-800/80 hover:bg-slate-700"
+                >
+                  Tonight at Midnight
+                </button>
+                <button
+                  type="button"
+                  onClick={setTopOfNextHourPreset}
+                  className="text-[11px] px-2 py-1 rounded border border-slate-500/60 bg-slate-800/80 hover:bg-slate-700"
+                >
+                  Top of Next Hour
+                </button>
+              </div>
             </div>
           </div>
 
