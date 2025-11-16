@@ -1,107 +1,74 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import { Button } from "@/components/ui/button"
-import { RefreshCw, Check, ArrowLeft } from "lucide-react"
-import Link from "next/link"
+import { useState } from "react";
+import Link from "next/link";
+import { RefreshCw, ArrowLeft } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 export default function RefreshProgramsPage() {
-  const [isRefreshing, setIsRefreshing] = useState(false)
-  const [refreshed, setRefreshed] = useState(false)
-  const [message, setMessage] = useState("")
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
 
-  const handleRefresh = async () => {
-    setIsRefreshing(true)
-    setMessage("Clearing cache and refreshing program data...")
+  async function runScheduler() {
+    setLoading(true);
+    setResult(null);
 
     try {
-      // Clear localStorage cache if any exists
-      localStorage.removeItem("programCache")
-      localStorage.removeItem("channelCache")
+      const res = await fetch("/api/admin/refresh-programs", {
+        method: "POST",
+      });
 
-      // Force browser to reload without cache
-      const reloadOptions = {
-        cache: "reload",
-        headers: {
-          "Cache-Control": "no-cache",
-        },
+      const json = await res.json();
+
+      if (!res.ok || json.error) {
+        setResult(`❌ Error: ${json.error || "Unknown error"}`);
+      } else {
+        setResult(
+          `✅ Rebuilt schedule. Inserted ${json.programsInserted ?? 0} programs starting at ${json.dayStart || ""}`
+        );
       }
-
-      // Fetch a timestamp to ensure we're getting fresh data
-      await fetch(`/api/refresh-cache?t=${Date.now()}`, reloadOptions)
-
-      setMessage("Program data refreshed successfully! You can now return to viewing channels.")
-      setRefreshed(true)
-    } catch (error) {
-      setMessage(`Error refreshing data: ${error instanceof Error ? error.message : String(error)}`)
+    } catch (err: any) {
+      console.error("Scheduler error:", err);
+      setResult(`❌ Error: ${err?.message || "Unknown error"}`);
     } finally {
-      setIsRefreshing(false)
+      setLoading(false);
     }
   }
 
   return (
-    <div className="container mx-auto px-4 py-8 max-w-4xl">
-      <div className="mb-6">
-        <Link href="/admin" className="flex items-center text-blue-500 hover:text-blue-700">
-          <ArrowLeft className="mr-2 h-4 w-4" />
-          Back to Admin Dashboard
-        </Link>
-      </div>
-
-      <div className="bg-gray-800 rounded-lg p-6 shadow-lg">
-        <h1 className="text-2xl font-bold mb-6">Refresh Program Data</h1>
-
-        <p className="mb-4 text-gray-300">
-          Use this tool to refresh program data and clear any cached information. This is helpful when:
-        </p>
-
-        <ul className="list-disc pl-5 mb-6 text-gray-300 space-y-1">
-          <li>You've recently updated the program schedule</li>
-          <li>You're seeing outdated program information</li>
-          <li>Videos aren't loading correctly</li>
-          <li>Channel information appears to be stale</li>
-        </ul>
-
-        <div className="flex justify-center mb-6">
-          <Button
-            onClick={handleRefresh}
-            disabled={isRefreshing || refreshed}
-            className="bg-blue-600 hover:bg-blue-700"
+    <div className="min-h-screen bg-black text-white">
+      <div className="mx-auto max-w-2xl px-4 py-8">
+        <div className="mb-4 flex items-center gap-3">
+          <Link
+            href="/admin"
+            className="inline-flex items-center text-sm text-gray-300 hover:text-white"
           >
-            {isRefreshing ? (
-              <>
-                <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                Refreshing...
-              </>
-            ) : refreshed ? (
-              <>
-                <Check className="mr-2 h-4 w-4" />
-                Refreshed
-              </>
-            ) : (
-              <>
-                <RefreshCw className="mr-2 h-4 w-4" />
-                Refresh Program Data
-              </>
-            )}
-          </Button>
+            <ArrowLeft className="mr-1 h-4 w-4" />
+            Back to Admin
+          </Link>
         </div>
 
-        {message && (
-          <div className={`p-4 rounded-md ${refreshed ? "bg-green-900/30" : "bg-blue-900/30"}`}>{message}</div>
-        )}
+        <h1 className="text-2xl font-bold mb-2">Rebuild Channel Schedules</h1>
+        <p className="text-sm text-gray-300 mb-6">
+          This will scan your channel buckets (<code>channel1</code>–<code>channel29</code>, <code>freedom-school</code> for channel 30),
+          compute start times from midnight UTC, and rewrite the <code>programs</code> table.
+        </p>
 
-        {refreshed && (
-          <div className="mt-6 flex justify-center space-x-4">
-            <Link href="/channels">
-              <Button>Go to Channels</Button>
-            </Link>
-            <Button onClick={() => window.location.reload()} variant="outline">
-              Reload Page
-            </Button>
+        <Button
+          onClick={runScheduler}
+          disabled={loading}
+          className="inline-flex items-center gap-2 bg-red-600 hover:bg-red-700"
+        >
+          <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+          {loading ? "Rebuilding Schedule…" : "Run Scheduler"}
+        </Button>
+
+        {result && (
+          <div className="mt-6 rounded-md border border-slate-700 bg-slate-900/70 px-4 py-3 text-sm">
+            {result}
           </div>
         )}
       </div>
     </div>
-  )
+  );
 }
