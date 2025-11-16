@@ -1,7 +1,7 @@
 // app/admin/auto-schedule/page.tsx
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import {
@@ -55,23 +55,20 @@ const CHANNEL_BUCKETS = [
   "freedom-school",
 ];
 
-// Helper: format JS Date → "YYYY-MM-DDTHH:MM" for <input type="datetime-local">
-function formatDateTimeLocal(date: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const y = date.getFullYear();
-  const m = pad(date.getMonth() + 1);
-  const d = pad(date.getDate());
-  const hh = pad(date.getHours());
-  const mm = pad(date.getMinutes());
-  return `${y}-${m}-${d}T${hh}:${mm}`;
-}
-
 export default function AutoSchedulePage() {
   const supabase = createClientComponentClient();
 
   const [channelId, setChannelId] = useState<string>("");
   const [bucketName, setBucketName] = useState<string>("channel1");
-  const [baseStart, setBaseStart] = useState<string>(""); // datetime-local string
+
+  // NEW: separate date + time pieces (with presets + NOW)
+  const [baseDate, setBaseDate] = useState<string>(() =>
+    new Date().toISOString().slice(0, 10)
+  ); // YYYY-MM-DD
+  const [baseHour, setBaseHour] = useState<string>("00");
+  const [baseMinute, setBaseMinute] = useState<string>("00");
+  const [baseSecond, setBaseSecond] = useState<string>("00");
+
   const [files, setFiles] = useState<BucketFile[]>([]);
   const [loadingFiles, setLoadingFiles] = useState(false);
   const [savingSchedule, setSavingSchedule] = useState(false);
@@ -80,7 +77,42 @@ export default function AutoSchedulePage() {
 
   const hiddenVideoRef = useRef<HTMLVideoElement | null>(null);
 
-  // Load files from chosen bucket
+  const baseIsoPreview = useMemo(() => {
+    if (!baseDate) return "";
+    const hh = (baseHour || "00").padStart(2, "0");
+    const mm = (baseMinute || "00").padStart(2, "0");
+    const ss = (baseSecond || "00").padStart(2, "0");
+    return `${baseDate}T${hh}:${mm}:${ss}`;
+  }, [baseDate, baseHour, baseMinute, baseSecond]);
+
+  // ------- Helpers for presets --------
+  function setToMidnight() {
+    const today = new Date();
+    setBaseDate(today.toISOString().slice(0, 10));
+    setBaseHour("00");
+    setBaseMinute("00");
+    setBaseSecond("00");
+  }
+
+  function setToTopOfNextHour() {
+    const now = new Date();
+    now.setMinutes(0, 0, 0);
+    now.setHours(now.getHours() + 1);
+    setBaseDate(now.toISOString().slice(0, 10));
+    setBaseHour(String(now.getHours()).padStart(2, "0"));
+    setBaseMinute("00");
+    setBaseSecond("00");
+  }
+
+  function setToNow() {
+    const now = new Date();
+    setBaseDate(now.toISOString().slice(0, 10));
+    setBaseHour(String(now.getHours()).padStart(2, "0"));
+    setBaseMinute(String(now.getMinutes()).padStart(2, "0"));
+    setBaseSecond(String(now.getSeconds()).padStart(2, "0"));
+  }
+
+  // ------- Load files from chosen bucket -------
   async function loadFiles() {
     setErr(null);
     setSuccessMsg(null);
@@ -129,7 +161,7 @@ export default function AutoSchedulePage() {
     );
   }
 
-  // Detect duration for one file using a hidden <video>
+  // ------- Detect duration for one file using a hidden <video> -------
   async function detectDurationForFile(file: BucketFile) {
     setErr(null);
     setSuccessMsg(null);
@@ -240,9 +272,7 @@ export default function AutoSchedulePage() {
     const sec = value ? Number(value) : undefined;
     setFiles((prev) =>
       prev.map((f) =>
-        f.name === name
-          ? { ...f, duration: Number.isFinite(sec) ? sec : undefined }
-          : f
+        f.name === name ? { ...f, duration: Number.isFinite(sec) ? sec : undefined } : f
       )
     );
   }
@@ -257,8 +287,8 @@ export default function AutoSchedulePage() {
       return;
     }
 
-    if (!baseStart) {
-      setErr("Select a base start date/time for the first program.");
+    if (!baseDate) {
+      setErr("Select a base date for the first program.");
       return;
     }
 
@@ -277,19 +307,21 @@ export default function AutoSchedulePage() {
       return;
     }
 
-    // Parse baseStart as given by the datetime-local input
-    // datetime-local usually gives "YYYY-MM-DDTHH:MM" (no seconds), which new Date() understands
-    let base = new Date(baseStart);
+    // Build ISO-ish local time string: YYYY-MM-DDTHH:mm:ss
+    const hh = (baseHour || "00").padStart(2, "0");
+    const mm = (baseMinute || "00").padStart(2, "0");
+    const ss = (baseSecond || "00").padStart(2, "0");
+    const isoLocal = `${baseDate}T${hh}:${mm}:${ss}`;
+
+    const base = new Date(isoLocal);
     if (Number.isNaN(base.getTime())) {
-      const alt = baseStart.replace(" ", "T");
-      base = new Date(alt);
-    }
-    if (Number.isNaN(base.getTime())) {
-      setErr("Base start time is invalid. Please use the date/time picker or preset buttons.");
+      setErr(
+        `Base start time is invalid. It must look like 2025-11-16T10:00:00. We built: ${isoLocal}`
+      );
       return;
     }
 
-    // Sort selected files by name (you can change this to your own ordering)
+    // Sort selected files by name (change if you want a different order)
     const ordered = [...selectedFiles].sort((a, b) =>
       a.name.localeCompare(b.name)
     );
@@ -320,14 +352,16 @@ export default function AutoSchedulePage() {
 
       rows.push({
         channel_id: chId,
-        start_time: currentStart.toISOString(), // stored in UTC
+        start_time: currentStart.toISOString(),
         title: file.name,
         mp4_url: publicUrl,
         duration: durationSec,
       });
 
       // Advance currentStart by duration
-      currentStart = new Date(currentStart.getTime() + durationSec * 1000);
+      currentStart = new Date(
+        currentStart.getTime() + durationSec * 1000
+      );
     }
 
     // Insert into programs table
@@ -343,7 +377,7 @@ export default function AutoSchedulePage() {
         );
       }
     } catch (e: any) {
-      console.error("Unexpected error creating schedule", e);
+      console.error("Unexpected insert error", e);
       setErr(e?.message || "Unexpected error creating schedule.");
     } finally {
       setSavingSchedule(false);
@@ -360,24 +394,11 @@ export default function AutoSchedulePage() {
     [files]
   );
 
-  // Preset handlers
-  function setNowPreset() {
-    const d = new Date();
-    setBaseStart(formatDateTimeLocal(d));
-  }
-
-  function setMidnightPreset() {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    setBaseStart(formatDateTimeLocal(d));
-  }
-
-  function setTopOfNextHourPreset() {
-    const d = new Date();
-    d.setMinutes(0, 0, 0);
-    d.setHours(d.getHours() + 1);
-    setBaseStart(formatDateTimeLocal(d));
-  }
+  // Helpers to build hour + minute options
+  const hourOptions = Array.from({ length: 24 }, (_, i) =>
+    String(i).padStart(2, "0")
+  );
+  const minuteOptions = ["00", "15", "30", "45"];
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#040814] via-[#050b1a] to-black text-white pb-10">
@@ -389,8 +410,8 @@ export default function AutoSchedulePage() {
               Auto-Schedule from Buckets
             </h1>
             <p className="mt-1 text-sm text-slate-300">
-              Pull MP4 files from a channel bucket, detect durations, and
-              create a sequential schedule in your{" "}
+              Pull MP4 files from a channel bucket, detect durations, and create
+              a sequential schedule in your{" "}
               <code className="text-amber-300">programs</code> table.
             </p>
           </div>
@@ -410,6 +431,7 @@ export default function AutoSchedulePage() {
         {/* Controls */}
         <section className="rounded-lg border border-slate-700 bg-slate-900/70 p-4 space-y-4">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            {/* Channel ID */}
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-1">
                 Channel ID (for programs.channel_id)
@@ -422,10 +444,11 @@ export default function AutoSchedulePage() {
                 placeholder="e.g. 1"
               />
               <p className="mt-1 text-[10px] text-slate-400">
-                Use the numeric channel ID your viewer uses (1–29, 30, etc.).
+                Use the numeric channel ID your viewer uses (1–29, etc.).
               </p>
             </div>
 
+            {/* Bucket */}
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-1">
                 Storage Bucket
@@ -446,45 +469,95 @@ export default function AutoSchedulePage() {
               </p>
             </div>
 
+            {/* Base date + time (dropdowns + preview) */}
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-1">
-                Base Start (local time)
+                Base Date
               </label>
               <input
-                type="datetime-local"
-                value={baseStart}
-                onChange={(e) => setBaseStart(e.target.value)}
+                type="date"
+                value={baseDate}
+                onChange={(e) => setBaseDate(e.target.value)}
                 className="w-full rounded-md border border-slate-600 bg-slate-950 px-3 py-1.5 text-sm text-white focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
               />
-              <p className="mt-1 text-[10px] text-slate-400">
-                Pick the local date & time for the first program, or use a quick
-                preset below.
-              </p>
-              {/* Preset buttons */}
-              <div className="mt-2 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={setNowPreset}
-                  className="text-[11px] px-2 py-1 rounded border border-amber-400/60 bg-amber-500/10 hover:bg-amber-500/20"
-                >
-                  Now (local)
-                </button>
-                <button
-                  type="button"
-                  onClick={setMidnightPreset}
-                  className="text-[11px] px-2 py-1 rounded border border-slate-500/60 bg-slate-800/80 hover:bg-slate-700"
-                >
-                  Tonight at Midnight
-                </button>
-                <button
-                  type="button"
-                  onClick={setTopOfNextHourPreset}
-                  className="text-[11px] px-2 py-1 rounded border border-slate-500/60 bg-slate-800/80 hover:bg-slate-700"
-                >
-                  Top of Next Hour
-                </button>
+              <div className="mt-2">
+                <label className="block text-xs font-medium text-slate-300 mb-1">
+                  Base Time
+                </label>
+                <div className="flex gap-1">
+                  <select
+                    value={baseHour}
+                    onChange={(e) => setBaseHour(e.target.value)}
+                    className="w-16 rounded-md border border-slate-600 bg-slate-950 px-2 py-1 text-xs text-white focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
+                  >
+                    {hourOptions.map((h) => (
+                      <option key={h} value={h}>
+                        {h}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="text-xs flex items-center">:</span>
+                  <select
+                    value={baseMinute}
+                    onChange={(e) => setBaseMinute(e.target.value)}
+                    className="w-16 rounded-md border border-slate-600 bg-slate-950 px-2 py-1 text-xs text-white focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
+                  >
+                    {minuteOptions.map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="text-xs flex items-center">:</span>
+                  <select
+                    value={baseSecond}
+                    onChange={(e) => setBaseSecond(e.target.value)}
+                    className="w-16 rounded-md border border-slate-600 bg-slate-950 px-2 py-1 text-xs text-white focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
+                  >
+                    <option value="00">00</option>
+                    <option value="30">30</option>
+                  </select>
+                </div>
+                <p className="mt-1 text-[10px] text-slate-400 font-mono">
+                  Using: {baseIsoPreview || "—"}{" "}
+                  <span className="text-slate-500">
+                    (must look like 2025-11-16T10:00:00)
+                  </span>
+                </p>
               </div>
             </div>
+          </div>
+
+          {/* Quick presets row */}
+          <div className="flex flex-wrap items-center gap-2 text-[11px]">
+            <span className="text-slate-400 mr-1">Quick presets:</span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={setToMidnight}
+              className="border-slate-600 bg-slate-950 text-[11px] px-2 py-1"
+            >
+              Midnight (today)
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={setToTopOfNextHour}
+              className="border-slate-600 bg-slate-950 text-[11px] px-2 py-1"
+            >
+              Top of next hour
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={setToNow}
+              className="border-slate-600 bg-slate-950 text-[11px] px-2 py-1"
+            >
+              Now
+            </Button>
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
@@ -540,7 +613,7 @@ export default function AutoSchedulePage() {
 
           {successMsg && (
             <div className="flex items-start gap-2 rounded-md border border-emerald-500/60 bg-emerald-950/40 px-3 py-2 text-xs text-emerald-200">
-              <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0" />
+            <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0" />
               <p>{successMsg}</p>
             </div>
           )}
@@ -573,7 +646,10 @@ export default function AutoSchedulePage() {
             ) : files.length === 0 ? (
               <div className="py-8 text-center text-xs text-slate-400">
                 No files loaded. Choose a bucket and click{" "}
-                <span className="text-amber-300">Load Files from Bucket</span>.
+                <span className="text-amber-300">
+                  Load Files from Bucket
+                </span>
+                .
               </div>
             ) : (
               <table className="min-w-full text-xs">
