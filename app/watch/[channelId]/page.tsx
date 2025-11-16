@@ -10,7 +10,6 @@ import {
   supabase,
   STANDBY_PLACEHOLDER_ID,
 } from "@/lib/supabase";
-import { getNewsItems } from "@/lib/news-data";
 import type { Channel, Program } from "@/types";
 import { ChevronLeft, Loader2 } from "lucide-react";
 
@@ -113,7 +112,7 @@ function isActiveProgram(p: Program, nowMs: number): boolean {
   const durSec = asSeconds(p.duration);
   if (!Number.isFinite(startMs) || durSec <= 0) return false;
   const endMs = startMs + durSec * 1000;
-  return startMs - GRACE_MS <= nowMs && nowMs < endMs + GRACE_MS;
+  return (startMs - GRACE_MS) <= nowMs && nowMs < (endMs + GRACE_MS);
 }
 
 /** Quick HEAD check; ok = fast positive signal, but not required */
@@ -121,12 +120,7 @@ async function headOk(url: string, timeoutMs = 4500): Promise<boolean> {
   try {
     const ctrl = new AbortController();
     const to = setTimeout(() => ctrl.abort(), timeoutMs);
-    const res = await fetch(url, {
-      method: "HEAD",
-      mode: "cors",
-      redirect: "follow",
-      signal: ctrl.signal as any,
-    });
+    const res = await fetch(url, { method: "HEAD", mode: "cors", redirect: "follow", signal: ctrl.signal as any });
     clearTimeout(to);
     return res.ok;
   } catch {
@@ -153,10 +147,7 @@ async function resolvePlayableUrl(candidates: string[]): Promise<string | undefi
       const cleanup = () => {
         v.onloadedmetadata = null;
         v.onerror = null;
-        try {
-          v.src = "";
-          v.load();
-        } catch {}
+        try { v.src = ""; v.load(); } catch {}
       };
 
       const to = setTimeout(() => {
@@ -185,9 +176,7 @@ async function resolvePlayableUrl(candidates: string[]): Promise<string | undefi
       };
 
       v.src = url;
-      try {
-        v.load();
-      } catch {}
+      try { v.load(); } catch {}
     });
     if (ok) return url;
   }
@@ -207,10 +196,6 @@ export default function WatchPage() {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isResolvingSrc, setIsResolvingSrc] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-
-  // NEWS TICKER STATE
-  const [tickerItems, setTickerItems] = useState<string[]>([]);
-  const [tickerPaused, setTickerPaused] = useState(false);
 
   const getNowMs = useCallback(() => Date.now(), []);
 
@@ -244,28 +229,8 @@ export default function WatchPage() {
         if (!cancelled) setIsLoading(false);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [channelId]);
-
-  // Load news ticker items
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const items = await getNewsItems();
-        if (!cancelled && Array.isArray(items)) {
-          setTickerItems(items);
-        }
-      } catch (e) {
-        console.warn("Error loading news items", e);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   // Fetch current program (with probing + cache + stickiness)
   const fetchCurrentProgram = useCallback(
@@ -282,7 +247,7 @@ export default function WatchPage() {
 
         const { data, error: dbError } = await supabase
           .from("programs")
-          .select("id,channel_id,title,mp4_url,start_time,duration,description,poster_url")
+          .select("channel_id,title,mp4_url,start_time,duration")
           .eq("channel_id", numericChannelId)
           .order("start_time", { ascending: true });
 
@@ -296,6 +261,7 @@ export default function WatchPage() {
           active
             ? { ...active, channel_id: numericChannelId }
             : ({
+
                 id: STANDBY_PLACEHOLDER_ID as any,
                 title: "Standby Programming",
                 description: "Programming will resume shortly.",
@@ -333,15 +299,11 @@ export default function WatchPage() {
           resolvedSrc = getVideoUrlForProgram(programToSet) || "";
         }
 
-        const finalProgram: ProgramWithSrc = {
-          ...(programToSet as ProgramWithSrc),
-          _resolved_src: resolvedSrc || "",
-        };
+        const finalProgram: ProgramWithSrc = { ...(programToSet as ProgramWithSrc), _resolved_src: resolvedSrc || "" };
 
         setCurrentProgram((prev) => {
           const prevSrc = prev?._resolved_src;
-          const changed =
-            prevSrc !== finalProgram._resolved_src || prev?.start_time !== finalProgram.start_time;
+          const changed = prevSrc !== finalProgram._resolved_src || prev?.start_time !== finalProgram.start_time;
           if (changed) setVideoPlayerKey(Date.now());
           return finalProgram;
         });
@@ -356,11 +318,10 @@ export default function WatchPage() {
           duration: 300,
           start_time: new Date().toISOString(),
           poster_url: (channelDetails as any)?.logo_url || null,
-          _resolved_src:
-            getVideoUrlForProgram({
-              channel_id: numericChannelId,
-              mp4_url: `channel${numericChannelId}/standby_blacktruthtv.mp4`,
-            } as Program) || "",
+          _resolved_src: getVideoUrlForProgram({
+            channel_id: numericChannelId,
+            mp4_url: `channel${numericChannelId}/standby_blacktruthtv.mp4`,
+          } as Program) || "",
         } as ProgramWithSrc);
       } finally {
         setIsResolvingSrc(false);
@@ -375,7 +336,7 @@ export default function WatchPage() {
       const nowIso = new Date().toISOString();
       const { data, error } = await supabase
         .from("programs")
-        .select("id,channel_id,title,mp4_url,start_time,duration")
+        .select("channel_id,title,mp4_url,start_time,duration")
         .eq("channel_id", numericChannelId)
         .gt("start_time", nowIso)
         .order("start_time", { ascending: true })
@@ -390,10 +351,7 @@ export default function WatchPage() {
   // Polling: wake near expected end, otherwise every 60s; don't poll while probing
   useEffect(() => {
     if (channelId == null) return;
-    if (channelId === CH21_ID_NUMERIC) {
-      setIsLoading(false);
-      return;
-    }
+    if (channelId === CH21_ID_NUMERIC) { setIsLoading(false); return; }
 
     let timer: NodeJS.Timeout | null = null;
 
@@ -414,30 +372,24 @@ export default function WatchPage() {
         if (Number.isFinite(s) && d > 0) {
           const endMs = s + d * 1000;
           const wakeIn = Math.max(5_000, endMs - Date.now() - 5_000); // 5s before end
-          timer = setTimeout(() => {
-            refetch();
-            scheduleNext();
-          }, wakeIn);
+          timer = setTimeout(() => { refetch(); scheduleNext(); }, wakeIn);
           return;
         }
       }
       // no active program → poll in 60s
-      timer = setTimeout(() => {
-        refetch();
-        scheduleNext();
-      }, 60_000);
+      timer = setTimeout(() => { refetch(); scheduleNext(); }, 60_000);
     };
 
     scheduleNext();
-    return () => {
-      if (timer) clearTimeout(timer);
-    };
+    return () => { if (timer) clearTimeout(timer); };
   }, [channelId, currentProgram, fetchCurrentProgram, fetchUpcoming, isResolvingSrc]);
 
   // Player & render
   const videoSrc = currentProgram?._resolved_src; // use the probed or fallback candidate
   const posterSrc =
-    (currentProgram as any)?.poster_url || (channelDetails as any)?.logo_url || undefined;
+    (currentProgram as any)?.poster_url ||
+    (channelDetails as any)?.logo_url ||
+    undefined;
   const isStandby = (currentProgram as any)?.id === STANDBY_PLACEHOLDER_ID;
 
   const handleEnded = useCallback(() => {
@@ -471,11 +423,7 @@ export default function WatchPage() {
       />
     );
   } else if (error) {
-    content = (
-      <p className="text-red-400 p-4 text-center">
-        Error: {error}
-      </p>
-    );
+    content = <p className="text-red-400 p-4 text-center">Error: {error}</p>;
   } else if (isLoading && !currentProgram) {
     content = (
       <div className="flex flex-col items-center justify-center h-full">
@@ -504,72 +452,23 @@ export default function WatchPage() {
       </div>
     );
   } else {
-    content = (
-      <p className="text-gray-400 p-4 text-center">
-        Initializing channel…
-      </p>
-    );
+    content = <p className="text-gray-400 p-4 text-center">Initializing channel…</p>;
   }
 
   return (
     <div className="bg-black min-h-screen flex flex-col text-white">
-      {/* Top bar */}
-      <div className="p-4 flex flex-col gap-2 bg-gray-900/70 sticky top-0 z-20">
-        <div className="flex items-center justify-between">
-          <button
-            onClick={() => router.back()}
-            className="p-2 rounded-full hover:bg-gray-700"
-            aria-label="Go back"
-          >
-            <ChevronLeft className="h-6 w-6" />
-          </button>
-          <h1 className="text-xl font-semibold truncate px-2">
-            {channelDetails?.name ||
-              (channelId != null ? `Channel ${channelId}` : "Channel")}
-          </h1>
-          <div className="w-10 h-10" />
-        </div>
-
-        {/* News ticker – full width under header */}
-        {tickerItems.length > 0 && (
-          <div className="bg-red-700/90 border-y border-red-500/70 text-xs sm:text-sm">
-            <div
-              className="overflow-hidden whitespace-nowrap cursor-pointer"
-              onMouseEnter={() => setTickerPaused(true)}
-              onMouseLeave={() => setTickerPaused(false)}
-            >
-              <div
-                className={`inline-flex items-center gap-8 px-8 py-1 animate-marquee ${
-                  tickerPaused ? "paused" : ""
-                }`}
-              >
-                {tickerItems.map((item, idx) => (
-                  <span
-                    key={idx}
-                    className="inline-flex items-center gap-2"
-                  >
-                    <span className="font-semibold uppercase tracking-wide text-yellow-300">
-                      Breaking
-                    </span>
-                    <span>{item}</span>
-                  </span>
-                ))}
-                {/* duplicate for seamless loop */}
-                {tickerItems.map((item, idx) => (
-                  <span
-                    key={`dup-${idx}`}
-                    className="inline-flex items-center gap-2"
-                  >
-                    <span className="font-semibold uppercase tracking-wide text-yellow-300">
-                      Breaking
-                    </span>
-                    <span>{item}</span>
-                  </span>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
+      <div className="p-4 flex items-center justify-between bg-gray-900/50 sticky top-0 z-10">
+        <button
+          onClick={() => router.back()}
+          className="p-2 rounded-full hover:bg-gray-700"
+          aria-label="Go back"
+        >
+          <ChevronLeft className="h-6 w-6" />
+        </button>
+        <h1 className="text-xl font-semibold truncate px-2">
+          {channelDetails?.name || (channelId != null ? `Channel ${channelId}` : "Channel")}
+        </h1>
+        <div className="w-10 h-10" />
       </div>
 
       {/* Video area + subtle overlays */}
@@ -577,9 +476,7 @@ export default function WatchPage() {
         {content}
         <LoadingOverlay
           visible={Boolean((isLoading && !currentProgram) || isResolvingSrc)}
-          label={
-            isLoading && !currentProgram ? "Loading channel…" : "Preparing stream…"
-          }
+          label={isLoading && !currentProgram ? "Loading channel…" : "Preparing stream…"}
         />
         <MobileHint show={!isResolvingSrc && Boolean(currentProgram?._resolved_src)} />
       </div>
@@ -590,31 +487,22 @@ export default function WatchPage() {
           <>
             <h2 className="text-2xl font-bold">{currentProgram.title}</h2>
             <p className="text-sm text-gray-400">
-              Channel:{" "}
-              {channelDetails?.name ||
-                (channelId != null ? `Channel ${channelId}` : "")}
+              Channel: {channelDetails?.name || (channelId != null ? `Channel ${channelId}` : "")}
             </p>
             {!isStandby && currentProgram.start_time && (
               <p className="text-sm text-gray-400">
-                Scheduled Start:{" "}
-                {new Date(currentProgram.start_time).toLocaleString()}
+                Scheduled Start: {new Date(currentProgram.start_time).toLocaleString()}
               </p>
             )}
             {currentProgram?.description && (
-              <p className="text-xs text-gray-300 mt-1">
-                {currentProgram.description}
-              </p>
+              <p className="text-xs text-gray-300 mt-1">{currentProgram.description}</p>
             )}
             {upcomingPrograms.length > 0 && (
               <div className="mt-6">
-                <h3 className="text-lg font-semibold text-white mb-2">
-                  Upcoming Programs
-                </h3>
+                <h3 className="text-lg font-semibold text-white mb-2">Upcoming Programs</h3>
                 <ul className="text-sm text-gray-300 space-y-1">
                   {upcomingPrograms.map((p, idx) => (
-                    <li
-                      key={`${p.channel_id}-${p.start_time}-${p.title}-${idx}`}
-                    >
+                    <li key={`${p.channel_id}-${p.start_time}-${p.title}-${idx}`}>
                       <span className="font-medium">{p.title}</span>{" "}
                       <span className="text-gray-400">
                         —{" "}
