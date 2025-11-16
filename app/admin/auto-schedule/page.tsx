@@ -55,26 +55,12 @@ const CHANNEL_BUCKETS = [
   "freedom-school",
 ];
 
-// 🔹 Helper: turn file name into a nicer title
-function fileNameToPrettyTitle(name: string): string {
-  // strip extension
-  const withoutExt = name.replace(/\.[^.]+$/, "");
-  // replace underscores / dashes with spaces
-  const spaced = withoutExt.replace(/[_-]+/g, " ");
-  // basic title-case: "pbs jim_crow pt1" -> "Pbs Jim Crow Pt1"
-  return spaced
-    .split(" ")
-    .filter(Boolean)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-    .join(" ");
-}
-
 export default function AutoSchedulePage() {
   const supabase = createClientComponentClient();
 
   const [channelId, setChannelId] = useState<string>("");
   const [bucketName, setBucketName] = useState<string>("channel1");
-  const [baseStart, setBaseStart] = useState<string>(""); // datetime-local
+  const [baseStart, setBaseStart] = useState<string>(""); // datetime-local string
   const [files, setFiles] = useState<BucketFile[]>([]);
   const [loadingFiles, setLoadingFiles] = useState(false);
   const [savingSchedule, setSavingSchedule] = useState(false);
@@ -243,7 +229,9 @@ export default function AutoSchedulePage() {
     const sec = value ? Number(value) : undefined;
     setFiles((prev) =>
       prev.map((f) =>
-        f.name === name ? { ...f, duration: Number.isFinite(sec) ? sec : undefined } : f
+        f.name === name
+          ? { ...f, duration: Number.isFinite(sec) ? sec : undefined }
+          : f
       )
     );
   }
@@ -278,10 +266,16 @@ export default function AutoSchedulePage() {
       return;
     }
 
-    // Build schedule
-    const base = new Date(baseStart);
+    // Parse baseStart as given by the datetime-local input
+    // datetime-local usually gives "YYYY-MM-DDTHH:MM" (no seconds), which new Date() understands
+    let base = new Date(baseStart);
     if (Number.isNaN(base.getTime())) {
-      setErr("Base start time is invalid.");
+      // try a simple fallback: replace space with "T" if needed
+      const alt = baseStart.replace(" ", "T");
+      base = new Date(alt);
+    }
+    if (Number.isNaN(base.getTime())) {
+      setErr("Base start time is invalid. Please use the date/time picker.");
       return;
     }
 
@@ -316,16 +310,14 @@ export default function AutoSchedulePage() {
 
       rows.push({
         channel_id: chId,
-        start_time: currentStart.toISOString(),
-        title: fileNameToPrettyTitle(file.name), // 🔹 use pretty title here
+        start_time: currentStart.toISOString(), // stored in UTC
+        title: file.name,
         mp4_url: publicUrl,
         duration: durationSec,
       });
 
       // Advance currentStart by duration
-      currentStart = new Date(
-        currentStart.getTime() + durationSec * 1000
-      );
+      currentStart = new Date(currentStart.getTime() + durationSec * 1000);
     }
 
     // Insert into programs table
@@ -401,7 +393,7 @@ export default function AutoSchedulePage() {
                 placeholder="e.g. 1"
               />
               <p className="mt-1 text-[10px] text-slate-400">
-                Use the numeric channel ID your viewer uses (1–29, etc.).
+                Use the numeric channel ID your viewer uses (1–29, 30, etc.).
               </p>
             </div>
 
@@ -436,8 +428,8 @@ export default function AutoSchedulePage() {
                 className="w-full rounded-md border border-slate-600 bg-slate-950 px-3 py-1.5 text-sm text-white focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
               />
               <p className="mt-1 text-[10px] text-slate-400">
-                The first program will start here, then each one follows based on
-                duration.
+                Pick the local date & time for the first program. Everything
+                else will follow in order using the durations.
               </p>
             </div>
           </div>
