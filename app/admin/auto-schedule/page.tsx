@@ -55,6 +55,11 @@ const CHANNEL_BUCKETS = [
   "freedom-school",
 ];
 
+// ✅ Full-day hourly presets: 00:00:00 → 23:00:00
+const TIME_PRESETS: string[] = Array.from({ length: 24 }, (_, h) =>
+  `${String(h).padStart(2, "0")}:00:00`
+);
+
 export default function AutoSchedulePage() {
   const supabase = createClientComponentClient();
 
@@ -416,14 +421,14 @@ export default function AutoSchedulePage() {
               </p>
             </div>
 
-            {/* BASE START WITH PRESETS */}
+            {/* BASE START WITH FULL-DAY PRESETS */}
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-1">
                 Base Start (YYYY-MM-DDTHH:MM:SS)
               </label>
 
               <div className="flex gap-2">
-                {/* Main input */}
+                {/* Main input – SAME FORMAT AS BEFORE */}
                 <input
                   type="text"
                   value={baseStart}
@@ -434,7 +439,7 @@ export default function AutoSchedulePage() {
                              focus:ring-amber-400"
                 />
 
-                {/* PRESET TIMES DROPDOWN */}
+                {/* FULL-DAY PRESET TIMES DROPDOWN */}
                 <select
                   className="rounded-md border border-slate-600 bg-slate-900 text-sm px-2"
                   onChange={(e) => {
@@ -447,12 +452,11 @@ export default function AutoSchedulePage() {
                   }}
                 >
                   <option value="">Presets</option>
-                  <option value="00:00:00">Midnight (00:00:00)</option>
-                  <option value="06:00:00">6 AM</option>
-                  <option value="10:00:00">10 AM</option>
-                  <option value="12:00:00">Noon</option>
-                  <option value="18:00:00">6 PM</option>
-                  <option value="23:00:00">11 PM</option>
+                  {TIME_PRESETS.map((t) => (
+                    <option key={t} value={t}>
+                      {t} (today)
+                    </option>
+                  ))}
                 </select>
 
                 {/* NOW BUTTON */}
@@ -543,7 +547,7 @@ export default function AutoSchedulePage() {
 
           {successMsg && (
             <div className="flex items-start gap-2 rounded-md border border-emerald-500/60 bg-emerald-950/40 px-3 py-2 text-xs text-emerald-200">
-            <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0" />
+              <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0" />
               <p>{successMsg}</p>
             </div>
           )}
