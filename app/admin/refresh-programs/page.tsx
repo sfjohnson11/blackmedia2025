@@ -27,6 +27,7 @@ type ProgramRow = {
 export default function RefreshProgramsPage() {
   const supabase = createClientComponentClient();
 
+  // 🔹 Existing single-channel rebuild state
   const [channelId, setChannelId] = useState<string>("");
   const [baseStart, setBaseStart] = useState<string>("");
   const [loading, setLoading] = useState(false);
@@ -37,6 +38,11 @@ export default function RefreshProgramsPage() {
   const [firstOld, setFirstOld] = useState<string | null>(null);
   const [lastOld, setLastOld] = useState<string | null>(null);
 
+  // 🔹 New: daily reset state (all channels)
+  const [dailyRunning, setDailyRunning] = useState(false);
+  const [dailyTouchedPrograms, setDailyTouchedPrograms] = useState<number | null>(null);
+  const [dailyTouchedChannels, setDailyTouchedChannels] = useState<number | null>(null);
+
   function parseBaseStart(value: string): Date | null {
     if (!value) return null;
     const d = new Date(value);
@@ -44,6 +50,9 @@ export default function RefreshProgramsPage() {
     return d;
   }
 
+  // =========================
+  // 1) Preview single channel
+  // =========================
   async function handlePreview() {
     setErr(null);
     setSuccessMsg(null);
@@ -88,6 +97,9 @@ export default function RefreshProgramsPage() {
     }
   }
 
+  // ==========================
+  // 2) Rebuild single channel
+  // ==========================
   async function handleRebuild() {
     setErr(null);
     setSuccessMsg(null);
@@ -173,6 +185,101 @@ export default function RefreshProgramsPage() {
     }
   }
 
+  // ==========================
+  // 3) Daily Reset – ALL channels
+  // ==========================
+  async function handleDailyResetAll() {
+    setErr(null);
+    setSuccessMsg(null);
+    setDailyTouchedPrograms(null);
+    setDailyTouchedChannels(null);
+    setDailyRunning(true);
+
+    try {
+      const { data, error } = await supabase
+        .from("programs")
+        .select("id, channel_id, duration, start_time")
+        .order("channel_id", { ascending: true })
+        .order("start_time", { ascending: true });
+
+      if (error) {
+        console.error("Error loading programs for daily reset", error);
+        setErr(error.message);
+        return;
+      }
+
+      const rows = (data || []) as ProgramRow[];
+      if (rows.length === 0) {
+        setErr("No programs found in the database.");
+        return;
+      }
+
+      // Group by channel_id
+      const byChannel = new Map<number, ProgramRow[]>();
+      for (const row of rows) {
+        const cid = Number(row.channel_id);
+        if (!Number.isFinite(cid)) continue;
+        if (!byChannel.has(cid)) byChannel.set(cid, []);
+        byChannel.get(cid)!.push(row);
+      }
+
+      // Base = midnight UTC today
+      const baseUtc = new Date();
+      baseUtc.setUTCHours(0, 0, 0, 0);
+
+      const updates: { id: number; start_time: string }[] = [];
+
+      for (const [cid, channelRows] of byChannel.entries()) {
+        // Ensure they are in order by existing start_time
+        channelRows.sort((a, b) => {
+          const ta = a.start_time ? Date.parse(a.start_time) : 0;
+          const tb = b.start_time ? Date.parse(b.start_time) : 0;
+          return ta - tb;
+        });
+
+        let cursor = new Date(baseUtc);
+
+        for (const row of channelRows) {
+          updates.push({
+            id: row.id,
+            start_time: cursor.toISOString(),
+          });
+
+          const dur =
+            row.duration && row.duration > 0 ? row.duration : 300;
+          cursor = new Date(cursor.getTime() + dur * 1000);
+        }
+      }
+
+      if (updates.length === 0) {
+        setErr("No updates could be generated for daily reset.");
+        return;
+      }
+
+      const { error: upsertError } = await supabase
+        .from("programs")
+        .upsert(updates, { onConflict: "id" });
+
+      if (upsertError) {
+        console.error("Daily reset upsert error", upsertError);
+        setErr(upsertError.message);
+        return;
+      }
+
+      setDailyTouchedPrograms(rows.length);
+      setDailyTouchedChannels(byChannel.size);
+
+      setSuccessMsg(
+        `Daily reset complete. Rebuilt schedules for ${byChannel.size} channel(s) and ${rows.length} program(s), starting from midnight UTC today.`
+      );
+    } catch (e: any) {
+      console.error("Unexpected error during daily reset", e);
+      setErr(e?.message || "Unexpected error while running daily reset.");
+    } finally {
+      setDailyRunning(false);
+    }
+  }
+
   const parsedBase = parseBaseStart(baseStart);
 
   const firstOldDisplay = firstOld
@@ -196,8 +303,8 @@ export default function RefreshProgramsPage() {
             </h1>
             <p className="mt-1 text-sm text-slate-300">
               Recalculate <code className="text-amber-300">start_time</code> for
-              a single channel using your existing programs and durations. Titles
-              and MP4 URLs are preserved.
+              a single channel, or run a daily reset for all channels. Titles and
+              MP4 URLs are preserved.
             </p>
           </div>
           <div className="flex gap-2">
@@ -213,7 +320,7 @@ export default function RefreshProgramsPage() {
           </div>
         </div>
 
-        {/* Main form card */}
+        {/* Main form card: single-channel tools */}
         <section className="rounded-lg border border-slate-700 bg-slate-900/70 p-4 space-y-4">
           <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             {/* Channel ID */}
@@ -331,7 +438,7 @@ export default function RefreshProgramsPage() {
               type="button"
               variant="outline"
               onClick={handlePreview}
-              disabled={loading || saving}
+              disabled={loading || saving || dailyRunning}
               className="border-slate-600 bg-slate-950 text-sm"
             >
               {loading ? (
@@ -350,7 +457,7 @@ export default function RefreshProgramsPage() {
             <Button
               type="button"
               onClick={handleRebuild}
-              disabled={saving || loading}
+              disabled={saving || loading || dailyRunning}
               className="bg-emerald-600 hover:bg-emerald-700 text-sm"
             >
               {saving ? (
@@ -384,6 +491,53 @@ export default function RefreshProgramsPage() {
               <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0" />
               <p>{successMsg}</p>
             </div>
+          )}
+        </section>
+
+        {/* Daily Reset section – all channels */}
+        <section className="rounded-lg border border-slate-700 bg-slate-900/70 p-4 space-y-3">
+          <h2 className="text-sm font-semibold text-slate-100 flex items-center gap-2">
+            <RefreshCw className="h-4 w-4 text-emerald-400" />
+            Daily Reset (All Channels)
+          </h2>
+          <p className="text-xs text-slate-300">
+            This tool rebuilds <code className="text-amber-300">start_time</code>{" "}
+            for <span className="font-semibold">every channel</span>, starting
+            each one at <span className="font-semibold">midnight UTC today</span>.
+            It keeps your current order, titles, MP4 URLs, and durations.
+          </p>
+
+          <Button
+            type="button"
+            onClick={handleDailyResetAll}
+            disabled={dailyRunning || loading || saving}
+            className="bg-sky-600 hover:bg-sky-700 text-sm"
+          >
+            {dailyRunning ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Running Daily Reset…
+              </>
+            ) : (
+              <>
+                <RefreshCw className="mr-2 h-4 w-4" />
+                Run Daily Reset for All Channels
+              </>
+            )}
+          </Button>
+
+          {dailyTouchedChannels != null && dailyTouchedPrograms != null && (
+            <p className="text-[11px] text-slate-400">
+              Last daily reset touched{" "}
+              <span className="font-mono text-amber-200">
+                {dailyTouchedChannels}
+              </span>{" "}
+              channel(s) and{" "}
+              <span className="font-mono text-amber-200">
+                {dailyTouchedPrograms}
+              </span>{" "}
+              program(s).
+            </p>
           )}
         </section>
       </div>
