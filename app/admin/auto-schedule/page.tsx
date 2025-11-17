@@ -60,6 +60,21 @@ const TIME_PRESETS: string[] = Array.from({ length: 24 }, (_, h) =>
   `${String(h).padStart(2, "0")}:00:00`
 );
 
+// ✅ Helper: turn a filename into a nicer title
+// - strips the last extension (e.g., ".mp4")
+// - converts underscores to spaces
+// - leaves your own spacing/capitalization alone
+function makeTitleFromFilename(name: string): string {
+  // Remove extension like ".mp4" or ".MP4"
+  let base = name.replace(/\.[^/.]+$/, "");
+
+  // Turn underscores into spaces (you can still use spaces in filenames)
+  base = base.replace(/_+/g, " ").trim();
+
+  // If somehow empty, fall back to original name
+  return base || name;
+}
+
 export default function AutoSchedulePage() {
   const supabase = createClientComponentClient();
 
@@ -308,10 +323,13 @@ export default function AutoSchedulePage() {
         return;
       }
 
+      // ✅ Use cleaned-up title from filename instead of raw "name.mp4"
+      const niceTitle = makeTitleFromFilename(file.name);
+
       rows.push({
         channel_id: chId,
         start_time: currentStart.toISOString(),
-        title: file.name,
+        title: niceTitle,
         mp4_url: publicUrl,
         duration: durationSec,
       });
