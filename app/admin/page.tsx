@@ -20,6 +20,8 @@ import {
   Music2,
   PlayCircle,
   PlusCircle,
+  Tv2,
+  Trash2,
 } from "lucide-react";
 import {
   Card,
@@ -121,6 +123,19 @@ export default function AdminDashboard() {
           icon: <Edit className="h-4 w-4" />,
           description:
             "Clean up program titles without touching schedule details",
+        },
+        {
+          name: "On-Demand Library",
+          href: "/on-demand",
+          icon: <Tv2 className="h-4 w-4" />,
+          description: "Browse and test on-demand programs by channel",
+        },
+        {
+          name: "Cleanup Programs",
+          href: "/admin/program-cleanup",
+          icon: <Trash2 className="h-4 w-4" />,
+          accent: "danger",
+          description: "Find and remove broken or unwanted program entries",
         },
         {
           name: "View Guide",
