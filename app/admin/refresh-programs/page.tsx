@@ -249,7 +249,7 @@ export default function RefreshProgramsPage() {
                   className="flex-1 rounded-md border border-slate-600 bg-slate-950 px-3 py-1.5 text-sm text-white focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
                 />
 
-                {/* presets */}
+                {/* FULL-DAY PRESETS (every hour) */}
                 <select
                   className="rounded-md border border-slate-600 bg-slate-900 text-sm px-2"
                   onChange={(e) => {
@@ -261,13 +261,30 @@ export default function RefreshProgramsPage() {
                   }}
                 >
                   <option value="">Presets</option>
-                  <option value="00:00:00">Midnight</option>
-                  <option value="06:00:00">6 AM</option>
-                  <option value="10:00:00">10 AM</option>
-                  <option value="12:00:00">Noon</option>
-                  <option value="18:00:00">6 PM</option>
-                  <option value="20:00:00">8 PM</option>
-                  <option value="23:00:00">11 PM</option>
+                  <option value="00:00:00">12:00 AM (Midnight)</option>
+                  <option value="01:00:00">1:00 AM</option>
+                  <option value="02:00:00">2:00 AM</option>
+                  <option value="03:00:00">3:00 AM</option>
+                  <option value="04:00:00">4:00 AM</option>
+                  <option value="05:00:00">5:00 AM</option>
+                  <option value="06:00:00">6:00 AM</option>
+                  <option value="07:00:00">7:00 AM</option>
+                  <option value="08:00:00">8:00 AM</option>
+                  <option value="09:00:00">9:00 AM</option>
+                  <option value="10:00:00">10:00 AM</option>
+                  <option value="11:00:00">11:00 AM</option>
+                  <option value="12:00:00">12:00 PM (Noon)</option>
+                  <option value="13:00:00">1:00 PM</option>
+                  <option value="14:00:00">2:00 PM</option>
+                  <option value="15:00:00">3:00 PM</option>
+                  <option value="16:00:00">4:00 PM</option>
+                  <option value="17:00:00">5:00 PM</option>
+                  <option value="18:00:00">6:00 PM</option>
+                  <option value="19:00:00">7:00 PM</option>
+                  <option value="20:00:00">8:00 PM</option>
+                  <option value="21:00:00">9:00 PM</option>
+                  <option value="22:00:00">10:00 PM</option>
+                  <option value="23:00:00">11:00 PM</option>
                 </select>
 
                 {/* Now button */}
