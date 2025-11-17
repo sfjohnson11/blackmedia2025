@@ -32,7 +32,9 @@ export default async function ChannelsPage() {
       <div className="pt-24 px-4 md:px-10 flex items-center justify-center min-h-[80vh]">
         <div className="bg-gray-800 p-6 rounded-lg max-w-md w-full text-center">
           <h2 className="text-xl font-semibold mb-4">No Channels Found</h2>
-          <p className="mb-4">Please set up your database tables and add some channels to get started.</p>
+          <p className="mb-4">
+            Please set up your database tables and add some channels to get started.
+          </p>
           <Link href="/" className="text-red-500 hover:underline">
             Return to Home
           </Link>
@@ -43,7 +45,39 @@ export default async function ChannelsPage() {
 
   return (
     <div className="pt-24 px-4 md:px-10 pb-10">
-      <h1 className="text-3xl font-bold mb-8">All Channels</h1>
+
+      {/* ===== PAGE TITLE ===== */}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-8">
+        <h1 className="text-3xl font-bold">All Channels</h1>
+
+        {/* ===== ON-DEMAND BUTTON ===== */}
+        <Link href="/on-demand">
+          <button
+            className="
+              mt-4 md:mt-0
+              rounded-lg 
+              bg-red-600 
+              px-5 
+              py-2.5 
+              text-sm 
+              font-semibold 
+              text-white 
+              shadow-md 
+              hover:bg-red-700 
+              transition 
+              focus:outline-none 
+              focus:ring-2 
+              focus:ring-red-500 
+              focus:ring-offset-2 
+              focus:ring-offset-black
+            "
+          >
+            🎬 Watch On-Demand
+          </button>
+        </Link>
+      </div>
+
+      {/* ===== CHANNEL GRID ===== */}
       <ChannelGrid channels={channels} />
     </div>
   )
