@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import {
   PlayCircle,
@@ -24,7 +23,7 @@ type Lesson = {
   topicTag?: string;
   level?: "Beginner" | "Intermediate" | "Advanced" | string;
   description: string;
-  watchHref?: string;   // for video/audio
+  watchHref?: string; // for video/audio
   resourceHref?: string; // for PDF / extra
   isFeatured?: boolean;
   rawName: string;
@@ -32,17 +31,19 @@ type Lesson = {
 
 function inferTypeFromName(name: string): MediaType {
   const ext = name.split(".").pop()?.toLowerCase() || "";
+
   if (["mp4", "mov", "m4v", "webm"].includes(ext)) return "video";
   if (["mp3", "wav", "aac", "ogg"].includes(ext)) return "audio";
   if (ext === "pdf") return "pdf";
-  return "other";
+
+  // 🔁 Default: treat unknown types as video so they still show up
+  return "video";
 }
 
 function prettyTitleFromFile(name: string): string {
   const withoutExt = name.replace(/\.[^.]+$/, "");
   const withSpaces = withoutExt.replace(/[_-]+/g, " ").trim();
   if (!withSpaces) return name;
-  // Simple title-case
   return withSpaces
     .split(" ")
     .map((w) => (w.length ? w[0].toUpperCase() + w.slice(1) : w))
@@ -101,23 +102,23 @@ export default function FreedomSchoolClient() {
         if (error) {
           console.error("Error listing freedom-school bucket", error);
           if (!cancelled) {
-            setErr(error.message);
+            setErr("We’re having trouble loading Freedom School right now.");
             setLessons([]);
           }
           return;
         }
 
-        const files = (data || []).filter(
-          (f) =>
-            !f.name.startsWith(".") && // ignore hidden
-            !f.name.endsWith("/") // ignore folders if any
-        );
+        const files =
+          (data || []).filter(
+            (f) =>
+              !f.name.startsWith(".") && // ignore hidden
+              !f.name.endsWith("/") // ignore folders if any
+          ) || [];
 
         const mapped: Lesson[] = [];
 
         for (const f of files) {
           const type = inferTypeFromName(f.name);
-          if (type === "other") continue; // skip weird files
 
           const { data: urlData } = supabase
             .storage
@@ -157,7 +158,7 @@ export default function FreedomSchoolClient() {
           }
         }
 
-        // Sort by name so things are predictable
+        // Sort by file name to keep it predictable
         mapped.sort((a, b) => a.rawName.localeCompare(b.rawName));
 
         if (!cancelled) {
@@ -167,7 +168,7 @@ export default function FreedomSchoolClient() {
       } catch (e: any) {
         console.error("Unexpected error loading Freedom School bucket", e);
         if (!cancelled) {
-          setErr(e?.message || "Unexpected error loading media.");
+          setErr("We’re having trouble loading Freedom School right now.");
           setLessons([]);
         }
       } finally {
@@ -206,12 +207,8 @@ export default function FreedomSchoolClient() {
             The classroom is always open.
           </h1>
           <p className="mt-3 max-w-2xl text-sm text-slate-300 md:text-base">
-            This page now pulls real content from your{" "}
-            <span className="font-semibold text-amber-300">
-              freedom-school
-            </span>{" "}
-            bucket. Drop in videos, audio, and PDFs, and they’ll appear in your
-            lesson library.
+            Stream Freedom School lessons on demand — lectures, documentaries,
+            audio series, and readings curated by you.
           </p>
 
           <div className="mt-5 flex flex-wrap gap-3">
@@ -237,10 +234,10 @@ export default function FreedomSchoolClient() {
         </div>
       </section>
 
-      {/* Error / loading states */}
+      {/* Error / loading states (clean for users) */}
       {err && (
         <div className="mx-auto max-w-5xl px-4 pt-4 text-sm text-red-300 md:px-10">
-          Error loading Freedom School media: {err}
+          {err}
         </div>
       )}
       {loading && (
@@ -256,17 +253,13 @@ export default function FreedomSchoolClient() {
       >
         {/* Left: Selected lesson detail */}
         <div className="w-full md:w-[60%]">
-          {lessons.length === 0 ? (
+          {lessons.length === 0 && !loading && !err ? (
+            // 🔹 User-facing, no “upload files” instructions
             <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4 text-sm text-slate-200">
-              No media found in the{" "}
-              <span className="font-semibold text-amber-300">
-                freedom-school
-              </span>{" "}
-              bucket yet.
+              Freedom School lessons will appear here as they are added.
               <br />
               <br />
-              Upload MP4s, MP3s, or PDFs to that bucket in Supabase and refresh
-              this page — they will appear here automatically.
+              Check back soon for new programs in the virtual classroom.
             </div>
           ) : selectedLesson ? (
             <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4 shadow-lg shadow-black/40">
@@ -280,13 +273,13 @@ export default function FreedomSchoolClient() {
                       : "Preview"}
                   </div>
                   <p className="max-w-sm text-xs text-slate-300">
-                    This is a visual placeholder. Use{" "}
+                    Use{" "}
                     <span className="font-semibold">
                       {selectedLesson.type === "pdf"
                         ? "View PDF"
                         : "Watch Lesson"}
                     </span>{" "}
-                    below to open the real file in a new tab.
+                    below to open this Freedom School lesson in a new tab.
                   </p>
                 </div>
               </div>
@@ -360,9 +353,8 @@ export default function FreedomSchoolClient() {
                 </div>
 
                 <p className="mt-3 text-[11px] text-slate-400">
-                  Teacher tip: Pair each file with 2–3 questions or a short
-                  writing prompt so learners can connect history to their own
-                  lives.
+                  Use Freedom School lessons for self-study or to anchor
+                  classroom discussions, writing prompts, and research projects.
                 </p>
               </div>
             </div>
@@ -380,13 +372,10 @@ export default function FreedomSchoolClient() {
             </span>
           </div>
 
-          {lessons.length === 0 ? (
+          {lessons.length === 0 && !loading && !err ? (
             <p className="text-[11px] text-slate-500">
-              Once you upload MP4s, MP3s, or PDFs to the{" "}
-              <span className="font-semibold text-amber-300">
-                freedom-school
-              </span>{" "}
-              bucket, they’ll appear here automatically.
+              Freedom School lessons are being prepared. When new videos,
+              audios, and readings are added, they will appear here.
             </p>
           ) : (
             <div className="space-y-2">
@@ -442,8 +431,8 @@ export default function FreedomSchoolClient() {
           )}
 
           <p className="mt-4 text-[11px] text-slate-500">
-            You can keep dropping in new Freedom School media anytime — this
-            library will grow with you.
+            Build out Freedom School with series on desegregation, voting
+            rights, policing, labor, and more — all in one dedicated library.
           </p>
         </div>
       </section>
