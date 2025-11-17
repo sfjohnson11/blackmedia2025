@@ -1,375 +1,368 @@
-// app/freedom-school/FreedomSchoolClient.tsx
 "use client";
 
-import type React from "react";
-import { useEffect, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { ChevronLeft, AlertCircle, CheckCircle, Info, Play } from "lucide-react";
-import { supabase } from "@/lib/supabase";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import {
+  PlayCircle,
+  BookOpen,
+  Headphones,
+  FileText,
+  GraduationCap,
+  Clock,
+  Tag,
+} from "lucide-react";
 
-/** Build a public URL for a Storage object when a plain relative path is provided */
-function getFullUrl(path: string): string {
-  const base = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/g, "");
-  const clean = (path || "").replace(/^\/+/g, "");
-  return `${base}/storage/v1/object/public/${clean}`;
-}
+type LessonType = "video" | "audio" | "pdf" | "mixed";
 
-function isAbsoluteUrl(s: string | null | undefined) {
-  if (!s) return false;
-  try {
-    const u = new URL(s);
-    return u.protocol === "https:" || u.protocol === "http:";
-  } catch {
-    return false;
+type Lesson = {
+  id: string;
+  title: string;
+  subtitle?: string;
+  type: LessonType;
+  length?: string;          // e.g. "56 min"
+  topicTag?: string;        // e.g. "Civil Rights", "Reconstruction"
+  level?: "Beginner" | "Intermediate" | "Advanced";
+  description: string;
+  watchHref?: string;       // e.g. /watch/16 or external link
+  resourceHref?: string;    // extra PDF / notes
+  isFeatured?: boolean;
+};
+
+const LESSONS: Lesson[] = [
+  {
+    id: "1968-winter",
+    title: "1968: The Year That Changed America — Winter",
+    subtitle: "Protest, power, and the struggle for justice.",
+    type: "video",
+    length: "56 min",
+    topicTag: "Civil Rights",
+    level: "Intermediate",
+    description:
+      "Explore how 1968 reshaped politics, protest, and Black freedom movements in the United States. Use this lesson to connect past struggles to the headlines your students see today.",
+    watchHref: "/watch/16",
+    isFeatured: true,
+  },
+  {
+    id: "negro-american-slavery",
+    title: "The Negro American: Slavery — Decline and Renewal",
+    subtitle: "Lecture & discussion audio lesson.",
+    type: "audio",
+    length: "15 min",
+    topicTag: "Slavery & Reconstruction",
+    level: "Intermediate",
+    description:
+      "A focused audio lesson on the changing economic and social systems around slavery and its so-called 'decline'. Ideal for short homework assignments or in-class listening.",
+    watchHref: "#", // replace with real audio URL or page later
+  },
+  {
+    id: "atomic-veterans",
+    title: "Atomic Veterans",
+    subtitle: "Black servicemembers, sacrifice, and state power.",
+    type: "video",
+    length: "52 min",
+    topicTag: "Military & State Power",
+    level: "Intermediate",
+    description:
+      "Stories of veterans exposed to nuclear testing and the decades-long fight for recognition. Connects questions of patriotism, health, and government responsibility.",
+    watchHref: "/watch/15",
+  },
+  {
+    id: "freedom-school-reading-pack",
+    title: "Freedom School Reading Pack",
+    subtitle: "Printable readings & discussion prompts.",
+    type: "pdf",
+    length: "5–10 pages",
+    topicTag: "Teacher Toolkit",
+    level: "Beginner",
+    description:
+      "A starter pack concept for teachers: primary sources, discussion questions, and short writing prompts you can pair with any Freedom School video.",
+    resourceHref: "#", // later: link to Supabase PDF or Squarespace URL
+  },
+];
+
+function typeBadge(type: LessonType) {
+  switch (type) {
+    case "video":
+      return {
+        icon: <PlayCircle className="h-3.5 w-3.5 mr-1" />,
+        label: "Video Lesson",
+        color: "bg-red-600/90 text-white",
+      };
+    case "audio":
+      return {
+        icon: <Headphones className="h-3.5 w-3.5 mr-1" />,
+        label: "Audio Lesson",
+        color: "bg-blue-600/90 text-white",
+      };
+    case "pdf":
+      return {
+        icon: <FileText className="h-3.5 w-3.5 mr-1" />,
+        label: "Reading / PDF",
+        color: "bg-emerald-600/90 text-white",
+      };
+    case "mixed":
+    default:
+      return {
+        icon: <BookOpen className="h-3.5 w-3.5 mr-1" />,
+        label: "Mixed Media",
+        color: "bg-amber-600/90 text-black",
+      };
   }
 }
 
-/* ---------------- Types ---------------- */
-type FSVideoRow = { mp4_url: string | null; poster_url: string | null; published: boolean | null };
-type ChannelRow = { id: string | number; name?: string | null; logo_url?: string | null };
-
-const FEATURED_IDS = [1, 4, 8, 18, 30]; // include CH 30 as Freedom School home
-const HEADER_IMG = getFullUrl("freedom-school/freedom-schoolimage.jpeg");
-
 export default function FreedomSchoolClient() {
-  const router = useRouter();
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(
+    () => LESSONS.find((l) => l.isFeatured)?.id ?? LESSONS[0]?.id ?? null
+  );
 
-  const [isLoading, setIsLoading] = useState(true);
-  const [videoUrl, setVideoUrl] = useState("");
-  const [posterUrl, setPosterUrl] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const [featured, setFeatured] = useState<ChannelRow[]>([]);
-  const [loadingFeatured, setLoadingFeatured] = useState(true);
-
-  /* ---------- Load latest Freedom School video ---------- */
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      setIsLoading(true);
-      setError(null);
-
-      const { data, error } = await supabase
-        .from("freedom_school_videos")
-        .select("mp4_url, poster_url, published")
-        .eq("published", true)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle<FSVideoRow>();
-
-      if (!alive) return;
-
-      if (error || !data || typeof data.mp4_url !== "string" || !data.mp4_url.trim()) {
-        console.error("Freedom School fetch error:", error, data);
-        setError("No Freedom School video available at the moment.");
-        setIsLoading(false);
-        return;
-      }
-
-      const src = isAbsoluteUrl(data.mp4_url) ? data.mp4_url : getFullUrl(data.mp4_url);
-      const poster =
-        data.poster_url && typeof data.poster_url === "string"
-          ? (isAbsoluteUrl(data.poster_url) ? data.poster_url : getFullUrl(data.poster_url))
-          : null;
-
-      setVideoUrl(src);
-      setPosterUrl(poster);
-      setIsLoading(false);
-    })();
-
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  /* ---------- Load featured channels (1,4,8,18,30) ---------- */
-  useEffect(() => {
-    let cancel = false;
-    (async () => {
-      setLoadingFeatured(true);
-      const wantedAsText = FEATURED_IDS.map(String); // channels.id is TEXT in your DB
-      const { data, error } = await supabase
-        .from("channels")
-        .select("id, name, logo_url")
-        .in("id", wantedAsText);
-
-      if (cancel) return;
-
-      if (error) {
-        console.warn("Featured channels error:", error);
-        setFeatured([]);
-      } else {
-        const rows = (data || []) as ChannelRow[];
-        rows.sort((a, b) => Number(a.id) - Number(b.id)); // keep 1,4,8,18,30 order
-        setFeatured(rows);
-      }
-      setLoadingFeatured(false);
-    })();
-
-    return () => {
-      cancel = true;
-    };
-  }, []);
+  const selectedLesson = useMemo(
+    () => LESSONS.find((l) => l.id === selectedId) ?? LESSONS[0],
+    [selectedId]
+  );
 
   return (
-    <div className="bg-black min-h-screen text-white">
-      {/* Brand header band */}
-      <div className="relative overflow-hidden">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(900px_450px_at_15%_-10%,rgba(168,85,247,0.22),transparent_60%),radial-gradient(700px_350px_at_85%_-10%,rgba(234,179,8,0.18),transparent_60%)]" />
-        <div className="relative px-4 md:px-6 py-4 border-b border-white/10 bg-gradient-to-b from-[#2a0f3c] via-[#160a26] to-[#000]">
-          <div className="max-w-6xl mx-auto flex items-center justify-between">
-            <button
-              onClick={() => router.push("/")}
-              className="text-sm text-gray-300 hover:text-white hover:underline flex items-center"
-              aria-label="Back to Home"
+    <div className="min-h-screen bg-gradient-to-b from-[#050814] via-black to-black text-white">
+      {/* Hero */}
+      <section className="border-b border-slate-800 bg-[radial-gradient(circle_at_top,_rgba(239,68,68,0.18),_transparent_60%)] px-4 py-8 md:px-10">
+        <div className="mx-auto max-w-5xl">
+          <div className="flex flex-wrap items-center gap-3 text-xs font-semibold uppercase tracking-wide text-amber-300">
+            <span className="inline-flex items-center rounded-full bg-amber-500/10 px-2.5 py-1 ring-1 ring-amber-400/40">
+              <GraduationCap className="mr-1.5 h-3.5 w-3.5" />
+              Freedom School
+            </span>
+            <span className="text-slate-300">
+              Virtual classroom • History, power & Black liberation
+            </span>
+          </div>
+
+          <h1 className="mt-4 text-3xl font-extrabold leading-tight md:text-4xl">
+            The classroom is always open.
+          </h1>
+          <p className="mt-3 max-w-2xl text-sm text-slate-300 md:text-base">
+            Use these lessons for family study, youth circles, or community
+            classrooms. Watch the feature, then dive into discussion and
+            reflection together.
+          </p>
+
+          <div className="mt-5 flex flex-wrap gap-3">
+            {selectedLesson?.watchHref && (
+              <Link
+                href={selectedLesson.watchHref}
+                className="inline-flex items-center rounded-md bg-red-600 px-4 py-2 text-sm font-semibold shadow-lg shadow-red-900/40 hover:bg-red-700"
+              >
+                <PlayCircle className="mr-2 h-4 w-4" />
+                Start Featured Lesson
+              </Link>
+            )}
+            <a
+              href="#lessons"
+              className="inline-flex items-center rounded-md border border-slate-600 bg-slate-900/70 px-4 py-2 text-sm font-semibold text-slate-100 hover:bg-slate-800"
             >
-              <ChevronLeft className="w-4 h-4 mr-1" /> Back to Home
-            </button>
-            <div className="text-xs text-white/70">Freedom School</div>
+              <BookOpen className="mr-2 h-4 w-4" />
+              Browse All Lessons
+            </a>
           </div>
         </div>
-      </div>
+      </section>
 
-      <div className="p-4 md:p-6 max-w-6xl mx-auto">
-        {/* Header image + title */}
-        <div className="relative w-full h-48 md:h-64 rounded-xl overflow-hidden shadow-[0_0_80px_-30px_rgba(250,204,21,.45)] mb-6 ring-1 ring-white/10">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={HEADER_IMG}
-            alt="Freedom School Header"
-            className="w-full h-full object-cover"
-            onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
-          />
-          <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent" />
-          <div className="absolute bottom-0 left-0 p-4 md:p-6">
-            <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight">
-              <span className="bg-clip-text text-transparent bg-gradient-to-r from-[#facc15] via-[#fde68a] to-white">
-                📚 Freedom School
-              </span>
-            </h1>
-            <p className="text-gray-200">Our virtual classroom is always open.</p>
-          </div>
-        </div>
+      {/* Main content: Selected lesson + list */}
+      <section
+        id="lessons"
+        className="mx-auto flex max-w-6xl flex-col gap-6 px-4 pb-10 pt-6 md:flex-row md:px-10"
+      >
+        {/* Left: Selected lesson detail */}
+        <div className="w-full md:w-[60%]">
+          {selectedLesson ? (
+            <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4 shadow-lg shadow-black/40">
+              {/* Media mock / thumbnail area */}
+              <div className="relative mb-4 overflow-hidden rounded-lg border border-slate-800 bg-black/80 pt-[56.25%]">
+                {/* Simple overlay text instead of a real player (safe, non-breaking) */}
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-center">
+                  <div className="inline-flex items-center rounded-full bg-black/80 px-3 py-1 text-xs font-semibold text-slate-200 ring-1 ring-white/20">
+                    <PlayCircle className="mr-1.5 h-3.5 w-3.5" />
+                    Preview
+                  </div>
+                  <p className="max-w-sm text-xs text-slate-300">
+                    This is a visual placeholder. Click{" "}
+                    <span className="font-semibold">Watch Lesson</span> below to
+                    open the real stream or audio.
+                  </p>
+                </div>
+              </div>
 
-        {/* Video player card */}
-        <div className="relative w-full aspect-video rounded-xl overflow-hidden shadow-xl mb-8 ring-1 ring-white/10 bg-zinc-950/60">
-          {isLoading ? (
-            <div className="flex items-center justify-center h-full text-gray-300 text-sm">
-              Preparing stream…
+              {/* Text details */}
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-lg font-bold md:text-xl">
+                    {selectedLesson.title}
+                  </h2>
+                  {selectedLesson.type && (
+                    <span
+                      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${
+                        typeBadge(selectedLesson.type).color
+                      }`}
+                    >
+                      {typeBadge(selectedLesson.type).icon}
+                      {typeBadge(selectedLesson.type).label}
+                    </span>
+                  )}
+                </div>
+
+                {selectedLesson.subtitle && (
+                  <p className="text-xs font-medium text-slate-300 md:text-sm">
+                    {selectedLesson.subtitle}
+                  </p>
+                )}
+
+                <div className="flex flex-wrap gap-2 text-[11px] text-slate-300 md:text-xs">
+                  {selectedLesson.length && (
+                    <span className="inline-flex items-center rounded-full bg-slate-900 px-2 py-0.5">
+                      <Clock className="mr-1 h-3 w-3" />
+                      {selectedLesson.length}
+                    </span>
+                  )}
+                  {selectedLesson.topicTag && (
+                    <span className="inline-flex items-center rounded-full bg-slate-900 px-2 py-0.5">
+                      <Tag className="mr-1 h-3 w-3" />
+                      {selectedLesson.topicTag}
+                    </span>
+                  )}
+                  {selectedLesson.level && (
+                    <span className="inline-flex items-center rounded-full bg-slate-900 px-2 py-0.5">
+                      Level: {selectedLesson.level}
+                    </span>
+                  )}
+                </div>
+
+                <p className="mt-2 text-sm leading-relaxed text-slate-200">
+                  {selectedLesson.description}
+                </p>
+
+                <div className="mt-4 flex flex-wrap gap-3">
+                  {selectedLesson.watchHref && (
+                    <Link
+                      href={selectedLesson.watchHref}
+                      className="inline-flex items-center rounded-md bg-red-600 px-3 py-1.5 text-sm font-semibold shadow hover:bg-red-700"
+                    >
+                      <PlayCircle className="mr-1.5 h-4 w-4" />
+                      Watch Lesson
+                    </Link>
+                  )}
+
+                  {selectedLesson.resourceHref && (
+                    <Link
+                      href={selectedLesson.resourceHref}
+                      target="_blank"
+                      className="inline-flex items-center rounded-md border border-slate-600 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-100 hover:bg-slate-800"
+                    >
+                      <FileText className="mr-1.5 h-3.5 w-3.5" />
+                      View Handouts / PDF
+                    </Link>
+                  )}
+                </div>
+
+                <p className="mt-3 text-[11px] text-slate-400">
+                  Teacher tip: Pair this lesson with 2–3 reflection questions
+                  and one short writing prompt so learners can connect history
+                  to their own lives.
+                </p>
+              </div>
             </div>
-          ) : videoUrl ? (
-            <video
-              ref={videoRef}
-              key={videoUrl}
-              src={videoUrl}
-              poster={posterUrl ?? undefined}
-              controls
-              autoPlay
-              playsInline
-              className="w-full h-full"
-              onError={() => setError("Video failed to load.")}
-            >
-              Your browser does not support the video tag.
-            </video>
           ) : (
-            <div className="flex items-center justify-center h-full bg-gray-800 text-gray-300">
-              <p>{error || "Video content coming soon."}</p>
+            <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4 text-sm text-slate-200">
+              No lessons are configured yet. Once you add lessons, the selected
+              one will appear here.
             </div>
           )}
         </div>
 
-        {error && !videoUrl && (
-          <div className="text-yellow-500 flex items-center gap-2 mb-6 p-3 bg-yellow-950 rounded-md">
-            <AlertCircle className="w-5 h-5" /> {error}
-          </div>
-        )}
-
-        {/* Featured Channels */}
-        <section className="mb-10">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-xl md:text-2xl font-bold">Featured Channels</h2>
-            <Link
-              href="/guide"
-              className="text-sm text-[#facc15] hover:underline inline-flex items-center gap-1"
-            >
-              Open Guide <Play size={14} />
-            </Link>
+        {/* Right: Lesson list */}
+        <div className="w-full md:w-[40%]">
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-200">
+              Lesson Library
+            </h3>
+            <span className="text-[11px] text-slate-400">
+              {LESSONS.length} lesson{LESSONS.length === 1 ? "" : "s"}
+            </span>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            {loadingFeatured && (
-              <div className="col-span-full text-sm text-gray-400">Loading channels…</div>
-            )}
-            {!loadingFeatured &&
-              [1, 4, 8, 18, 30].map((id) => {
-                const ch = featured.find((c) => Number(c.id) === id);
-                const name = ch?.name || `Channel ${id}`;
-                const logo = ch?.logo_url || "";
-                return (
-                  <Link
-                    key={id}
-                    href={`/watch/${id}`}
-                    className="group rounded-xl ring-1 ring-white/10 bg-zinc-950/60 hover:bg-zinc-900/60 transition overflow-hidden"
-                  >
-                    <div className="p-3 flex items-center gap-3">
-                      <div className="w-9 h-9 flex items-center justify-center rounded-lg bg-gray-800 border border-gray-700 text-sm font-semibold">
-                        {id}
+          <div className="space-y-2">
+            {LESSONS.map((lesson) => {
+              const active = lesson.id === selectedLesson?.id;
+              const badge = typeBadge(lesson.type);
+
+              return (
+                <button
+                  key={lesson.id}
+                  type="button"
+                  onClick={() => setSelectedId(lesson.id)}
+                  className={`w-full rounded-lg border px-3 py-2 text-left text-xs transition 
+                    ${
+                      active
+                        ? "border-red-500/70 bg-red-950/40"
+                        : "border-slate-800 bg-slate-900/60 hover:bg-slate-800/80"
+                    }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <p className="truncate text-sm font-semibold text-slate-50">
+                          {lesson.title}
+                        </p>
+                        {lesson.isFeatured && (
+                          <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-300 ring-1 ring-amber-400/50">
+                            Featured
+                          </span>
+                        )}
                       </div>
-                      <div className="min-w-0">
-                        <div className="relative w-24 h-10 rounded bg-black/40 overflow-hidden ring-1 ring-white/5">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          {logo ? (
-                            <img src={logo} alt={`${name} logo`} className="w-full h-full object-contain" />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center text-[10px] text-gray-500">
-                              No logo
-                            </div>
-                          )}
-                        </div>
-                        <div className="mt-1 text-xs text-gray-300 truncate">{name}</div>
+
+                      {lesson.subtitle && (
+                        <p className="mt-0.5 line-clamp-2 text-[11px] text-slate-300">
+                          {lesson.subtitle}
+                        </p>
+                      )}
+
+                      <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-slate-300">
+                        <span
+                          className={`inline-flex items-center rounded-full px-2 py-0.5 ${badge.color}`}
+                        >
+                          {badge.icon}
+                          {badge.label}
+                        </span>
+                        {lesson.length && (
+                          <span className="inline-flex items-center rounded-full bg-slate-900 px-2 py-0.5">
+                            <Clock className="mr-1 h-3 w-3" />
+                            {lesson.length}
+                          </span>
+                        )}
+                        {lesson.topicTag && (
+                          <span className="inline-flex items-center rounded-full bg-slate-900 px-2 py-0.5">
+                            <Tag className="mr-1 h-3 w-3" />
+                            {lesson.topicTag}
+                          </span>
+                        )}
                       </div>
                     </div>
-                    <div className="px-3 pb-3">
-                      <div className="text-[11px] text-gray-500 group-hover:text-gray-300">
-                        Watch now →
+
+                    {lesson.watchHref && (
+                      <div className="ml-1 flex items-center">
+                        <PlayCircle className="h-4 w-4 text-red-400" />
                       </div>
-                    </div>
-                  </Link>
-                );
-              })}
+                    )}
+                  </div>
+                </button>
+              );
+            })}
           </div>
-        </section>
 
-        {/* Signup */}
-        <FreedomSchoolSignup />
-      </div>
-    </div>
-  );
-}
-
-/* ---------- Signup ---------- */
-function FreedomSchoolSignup() {
-  const [email, setEmail] = useState("");
-  const [name, setName] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [status, setStatus] = useState<null | "success" | "error" | "info">(null);
-  const [message, setMessage] = useState("");
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsSubmitting(true);
-    setStatus(null);
-    setMessage("");
-
-    const n = name.trim();
-    const em = email.trim();
-    if (!n || !em) {
-      setStatus("error");
-      setMessage("Name and email are required.");
-      setIsSubmitting(false);
-      return;
-    }
-
-    // Check if exists
-    const { data: existing, error: selErr } = await supabase
-      .from("freedom_school_signups")
-      .select("id")
-      .eq("email", em)
-      .maybeSingle();
-
-    if (selErr) {
-      console.error("Signup check error:", selErr);
-      setStatus("error");
-      setMessage("Could not verify email. Please try again.");
-      setIsSubmitting(false);
-      return;
-    }
-
-    if (existing) {
-      setStatus("info");
-      setMessage("This email address has already been signed up. Thank you!");
-      setIsSubmitting(false);
-      return;
-    }
-
-    // Insert
-    const { error: insErr } = await supabase
-      .from("freedom_school_signups")
-      .insert([{ name: n, email: em }]);
-
-    if (insErr) {
-      console.error("Signup insert error:", insErr);
-      setStatus("error");
-      setMessage((insErr as any).code === "23505" ? "This email is already signed up." : "Failed to sign up.");
-    } else {
-      setStatus("success");
-      setMessage("Thank you for signing up! We'll keep you updated.");
-      setName("");
-      setEmail("");
-    }
-    setIsSubmitting(false);
-  };
-
-  return (
-    <div className="max-w-md mx-auto mt-8 p-6 bg-gray-800 rounded-lg shadow-md ring-1 ring-white/10">
-      <h2 className="text-xl font-semibold text-white mb-4 text-center">Join Freedom School Updates</h2>
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <Label htmlFor="name-signup" className="text-gray-300">Full Name</Label>
-          <Input
-            id="name-signup"
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            required
-            className="bg-gray-700 border-gray-600 text-white placeholder-gray-500 focus:ring-red-500 focus:border-red-500"
-            placeholder="Enter your full name"
-          />
+          <p className="mt-4 text-[11px] text-slate-500">
+            As you build out Freedom School, you can expand this list with new
+            series (Civil Rights, Reconstruction, Political Education, Economics
+            & Labor, and more).
+          </p>
         </div>
-        <div>
-          <Label htmlFor="email-signup" className="text-gray-300">Email Address</Label>
-          <Input
-            id="email-signup"
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-            className="bg-gray-700 border-gray-600 text-white placeholder-gray-500 focus:ring-red-500 focus:border-red-500"
-            placeholder="Enter your email address"
-          />
-        </div>
-        <Button
-          type="submit"
-          disabled={isSubmitting}
-          className="w-full bg-red-600 hover:bg-red-700 text-white font-semibold py-2.5 disabled:opacity-70"
-        >
-          {isSubmitting ? "Submitting..." : "Sign Up for Updates"}
-        </Button>
-
-        {message && (
-          <div
-            className={`flex items-center gap-2 p-3 rounded-md text-sm ${
-              status === "success"
-                ? "bg-green-900 text-green-300"
-                : status === "error"
-                  ? "bg-red-900 text-red-300"
-                  : status === "info"
-                    ? "bg-blue-900 text-blue-300"
-                    : ""
-            }`}
-          >
-            {status === "success" && <CheckCircle size={18} />}
-            {status === "error" && <AlertCircle size={18} />}
-            {status === "info" && <Info size={18} />}
-            <span>{message}</span>
-          </div>
-        )}
-      </form>
+      </section>
     </div>
   );
 }
