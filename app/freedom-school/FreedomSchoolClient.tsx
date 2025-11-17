@@ -36,8 +36,7 @@ function inferTypeFromName(name: string): MediaType {
   if (["mp3", "wav", "aac", "ogg"].includes(ext)) return "audio";
   if (ext === "pdf") return "pdf";
 
-  // 🔁 Default: treat unknown types as video so they still show up
-  return "video";
+  return "video"; // default so it *shows* and can play
 }
 
 function prettyTitleFromFile(name: string): string {
@@ -48,6 +47,32 @@ function prettyTitleFromFile(name: string): string {
     .split(" ")
     .map((w) => (w.length ? w[0].toUpperCase() + w.slice(1) : w))
     .join(" ");
+}
+
+function asSeconds(v: unknown): number {
+  if (v == null) return 0;
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+
+  const s = String(v).trim();
+  const m = /^(\d{1,3}):([0-5]?\d)(?::([0-5]?\d))?$/.exec(s);
+  if (m) {
+    const hh = m[3] ? Number(m[1]) : 0;
+    const mm = Number(m[3] ? m[2] : m[1]);
+    const ss = Number(m[3] ? m[3] : m[2]);
+    return hh * 3600 + mm * 60 + ss;
+  }
+
+  const num = Number(s.replace(/[^\d.]+/g, ""));
+  return Number.isFinite(num) && num > 0 ? Math.round(num) : 0;
+}
+
+function formatDurationFancy(v: unknown): string {
+  const sec = asSeconds(v);
+  if (!sec) return "";
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m} min`;
 }
 
 function typeBadge(type: MediaType) {
@@ -85,98 +110,135 @@ export default function FreedomSchoolClient() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
-  // Load from `freedom-school` bucket
   useEffect(() => {
     let cancelled = false;
 
-    async function loadBucket() {
+    async function loadLessons() {
       setLoading(true);
       setErr(null);
 
+      const combined: Lesson[] = [];
+
+      // 1️⃣ Try bucket: freedom-school
       try {
-        const { data, error } = await supabase
-          .storage
+        const { data, error } = await supabase.storage
           .from("freedom-school")
           .list("", { limit: 1000 });
 
-        if (error) {
-          console.error("Error listing freedom-school bucket", error);
-          if (!cancelled) {
-            setErr("We’re having trouble loading Freedom School right now.");
-            setLessons([]);
-          }
-          return;
-        }
+        if (!error && data) {
+          const files =
+            data.filter(
+              (f) =>
+                !f.name.startsWith(".") &&
+                !f.name.endsWith("/") // ignore folder marker entries
+            ) || [];
 
-        const files =
-          (data || []).filter(
-            (f) =>
-              !f.name.startsWith(".") && // ignore hidden
-              !f.name.endsWith("/") // ignore folders if any
-          ) || [];
+          for (const f of files) {
+            const { data: urlData } = supabase.storage
+              .from("freedom-school")
+              .getPublicUrl(f.name);
+            const publicUrl = urlData?.publicUrl;
+            if (!publicUrl) continue;
 
-        const mapped: Lesson[] = [];
+            const type = inferTypeFromName(f.name);
+            const title = prettyTitleFromFile(f.name);
 
-        for (const f of files) {
-          const type = inferTypeFromName(f.name);
+            const baseLesson: Lesson = {
+              id: `bucket-${f.name}`,
+              rawName: f.name,
+              title,
+              type,
+              description:
+                type === "video"
+                  ? "Freedom School video lesson from your library."
+                  : type === "audio"
+                  ? "Audio teaching from your Freedom School collection."
+                  : type === "pdf"
+                  ? "Printable reading or handout for your virtual classroom."
+                  : "Freedom School resource.",
+            };
 
-          const { data: urlData } = supabase
-            .storage
-            .from("freedom-school")
-            .getPublicUrl(f.name);
-
-          const publicUrl = urlData?.publicUrl;
-          if (!publicUrl) continue;
-
-          const title = prettyTitleFromFile(f.name);
-
-          const baseLesson: Lesson = {
-            id: f.name,
-            rawName: f.name,
-            title,
-            type,
-            description:
-              type === "video"
-                ? "Freedom School video lesson from your library."
-                : type === "audio"
-                ? "Audio teaching from your Freedom School collection."
-                : type === "pdf"
-                ? "Printable reading or handout for your virtual classroom."
-                : "Freedom School resource.",
-          };
-
-          if (type === "pdf") {
-            mapped.push({
-              ...baseLesson,
-              resourceHref: publicUrl,
-            });
-          } else {
-            mapped.push({
-              ...baseLesson,
-              watchHref: publicUrl,
-            });
+            if (type === "pdf") {
+              combined.push({
+                ...baseLesson,
+                resourceHref: publicUrl,
+              });
+            } else {
+              combined.push({
+                ...baseLesson,
+                watchHref: publicUrl,
+              });
+            }
           }
         }
+      } catch (e) {
+        console.error("Error loading from freedom-school bucket", e);
+        // we’ll fall back to programs, so no hard error here
+      }
 
-        // Sort by file name to keep it predictable
-        mapped.sort((a, b) => a.rawName.localeCompare(b.rawName));
+      // 2️⃣ Fallback: use programs for the Freedom School channel
+      try {
+        const { data: channelRow, error: chErr } = await supabase
+          .from("channels")
+          .select("id, name, slug")
+          .or("slug.eq.freedom-school,name.ilike.freedom%school%")
+          .maybeSingle();
 
-        if (!cancelled) {
-          setLessons(mapped);
-          setSelectedId((prev) => prev ?? mapped[0]?.id ?? null);
+        if (!chErr && channelRow) {
+          const channelIdNum = Number(channelRow.id);
+          if (!Number.isNaN(channelIdNum)) {
+            const { data: progs, error: pErr } = await supabase
+              .from("programs")
+              .select("channel_id, title, mp4_url, start_time, duration")
+              .eq("channel_id", channelIdNum)
+              .not("mp4_url", "is", null)
+              .order("start_time", { ascending: false })
+              .limit(100);
+
+            if (!pErr && progs) {
+              for (const p of progs) {
+                const rawFile =
+                  (p.mp4_url || "").split("/").pop() || p.title || "Program";
+                const title =
+                  (p.title && p.title.trim()) || prettyTitleFromFile(rawFile);
+                const type = inferTypeFromName(rawFile);
+
+                const id = `prog-${p.channel_id}-${p.start_time}-${rawFile}`;
+
+                // Avoid duplicates if same URL already came from bucket
+                if (combined.some((l) => l.id === id)) continue;
+
+                combined.push({
+                  id,
+                  rawName: rawFile,
+                  title,
+                  type,
+                  description:
+                    "Scheduled Freedom School broadcast, now available on demand.",
+                  watchHref: p.mp4_url || undefined,
+                  length: p.duration ? formatDurationFancy(p.duration) : undefined,
+                });
+              }
+            }
+          }
         }
-      } catch (e: any) {
-        console.error("Unexpected error loading Freedom School bucket", e);
-        if (!cancelled) {
+      } catch (e) {
+        console.error("Error loading Freedom School programs", e);
+        if (!combined.length) {
           setErr("We’re having trouble loading Freedom School right now.");
-          setLessons([]);
         }
-      } finally {
-        if (!cancelled) setLoading(false);
+      }
+
+      combined.sort((a, b) => a.rawName.localeCompare(b.rawName));
+
+      if (!cancelled) {
+        setLessons(combined);
+        setSelectedId((prev) => prev ?? combined[0]?.id ?? null);
+        setLoading(false);
       }
     }
 
-    loadBucket();
+    loadLessons();
     return () => {
       cancelled = true;
     };
@@ -214,13 +276,11 @@ export default function FreedomSchoolClient() {
           <div className="mt-5 flex flex-wrap gap-3">
             {selectedLesson?.watchHref && (
               <a
-                href={selectedLesson.watchHref}
-                target="_blank"
-                rel="noopener noreferrer"
+                href="#player"
                 className="inline-flex items-center rounded-md bg-red-600 px-4 py-2 text-sm font-semibold shadow-lg shadow-red-900/40 hover:bg-red-700"
               >
                 <PlayCircle className="mr-2 h-4 w-4" />
-                Start Featured Lesson
+                Play Featured Lesson
               </a>
             )}
             <a
@@ -234,7 +294,7 @@ export default function FreedomSchoolClient() {
         </div>
       </section>
 
-      {/* Error / loading states (clean for users) */}
+      {/* Error / loading states */}
       {err && (
         <div className="mx-auto max-w-5xl px-4 pt-4 text-sm text-red-300 md:px-10">
           {err}
@@ -251,10 +311,9 @@ export default function FreedomSchoolClient() {
         id="lessons"
         className="mx-auto flex max-w-6xl flex-col gap-6 px-4 pb-10 pt-6 md:flex-row md:px-10"
       >
-        {/* Left: Selected lesson detail */}
-        <div className="w-full md:w-[60%]">
+        {/* Left: Selected lesson detail + PLAYER */}
+        <div className="w-full md:w-[60%]" id="player">
           {lessons.length === 0 && !loading && !err ? (
-            // 🔹 User-facing, no “upload files” instructions
             <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4 text-sm text-slate-200">
               Freedom School lessons will appear here as they are added.
               <br />
@@ -263,24 +322,55 @@ export default function FreedomSchoolClient() {
             </div>
           ) : selectedLesson ? (
             <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4 shadow-lg shadow-black/40">
-              {/* Media mock / thumbnail area */}
-              <div className="relative mb-4 overflow-hidden rounded-lg border border-slate-800 bg-black/80 pt-[56.25%]">
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-center">
-                  <div className="inline-flex items-center rounded-full bg-black/80 px-3 py-1 text-xs font-semibold text-slate-200 ring-1 ring-white/20">
-                    <PlayCircle className="mr-1.5 h-3.5 w-3.5" />
-                    {selectedLesson.type === "pdf"
-                      ? "Reading / Handout"
-                      : "Preview"}
-                  </div>
-                  <p className="max-w-sm text-xs text-slate-300">
-                    Use{" "}
-                    <span className="font-semibold">
-                      {selectedLesson.type === "pdf"
-                        ? "View PDF"
-                        : "Watch Lesson"}
-                    </span>{" "}
-                    below to open this Freedom School lesson in a new tab.
-                  </p>
+              {/* Media area */}
+              <div className="relative mb-4 overflow-hidden rounded-lg border border-slate-800 bg-black pt-[56.25%]">
+                <div className="absolute inset-0">
+                  {selectedLesson.type === "video" && selectedLesson.watchHref && (
+                    <video
+                      controls
+                      className="h-full w-full rounded-lg bg-black"
+                    >
+                      <source src={selectedLesson.watchHref} />
+                      Your browser does not support the video tag.
+                    </video>
+                  )}
+
+                  {selectedLesson.type === "audio" && selectedLesson.watchHref && (
+                    <div className="flex h-full flex-col items-center justify-center bg-black/80 px-4">
+                      <p className="mb-3 text-sm text-slate-100">
+                        {selectedLesson.title}
+                      </p>
+                      <audio controls className="w-full max-w-md">
+                        <source src={selectedLesson.watchHref} />
+                        Your browser does not support the audio element.
+                      </audio>
+                    </div>
+                  )}
+
+                  {selectedLesson.type === "pdf" && selectedLesson.resourceHref && (
+                    <div className="flex h-full flex-col items-center justify-center bg-black/80 px-4 text-center text-sm text-slate-100">
+                      <FileText className="mb-2 h-6 w-6 text-emerald-400" />
+                      <p className="mb-2">
+                        This is a Freedom School reading / handout.
+                      </p>
+                      <a
+                        href={selectedLesson.resourceHref}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center rounded-md border border-emerald-400 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-100 hover:bg-emerald-500/20"
+                      >
+                        <FileText className="mr-1.5 h-3.5 w-3.5" />
+                        Open PDF in New Tab
+                      </a>
+                    </div>
+                  )}
+
+                  {!selectedLesson.watchHref &&
+                    !selectedLesson.resourceHref && (
+                      <div className="flex h-full flex-col items-center justify-center bg-black/80 px-4 text-center text-xs text-slate-300">
+                        <p>No media URL is configured for this lesson yet.</p>
+                      </div>
+                    )}
                 </div>
               </div>
 
@@ -325,32 +415,6 @@ export default function FreedomSchoolClient() {
                 <p className="mt-2 text-sm leading-relaxed text-slate-200">
                   {selectedLesson.description}
                 </p>
-
-                <div className="mt-4 flex flex-wrap gap-3">
-                  {selectedLesson.watchHref && (
-                    <a
-                      href={selectedLesson.watchHref}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center rounded-md bg-red-600 px-3 py-1.5 text-sm font-semibold shadow hover:bg-red-700"
-                    >
-                      <PlayCircle className="mr-1.5 h-4 w-4" />
-                      Watch Lesson
-                    </a>
-                  )}
-
-                  {selectedLesson.resourceHref && (
-                    <a
-                      href={selectedLesson.resourceHref}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center rounded-md border border-slate-600 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-100 hover:bg-slate-800"
-                    >
-                      <FileText className="mr-1.5 h-3.5 w-3.5" />
-                      View PDF / Handout
-                    </a>
-                  )}
-                </div>
 
                 <p className="mt-3 text-[11px] text-slate-400">
                   Use Freedom School lessons for self-study or to anchor
@@ -411,6 +475,12 @@ export default function FreedomSchoolClient() {
                             {badge.icon}
                             {badge.label}
                           </span>
+                          {lesson.length && (
+                            <span className="inline-flex items-center rounded-full bg-slate-900 px-2 py-0.5">
+                              <Clock className="mr-1 h-3 w-3" />
+                              {lesson.length}
+                            </span>
+                          )}
                         </div>
                       </div>
 
