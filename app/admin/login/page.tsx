@@ -1,100 +1,140 @@
+// app/admin/login/page.tsx
 "use client";
 
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
-import { AlertCircle, Lock } from "lucide-react";
+import { AlertCircle, Lock, Loader2 } from "lucide-react";
+import Link from "next/link";
+import { Button } from "@/components/ui/button";
 
 export default function AdminLoginPage() {
-  const router = useRouter();
-  const params = useSearchParams();
   const supabase = createClientComponentClient();
+  const router = useRouter();
+  const searchParams = useSearchParams();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [err, setErr] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
-  async function onSubmit(e: React.FormEvent) {
+  const [errorMsg, setErrorMsg] = useState<string | null>(
+    searchParams.get("error") === "not_admin"
+      ? "You are not authorized as an admin."
+      : null
+  );
+
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setErr("");
-    setLoading(true);
+    setSubmitting(true);
+    setErrorMsg(null);
 
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) {
-      setErr(error.message);
-      setLoading(false);
-      return;
+    try {
+      // 1) Sign in with Supabase Auth
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (error) {
+        setErrorMsg(error.message);
+        return;
+      }
+
+      const user = data.user;
+      if (!user) {
+        setErrorMsg("Login failed — no user returned.");
+        return;
+      }
+
+      // 2) Check user_profiles.role by email
+      const { data: profile, error: profileError } = await supabase
+        .from("user_profiles")
+        .select("role, email")
+        .eq("email", user.email)
+        .maybeSingle();
+
+      if (profileError || !profile || profile.role !== "admin") {
+        await supabase.auth.signOut();
+        setErrorMsg("You are not authorized as an admin.");
+        return;
+      }
+
+      // 3) All good → enter admin dashboard
+      router.push("/admin");
+    } catch (err: any) {
+      setErrorMsg(err?.message || "Unexpected login error.");
+    } finally {
+      setSubmitting(false);
     }
-
-    // Optional: double-check role on the client (server layout enforces it anyway)
-    const { data: profile, error: pErr } = await supabase
-      .from("user_profiles")
-      .select("role")
-      .eq("id", (await supabase.auth.getUser()).data.user?.id)
-      .maybeSingle();
-
-    if (pErr || !profile || profile.role !== "admin") {
-      setErr("This account is not an admin.");
-      setLoading(false);
-      return;
-    }
-
-    const dest = params.get("redirect") || "/admin";
-    router.replace(dest);
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-900 px-4">
-      <div className="max-w-md w-full bg-gray-800 rounded-lg shadow-lg p-8">
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-red-600 mb-2">Admin Access</h1>
-          <p className="text-gray-400">Sign in with your admin account</p>
+    <div className="min-h-screen bg-gradient-to-b from-[#040814] via-[#050b1a] to-black text-white flex items-center justify-center px-4">
+      <div className="w-full max-w-md border border-slate-700 bg-slate-900/80 rounded-xl p-6 shadow-xl">
+        <div className="flex items-center gap-2 mb-4">
+          <Lock className="h-5 w-5 text-amber-400" />
+          <h1 className="text-xl font-semibold">Admin Login</h1>
         </div>
 
-        <form onSubmit={onSubmit} className="space-y-6">
+        {errorMsg && (
+          <div className="mb-4 flex items-start gap-2 rounded-md border border-red-500/60 bg-red-950/60 px-3 py-2 text-xs text-red-100">
+            <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+            <p>{errorMsg}</p>
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">Email</label>
+            <label className="block text-xs font-medium text-slate-200 mb-1">
+              Admin Email
+            </label>
             <input
               type="email"
-              className="w-full px-4 py-2 bg-gray-900 border border-gray-700 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
+              required
+              autoComplete="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@domain.com"
-              required
+              className="w-full rounded-md border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-white focus:border-amber-400 focus:ring-1 focus:ring-amber-400"
+              placeholder="admin@example.com"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">Password</label>
-            <div className="relative">
-              <input
-                type="password"
-                className="w-full px-4 py-2 bg-gray-900 border border-gray-700 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Your password"
-                required
-              />
-              <Lock className="absolute right-3 top-2.5 h-5 w-5 text-gray-500" />
-            </div>
+            <label className="block text-xs font-medium text-slate-200 mb-1">
+              Password
+            </label>
+            <input
+              type="password"
+              required
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full rounded-md border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-white focus:border-amber-400 focus:ring-1 focus:ring-amber-400"
+              placeholder="••••••••"
+            />
           </div>
 
-          {err && (
-            <div className="bg-red-900/30 text-red-400 p-3 rounded-md flex items-start">
-              <AlertCircle className="h-5 w-5 mr-2 mt-0.5 flex-shrink-0" />
-              <p>{err}</p>
-            </div>
-          )}
-
-          <button
+          <Button
             type="submit"
-            disabled={loading}
-            className="w-full bg-red-600 hover:bg-red-700 text-white py-2 rounded-md"
+            disabled={submitting}
+            className="w-full bg-amber-600 hover:bg-amber-700 text-sm font-semibold"
           >
-            {loading ? "Signing in..." : "Sign in"}
-          </button>
+            {submitting ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Signing in…
+              </>
+            ) : (
+              "Sign In as Admin"
+            )}
+          </Button>
         </form>
+
+        <div className="mt-4 text-[11px] text-slate-400 text-center">
+          <Link href="/" className="text-amber-300 hover:underline">
+            ← Back to Black Truth TV
+          </Link>
+        </div>
       </div>
     </div>
   );
