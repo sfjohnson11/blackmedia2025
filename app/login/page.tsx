@@ -1,10 +1,11 @@
 'use client';
 
-import { FormEvent, useEffect, useState } from 'react';
+import { Suspense, useEffect, useState, FormEvent } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { getSupabaseClient } from '@/utils/supabase/client';
 
-export default function LoginPage() {
+// ---------- INNER LOGIN COMPONENT (uses useSearchParams) ----------
+function LoginInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -13,7 +14,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Read ?error= from the URL
+  // Read ?error= from the URL (e.g. /login?error=not_admin)
   useEffect(() => {
     const err = searchParams.get('error');
     if (!err) return;
@@ -43,17 +44,20 @@ export default function LoginPage() {
       });
 
     if (signInError || !signInData.user) {
-      setErrorMsg(signInError?.message || 'Unable to sign in. Check your email and password.');
+      setErrorMsg(
+        signInError?.message ||
+          'Unable to sign in. Please check your email and password.'
+      );
       setLoading(false);
       return;
     }
 
     const user = signInData.user;
 
-    // 2) Fetch profile to get role + trade
+    // 2) Fetch profile to get role (and trade later if you want)
     const { data: profile, error: profileError } = await supabase
       .from('user_profiles')
-      .select('role, trade')
+      .select('role')
       .eq('id', user.id)
       .maybeSingle();
 
@@ -70,8 +74,8 @@ export default function LoginPage() {
     if (role === 'admin') {
       router.push('/admin');
     } else {
-      // you can get fancy here later and route by trade if you want
-      router.push('/student/dashboard');
+      // Non-admins go to the main app/home
+      router.push('/');
     }
 
     setLoading(false);
@@ -109,7 +113,7 @@ export default function LoginPage() {
             textAlign: 'center',
           }}
         >
-          E-Deck ConstructIQ Login
+          Black Truth TV Login
         </h1>
         <p
           style={{
@@ -119,7 +123,8 @@ export default function LoginPage() {
             marginBottom: 18,
           }}
         >
-          Use your email and password. Admins will be routed to the admin dashboard.
+          Use your email and password. Admin accounts will be routed to the admin
+          dashboard.
         </p>
 
         {errorMsg && (
@@ -200,5 +205,30 @@ export default function LoginPage() {
         </form>
       </div>
     </div>
+  );
+}
+
+// ---------- PAGE EXPORT (wraps useSearchParams in Suspense) ----------
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <div
+          style={{
+            minHeight: '100vh',
+            background: '#020617',
+            color: '#e5e7eb',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontFamily: 'system-ui, -apple-system, Segoe UI, sans-serif',
+          }}
+        >
+          Loading login…
+        </div>
+      }
+    >
+      <LoginInner />
+    </Suspense>
   );
 }
