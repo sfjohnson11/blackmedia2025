@@ -37,6 +37,9 @@ import ConfirmLink from "@/components/ConfirmLink";
 import ClearCacheCard from "@/components/ClearCacheCard";
 import { ADMIN_BETA, ALLOW_DANGER } from "@/lib/flags";
 
+// 👉 hard-coded admin emails as a safety fallback
+const ADMIN_EMAILS = ["info@sfjohnsonconsulting.com"];
+
 type Stats = {
   channelCount: number;
   programCount: number;
@@ -60,10 +63,7 @@ type AdminSection = {
 };
 
 /**
- * ✅ Wrapper: checks Supabase session + user_profiles.role
- * - If no session -> /login?error=not_logged_in
- * - If not admin -> /login?error=not_admin
- * - If admin -> shows AdminDashboardInner
+ * ✅ Wrapper: check session + admin via profile OR email
  */
 export default function AdminPage() {
   const supabase = createClientComponentClient();
@@ -84,22 +84,30 @@ export default function AdminPage() {
           return;
         }
 
-        const { data: profile, error } = await supabase
-          .from("user_profiles")
-          .select("role")
-          .eq("id", session.user.id)
-          .maybeSingle();
+        const user = session.user;
+        let role: string | null = null;
 
-        if (error) {
-          console.error("Error loading user profile", error);
-          if (!cancelled) router.replace("/login?error=not_logged_in");
-          return;
+        // Try to read user_profiles.role, but don't rely ONLY on it
+        try {
+          const { data: profile, error } = await supabase
+            .from("user_profiles")
+            .select("role")
+            .eq("id", user.id)
+            .maybeSingle();
+
+          if (!error && profile?.role) {
+            role = profile.role;
+          }
+        } catch (err) {
+          console.error("Admin profile lookup failed:", err);
         }
 
-        const role = profile?.role ?? "user";
+        const isEmailAdmin =
+          user.email && ADMIN_EMAILS.includes(user.email.toLowerCase());
+        const isAdmin = role === "admin" || isEmailAdmin;
 
         if (!cancelled) {
-          if (role !== "admin") {
+          if (!isAdmin) {
             router.replace("/login?error=not_admin");
           } else {
             setChecking(false);
