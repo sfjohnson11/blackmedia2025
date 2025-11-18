@@ -3,7 +3,6 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import {
@@ -36,6 +35,7 @@ import {
 import ConfirmLink from "@/components/ConfirmLink";
 import ClearCacheCard from "@/components/ClearCacheCard";
 import { ADMIN_BETA, ALLOW_DANGER } from "@/lib/flags";
+import { getSupabaseClient } from "@/utils/supabase/client";
 
 type Stats = {
   channelCount: number;
@@ -61,61 +61,62 @@ type AdminSection = {
 
 /**
  * ✅ Wrapper: checks Supabase session + user_profiles.role
- * - If no session -> /login
- * - If not admin -> /
+ * - If no session -> /login?error=not_logged_in
+ * - If not admin -> /login?error=not_admin
  * - If admin -> shows AdminDashboardInner
  */
 export default function AdminPage() {
-  const supabase = createClientComponentClient();
   const router = useRouter();
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
 
-    (async () => {
-      try {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
+    const verify = async () => {
+      const supabase = getSupabaseClient();
 
-        if (!session) {
-          if (!cancelled) router.replace("/login");
-          return;
-        }
+      // 1) Check logged-in user
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
 
-        const { data: profile, error } = await supabase
-          .from("user_profiles")
-          .select("role")
-          .eq("id", session.user.id)
-          .maybeSingle();
+      if (cancelled) return;
 
-        if (error) {
-          console.error("Error loading user profile", error);
-          if (!cancelled) router.replace("/login");
-          return;
-        }
-
-        const role = profile?.role ?? "user";
-
-        if (!cancelled) {
-          if (role !== "admin") {
-            // Logged in but not admin → send to main site
-            router.replace("/");
-          } else {
-            setChecking(false);
-          }
-        }
-      } catch (e) {
-        console.error("Unexpected admin check error", e);
-        if (!cancelled) router.replace("/login");
+      if (!user) {
+        router.replace("/login?error=not_logged_in");
+        return;
       }
-    })();
+
+      // 2) Check profile role
+      const { data: profile, error } = await supabase
+        .from("user_profiles")
+        .select("role")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      if (cancelled) return;
+
+      if (error || profile?.role !== "admin") {
+        console.error("Admin check failed or not admin:", error);
+        router.replace("/login?error=not_admin");
+        return;
+      }
+
+      // ✅ All good – show dashboard
+      setChecking(false);
+    };
+
+    verify().catch((err) => {
+      console.error("Unexpected admin check error", err);
+      if (!cancelled) {
+        router.replace("/login?error=not_logged_in");
+      }
+    });
 
     return () => {
       cancelled = true;
     };
-  }, [router, supabase]);
+  }, [router]);
 
   if (checking) {
     return (
@@ -250,7 +251,8 @@ function AdminDashboardInner() {
         },
         {
           name: "Add Channel 31 — Music Only",
-          href: "/admin/channel-manager?create=31&name=Music%20Only&bucket=channel31",
+          href:
+            "/admin/channel-manager?create=31&name=Music%20Only&bucket=channel31",
           icon: <Music2 className="h-4 w-4" />,
           description: "Creates channel 31 and points to bucket channel31",
         },
