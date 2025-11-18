@@ -3,6 +3,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import {
@@ -35,7 +36,6 @@ import {
 import ConfirmLink from "@/components/ConfirmLink";
 import ClearCacheCard from "@/components/ClearCacheCard";
 import { ADMIN_BETA, ALLOW_DANGER } from "@/lib/flags";
-import { getSupabaseClient } from "@/utils/supabase/client";
 
 type Stats = {
   channelCount: number;
@@ -66,57 +66,55 @@ type AdminSection = {
  * - If admin -> shows AdminDashboardInner
  */
 export default function AdminPage() {
+  const supabase = createClientComponentClient();
   const router = useRouter();
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
 
-    const verify = async () => {
-      const supabase = getSupabaseClient();
+    (async () => {
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
 
-      // 1) Check logged-in user
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+        if (!session) {
+          if (!cancelled) router.replace("/login?error=not_logged_in");
+          return;
+        }
 
-      if (cancelled) return;
+        const { data: profile, error } = await supabase
+          .from("user_profiles")
+          .select("role")
+          .eq("id", session.user.id)
+          .maybeSingle();
 
-      if (!user) {
-        router.replace("/login?error=not_logged_in");
-        return;
+        if (error) {
+          console.error("Error loading user profile", error);
+          if (!cancelled) router.replace("/login?error=not_logged_in");
+          return;
+        }
+
+        const role = profile?.role ?? "user";
+
+        if (!cancelled) {
+          if (role !== "admin") {
+            router.replace("/login?error=not_admin");
+          } else {
+            setChecking(false);
+          }
+        }
+      } catch (e) {
+        console.error("Unexpected admin check error", e);
+        if (!cancelled) router.replace("/login?error=not_logged_in");
       }
-
-      // 2) Check profile role
-      const { data: profile, error } = await supabase
-        .from("user_profiles")
-        .select("role")
-        .eq("id", user.id)
-        .maybeSingle();
-
-      if (cancelled) return;
-
-      if (error || profile?.role !== "admin") {
-        console.error("Admin check failed or not admin:", error);
-        router.replace("/login?error=not_admin");
-        return;
-      }
-
-      // ✅ All good – show dashboard
-      setChecking(false);
-    };
-
-    verify().catch((err) => {
-      console.error("Unexpected admin check error", err);
-      if (!cancelled) {
-        router.replace("/login?error=not_logged_in");
-      }
-    });
+    })();
 
     return () => {
       cancelled = true;
     };
-  }, [router]);
+  }, [router, supabase]);
 
   if (checking) {
     return (
