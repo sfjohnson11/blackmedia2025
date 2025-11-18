@@ -1,18 +1,24 @@
 // app/freedom-school/FreedomSchoolClient.tsx
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
-import { PlayCircle, Loader2, FileText, Headphones, Download } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import {
+  PlayCircle,
+  FileText,
+  Headphones,
+  Download,
+  Video as VideoIcon,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-type FSAsset = {
+export type FSAsset = {
   name: string;
   publicUrl: string;
   type: "video" | "audio" | "pdf" | "other";
 };
 
-function classifyType(name: string): FSAsset["type"] {
+// Re-export so page.tsx can reuse it
+export function classifyType(name: string): FSAsset["type"] {
   const lower = name.toLowerCase();
   if (lower.endsWith(".mp4") || lower.endsWith(".mov") || lower.endsWith(".m4v")) {
     return "video";
@@ -32,86 +38,38 @@ function makeTitleFromFilename(name: string): string {
   return base || name;
 }
 
-export default function FreedomSchoolClient() {
-  const supabase = createClientComponentClient();
+type Props = {
+  initialAssets: FSAsset[];
+  storageError?: string | null;
+};
 
-  const [assets, setAssets] = useState<FSAsset[]>([]);
-  const [selectedVideo, setSelectedVideo] = useState<FSAsset | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
-
+export default function FreedomSchoolClient({
+  initialAssets,
+  storageError,
+}: Props) {
   const playerRef = useRef<HTMLDivElement | null>(null);
 
-  // Load assets from the freedom-school bucket
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadAssets() {
-      setLoading(true);
-      setErr(null);
-      try {
-        const { data, error } = await supabase.storage
-          .from("freedom-school")
-          .list("", { limit: 1000 });
-
-        if (error) {
-          console.error("Error listing freedom-school bucket", error);
-          if (!cancelled) setErr(error.message);
-          return;
-        }
-
-        const files = (data || []).filter((f) => !f.name.startsWith("."));
-
-        const mapped: FSAsset[] = files.map((f) => {
-          const { data: urlData } = supabase.storage
-            .from("freedom-school")
-            .getPublicUrl(f.name);
-
-          return {
-            name: f.name,
-            publicUrl: urlData.publicUrl,
-            type: classifyType(f.name),
-          };
-        });
-
-        if (!cancelled) {
-          setAssets(mapped);
-
-          // Default featured: first video if available
-          const firstVideo = mapped.find((a) => a.type === "video") ?? null;
-          setSelectedVideo(firstVideo);
-        }
-      } catch (e: any) {
-        console.error("Unexpected error loading Freedom School assets", e);
-        if (!cancelled) {
-          setErr(e?.message || "Unexpected error loading Freedom School assets.");
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-
-    loadAssets();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [supabase]);
-
-  // Separate into video playlist + downloadables
-  const videoAssets = useMemo(
-    () => assets.filter((a) => a.type === "video"),
-    [assets]
+  const playableAssets = useMemo(
+    () => initialAssets.filter((a) => a.type === "video" || a.type === "audio"),
+    [initialAssets]
   );
 
   const downloadAssets = useMemo(
-    () => assets.filter((a) => a.type !== "video"),
-    [assets]
+    () => initialAssets.filter((a) => a.type === "pdf" || a.type === "other"),
+    [initialAssets]
   );
 
-  const featuredVideo = useMemo<FSAsset | null>(() => {
-    return videoAssets[0] ?? null;
-  }, [videoAssets]);
+  const [selectedMedia, setSelectedMedia] = useState<FSAsset | null>(() => {
+    return (
+      playableAssets.find(
+        (a) => a.type === "video" || a.type === "audio"
+      ) ?? null
+    );
+  });
+
+  const featuredMedia = useMemo<FSAsset | null>(() => {
+    return playableAssets[0] ?? null;
+  }, [playableAssets]);
 
   function scrollPlayerIntoView() {
     if (playerRef.current) {
@@ -120,27 +78,27 @@ export default function FreedomSchoolClient() {
   }
 
   function handlePlayFeatured() {
-    if (!featuredVideo) return;
-    setSelectedVideo(featuredVideo);
+    if (!featuredMedia) return;
+    setSelectedMedia(featuredMedia);
     scrollPlayerIntoView();
   }
 
-  function handleSelectVideo(asset: FSAsset) {
-    setSelectedVideo(asset);
+  function handleSelectMedia(asset: FSAsset) {
+    setSelectedMedia(asset);
     scrollPlayerIntoView();
   }
 
-  // Loop through only the video playlist when one ends
-  function handleVideoEnded() {
-    if (!selectedVideo || videoAssets.length === 0) return;
+  // Loop only through the playable list
+  function handleMediaEnded() {
+    if (!selectedMedia || playableAssets.length === 0) return;
 
-    const currentIndex = videoAssets.findIndex(
-      (v) => v.name === selectedVideo.name
+    const currentIndex = playableAssets.findIndex(
+      (v) => v.name === selectedMedia.name
     );
     if (currentIndex === -1) return;
 
-    const nextIndex = (currentIndex + 1) % videoAssets.length;
-    setSelectedVideo(videoAssets[nextIndex]);
+    const nextIndex = (currentIndex + 1) % playableAssets.length;
+    setSelectedMedia(playableAssets[nextIndex]);
     scrollPlayerIntoView();
   }
 
@@ -160,104 +118,119 @@ export default function FreedomSchoolClient() {
           <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center">
             <Button
               onClick={handlePlayFeatured}
-              disabled={!featuredVideo}
+              disabled={!featuredMedia}
               className="bg-emerald-600 hover:bg-emerald-700 text-sm inline-flex items-center gap-2"
             >
               <PlayCircle className="h-4 w-4" />
               Play Featured Lesson
             </Button>
             <p className="text-[11px] text-slate-400">
-              Plays the first MP4 in the Freedom School library and loops through all MP4s.
+              Plays the first video or audio in the Freedom School library and
+              loops through all playable files.
             </p>
           </div>
         </header>
 
+        {/* Optional error from storage */}
+        {storageError && (
+          <div className="mx-auto max-w-4xl rounded-md border border-red-500/60 bg-red-950/50 px-3 py-2 text-xs text-red-100">
+            {storageError}
+          </div>
+        )}
+
         {/* Player + Info */}
         <section
+          id="player"
           ref={playerRef}
           className="grid gap-6 md:grid-cols-[minmax(0,2fr),minmax(0,1.2fr)] items-start"
         >
           <div className="rounded-lg border border-slate-700 bg-slate-900/70 p-3">
             <h2 className="text-sm font-semibold mb-2 text-slate-100">
-              Now Playing (Video Playlist)
+              Now Playing (Video / Audio Playlist)
             </h2>
 
-            {loading ? (
-              <div className="flex items-center justify-center py-16 text-slate-300 text-sm">
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Loading Freedom School media…
-              </div>
-            ) : err ? (
-              <div className="rounded-md border border-red-500/60 bg-red-950/50 px-3 py-2 text-xs text-red-100">
-                {err}
-              </div>
-            ) : videoAssets.length === 0 ? (
+            {playableAssets.length === 0 ? (
               <div className="py-10 text-center text-sm text-slate-400">
-                No MP4 videos have been published to Freedom School yet.
+                No MP4 video or audio lessons have been published to Freedom School
+                yet.
               </div>
-            ) : !selectedVideo ? (
+            ) : !selectedMedia ? (
               <div className="py-10 text-center text-sm text-slate-400">
                 Select a lesson from the playlist on the right.
               </div>
             ) : (
               <div className="space-y-3">
-                <video
-                  key={selectedVideo.publicUrl}
-                  controls
-                  className="w-full rounded-md border border-slate-700 bg-black"
-                  onEnded={handleVideoEnded}
-                >
-                  <source src={selectedVideo.publicUrl} />
-                  Your browser does not support the video tag.
-                </video>
+                {selectedMedia.type === "video" ? (
+                  <video
+                    key={selectedMedia.publicUrl}
+                    controls
+                    className="w-full rounded-md border border-slate-700 bg-black"
+                    onEnded={handleMediaEnded}
+                  >
+                    <source src={selectedMedia.publicUrl} />
+                    Your browser does not support the video tag.
+                  </video>
+                ) : (
+                  <audio
+                    key={selectedMedia.publicUrl}
+                    controls
+                    className="w-full rounded-md border border-slate-700 bg-slate-950"
+                    onEnded={handleMediaEnded}
+                  >
+                    <source src={selectedMedia.publicUrl} />
+                    Your browser does not support the audio tag.
+                  </audio>
+                )}
 
                 <div className="mt-2">
                   <h3 className="text-sm font-semibold text-slate-100">
-                    {makeTitleFromFilename(selectedVideo.name)}
+                    {makeTitleFromFilename(selectedMedia.name)}
                   </h3>
                   <p className="mt-1 text-xs text-slate-400">
-                    Freedom School video lesson. When this finishes, the next MP4
-                    in the list will play automatically.
+                    Freedom School lesson. When this finishes, the next playable file
+                    (video or audio) in the list will play automatically.
                   </p>
                 </div>
               </div>
             )}
           </div>
 
-          {/* Sidebar: Video playlist + How it works */}
+          {/* Sidebar: Playlist + How it works */}
           <aside className="space-y-3">
             <div className="rounded-lg border border-slate-700 bg-slate-900/70 p-3 text-xs text-slate-300">
               <h2 className="text-sm font-semibold mb-1 text-slate-100">
                 How Freedom School Works
               </h2>
               <ul className="list-disc list-inside space-y-1">
-                <li>MP4s appear in the video playlist and will auto-loop.</li>
+                <li>Videos and audio files appear in the main playlist and loop.</li>
                 <li>PDFs and other files appear below as downloadable resources.</li>
-                <li>Click any video in the playlist to jump to that lesson.</li>
+                <li>Click any item in the playlist to jump to that lesson.</li>
               </ul>
             </div>
 
-            {/* Video Playlist */}
+            {/* Playable Playlist */}
             <div className="rounded-lg border border-slate-700 bg-slate-900/70 p-3">
               <h3 className="text-sm font-semibold mb-2 text-slate-100">
-                Video Playlist (MP4 Only)
+                Playlist (Video + Audio)
               </h3>
-              {videoAssets.length === 0 ? (
+              {playableAssets.length === 0 ? (
                 <p className="text-xs text-slate-400">
-                  No MP4 videos found in the freedom-school bucket.
+                  No playable media found in the freedom-school library.
                 </p>
               ) : (
                 <div className="space-y-2 max-h-80 overflow-y-auto">
-                  {videoAssets.map((asset) => {
+                  {playableAssets.map((asset) => {
                     const isActive =
-                      selectedVideo && selectedVideo.name === asset.name;
+                      selectedMedia && selectedMedia.name === asset.name;
                     const title = makeTitleFromFilename(asset.name);
+                    const Icon =
+                      asset.type === "audio" ? Headphones : VideoIcon;
 
                     return (
                       <button
                         key={asset.name}
                         type="button"
-                        onClick={() => handleSelectVideo(asset)}
+                        onClick={() => handleSelectMedia(asset)}
                         className={`w-full text-left rounded-md border px-2 py-1.5 text-[11px] transition 
                           ${
                             isActive
@@ -269,7 +242,10 @@ export default function FreedomSchoolClient() {
                           <span className="font-semibold text-slate-100 line-clamp-2">
                             {title}
                           </span>
-                          <PlayCircle className="h-3 w-3 text-emerald-400 flex-shrink-0" />
+                          <div className="flex items-center gap-1 flex-shrink-0">
+                            <Icon className="h-3 w-3 text-sky-300" />
+                            <PlayCircle className="h-3 w-3 text-emerald-400" />
+                          </div>
                         </div>
                       </button>
                     );
@@ -280,21 +256,21 @@ export default function FreedomSchoolClient() {
           </aside>
         </section>
 
-        {/* Downloadable Resources (non-video) */}
+        {/* Downloadable Resources (PDF + other only) */}
         <section className="space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-slate-100">
-              Downloads & Study Resources
+              Downloads & Study Resources (PDF / Other)
             </h2>
             <p className="text-xs text-slate-400">
               {downloadAssets.length} downloadable item
-              {downloadAssets.length === 1 ? "" : "s"} from the freedom-school bucket.
+              {downloadAssets.length === 1 ? "" : "s"} from the Freedom School library.
             </p>
           </div>
 
           {downloadAssets.length === 0 ? (
             <p className="text-xs text-slate-400">
-              No additional handouts or audio files uploaded yet.
+              No additional handouts uploaded yet.
             </p>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
@@ -314,13 +290,9 @@ export default function FreedomSchoolClient() {
                       <span className="font-semibold line-clamp-2">
                         {title}
                       </span>
-                      {asset.type === "pdf" && (
+                      {asset.type === "pdf" ? (
                         <FileText className="h-4 w-4 text-amber-400 flex-shrink-0" />
-                      )}
-                      {asset.type === "audio" && (
-                        <Headphones className="h-4 w-4 text-sky-400 flex-shrink-0" />
-                      )}
-                      {asset.type === "other" && (
+                      ) : (
                         <Download className="h-4 w-4 text-slate-300 flex-shrink-0" />
                       )}
                     </div>
