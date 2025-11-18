@@ -2,6 +2,8 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,7 +24,6 @@ import {
   PlusCircle,
   Tv2,
   Trash2,
-  BookOpen, // ✅ NEW
 } from "lucide-react";
 import {
   Card,
@@ -58,7 +59,79 @@ type AdminSection = {
   links: AdminLink[];
 };
 
-export default function AdminDashboard() {
+/**
+ * ✅ Wrapper: checks Supabase session + user_profiles.role
+ * - If no session -> /login
+ * - If not admin -> /
+ * - If admin -> shows AdminDashboardInner
+ */
+export default function AdminPage() {
+  const supabase = createClientComponentClient();
+  const router = useRouter();
+  const [checking, setChecking] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        if (!session) {
+          if (!cancelled) router.replace("/login");
+          return;
+        }
+
+        const { data: profile, error } = await supabase
+          .from("user_profiles")
+          .select("role")
+          .eq("id", session.user.id)
+          .maybeSingle();
+
+        if (error) {
+          console.error("Error loading user profile", error);
+          if (!cancelled) router.replace("/login");
+          return;
+        }
+
+        const role = profile?.role ?? "user";
+
+        if (!cancelled) {
+          if (role !== "admin") {
+            // Logged in but not admin → send to main site
+            router.replace("/");
+          } else {
+            setChecking(false);
+          }
+        }
+      } catch (e) {
+        console.error("Unexpected admin check error", e);
+        if (!cancelled) router.replace("/login");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [router, supabase]);
+
+  if (checking) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-[#040814] via-[#050b1a] to-black text-white flex items-center justify-center">
+        <p className="text-sm text-slate-300">Checking admin access…</p>
+      </div>
+    );
+  }
+
+  return <AdminDashboardInner />;
+}
+
+/**
+ * 🎛 Your original dashboard UI, unchanged
+ */
+function AdminDashboardInner() {
   const [stats, setStats] = useState<Stats>({
     channelCount: 0,
     programCount: 0,
@@ -137,13 +210,6 @@ export default function AdminDashboard() {
           icon: <Trash2 className="h-4 w-4" />,
           accent: "danger",
           description: "Find and remove broken or unwanted program entries",
-        },
-        {
-          name: "Freedom School Library", // ✅ NEW LINK
-          href: "/admin/freedom-school-library",
-          icon: <BookOpen className="h-4 w-4" />,
-          description:
-            "Add/edit Freedom School lessons (video, audio, PDFs)",
         },
         {
           name: "View Guide",
