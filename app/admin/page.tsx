@@ -22,6 +22,7 @@ import {
   PlusCircle,
   Tv2,
   Trash2,
+  BookOpen, // ✅ NEW
 } from "lucide-react";
 import {
   Card,
@@ -136,6 +137,13 @@ export default function AdminDashboard() {
           icon: <Trash2 className="h-4 w-4" />,
           accent: "danger",
           description: "Find and remove broken or unwanted program entries",
+        },
+        {
+          name: "Freedom School Library", // ✅ NEW LINK
+          href: "/admin/freedom-school-library",
+          icon: <BookOpen className="h-4 w-4" />,
+          description:
+            "Add/edit Freedom School lessons (video, audio, PDFs)",
         },
         {
           name: "View Guide",
