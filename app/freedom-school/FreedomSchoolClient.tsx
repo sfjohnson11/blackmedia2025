@@ -3,7 +3,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
-import { PlayCircle, Loader2, FileText, Headphones } from "lucide-react";
+import { PlayCircle, Loader2, FileText, Headphones, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 type FSAsset = {
@@ -36,7 +36,7 @@ export default function FreedomSchoolClient() {
   const supabase = createClientComponentClient();
 
   const [assets, setAssets] = useState<FSAsset[]>([]);
-  const [selected, setSelected] = useState<FSAsset | null>(null);
+  const [selectedVideo, setSelectedVideo] = useState<FSAsset | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
@@ -77,10 +77,9 @@ export default function FreedomSchoolClient() {
         if (!cancelled) {
           setAssets(mapped);
 
-          // Auto-select a default featured: first video, else first anything
-          const firstVideo = mapped.find((a) => a.type === "video");
-          const fallback = mapped[0] ?? null;
-          setSelected(firstVideo || fallback || null);
+          // Default featured: first video if available
+          const firstVideo = mapped.find((a) => a.type === "video") ?? null;
+          setSelectedVideo(firstVideo);
         }
       } catch (e: any) {
         console.error("Unexpected error loading Freedom School assets", e);
@@ -99,27 +98,50 @@ export default function FreedomSchoolClient() {
     };
   }, [supabase]);
 
-  const featured = useMemo<FSAsset | null>(() => {
-    if (assets.length === 0) return null;
-    const firstVideo = assets.find((a) => a.type === "video");
-    return firstVideo || assets[0];
-  }, [assets]);
+  // Separate into video playlist + downloadables
+  const videoAssets = useMemo(
+    () => assets.filter((a) => a.type === "video"),
+    [assets]
+  );
 
-  function handlePlayFeatured() {
-    if (!featured) return;
-    setSelected(featured);
+  const downloadAssets = useMemo(
+    () => assets.filter((a) => a.type !== "video"),
+    [assets]
+  );
 
-    // Scroll the player into view so it feels "alive"
+  const featuredVideo = useMemo<FSAsset | null>(() => {
+    return videoAssets[0] ?? null;
+  }, [videoAssets]);
+
+  function scrollPlayerIntoView() {
     if (playerRef.current) {
       playerRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
     }
   }
 
-  function handleSelect(asset: FSAsset) {
-    setSelected(asset);
-    if (playerRef.current) {
-      playerRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
+  function handlePlayFeatured() {
+    if (!featuredVideo) return;
+    setSelectedVideo(featuredVideo);
+    scrollPlayerIntoView();
+  }
+
+  function handleSelectVideo(asset: FSAsset) {
+    setSelectedVideo(asset);
+    scrollPlayerIntoView();
+  }
+
+  // Loop through only the video playlist when one ends
+  function handleVideoEnded() {
+    if (!selectedVideo || videoAssets.length === 0) return;
+
+    const currentIndex = videoAssets.findIndex(
+      (v) => v.name === selectedVideo.name
+    );
+    if (currentIndex === -1) return;
+
+    const nextIndex = (currentIndex + 1) % videoAssets.length;
+    setSelectedVideo(videoAssets[nextIndex]);
+    scrollPlayerIntoView();
   }
 
   return (
@@ -130,21 +152,22 @@ export default function FreedomSchoolClient() {
           <div>
             <h1 className="text-3xl font-bold tracking-tight">Freedom School</h1>
             <p className="mt-1 text-sm text-slate-300">
-              Our virtual classroom is always open — lessons, lectures, and study resources on demand.
+              Our virtual classroom is always open — lessons, lectures, and study
+              resources on demand.
             </p>
           </div>
 
           <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center">
             <Button
               onClick={handlePlayFeatured}
-              disabled={!featured}
+              disabled={!featuredVideo}
               className="bg-emerald-600 hover:bg-emerald-700 text-sm inline-flex items-center gap-2"
             >
               <PlayCircle className="h-4 w-4" />
               Play Featured Lesson
             </Button>
             <p className="text-[11px] text-slate-400">
-              Plays the first video in the Freedom School library.
+              Plays the first MP4 in the Freedom School library and loops through all MP4s.
             </p>
           </div>
         </header>
@@ -156,7 +179,7 @@ export default function FreedomSchoolClient() {
         >
           <div className="rounded-lg border border-slate-700 bg-slate-900/70 p-3">
             <h2 className="text-sm font-semibold mb-2 text-slate-100">
-              Now Playing
+              Now Playing (Video Playlist)
             </h2>
 
             {loading ? (
@@ -168,162 +191,147 @@ export default function FreedomSchoolClient() {
               <div className="rounded-md border border-red-500/60 bg-red-950/50 px-3 py-2 text-xs text-red-100">
                 {err}
               </div>
-            ) : !selected ? (
+            ) : videoAssets.length === 0 ? (
               <div className="py-10 text-center text-sm text-slate-400">
-                No media is currently selected.
+                No MP4 videos have been published to Freedom School yet.
+              </div>
+            ) : !selectedVideo ? (
+              <div className="py-10 text-center text-sm text-slate-400">
+                Select a lesson from the playlist on the right.
               </div>
             ) : (
               <div className="space-y-3">
-                {selected.type === "video" && (
-                  <video
-                    key={selected.publicUrl}
-                    controls
-                    className="w-full rounded-md border border-slate-700 bg-black"
-                  >
-                    <source src={selected.publicUrl} />
-                    Your browser does not support the video tag.
-                  </video>
-                )}
-
-                {selected.type === "audio" && (
-                  <div className="rounded-md border border-slate-700 bg-slate-950 p-4">
-                    <div className="flex items-center gap-2 text-slate-100 mb-3 text-sm">
-                      <Headphones className="h-4 w-4 text-emerald-400" />
-                      <span>Audio Lesson</span>
-                    </div>
-                    <audio controls className="w-full">
-                      <source src={selected.publicUrl} />
-                      Your browser does not support the audio element.
-                    </audio>
-                  </div>
-                )}
-
-                {selected.type === "pdf" && (
-                  <div className="rounded-md border border-slate-700 bg-slate-950 p-4 space-y-3">
-                    <div className="flex items-center gap-2 text-slate-100 text-sm">
-                      <FileText className="h-4 w-4 text-amber-400" />
-                      <span>PDF Lesson / Handout</span>
-                    </div>
-                    <a
-                      href={selected.publicUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center text-xs text-emerald-300 hover:text-emerald-200 underline"
-                    >
-                      Open PDF in new tab
-                    </a>
-                    <div className="h-72 rounded border border-slate-800 bg-black/40 flex items-center justify-center text-xs text-slate-400">
-                      PDF preview not embedded. Click &ldquo;Open PDF in new tab&rdquo; above to view.
-                    </div>
-                  </div>
-                )}
-
-                {selected.type === "other" && (
-                  <div className="rounded-md border border-slate-700 bg-slate-950 p-4 text-xs text-slate-300">
-                    This file type is not directly previewable here. You can open it in a new tab:
-                    <div className="mt-2">
-                      <a
-                        href={selected.publicUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-emerald-300 hover:text-emerald-200 underline"
-                      >
-                        Open file
-                      </a>
-                    </div>
-                  </div>
-                )}
+                <video
+                  key={selectedVideo.publicUrl}
+                  controls
+                  className="w-full rounded-md border border-slate-700 bg-black"
+                  onEnded={handleVideoEnded}
+                >
+                  <source src={selectedVideo.publicUrl} />
+                  Your browser does not support the video tag.
+                </video>
 
                 <div className="mt-2">
                   <h3 className="text-sm font-semibold text-slate-100">
-                    {makeTitleFromFilename(selected.name)}
+                    {makeTitleFromFilename(selectedVideo.name)}
                   </h3>
                   <p className="mt-1 text-xs text-slate-400">
-                    From the Freedom School media library ({selected.type.toUpperCase()}).
+                    Freedom School video lesson. When this finishes, the next MP4
+                    in the list will play automatically.
                   </p>
                 </div>
               </div>
             )}
           </div>
 
-          {/* Sidebar: Quick Info */}
+          {/* Sidebar: Video playlist + How it works */}
           <aside className="space-y-3">
             <div className="rounded-lg border border-slate-700 bg-slate-900/70 p-3 text-xs text-slate-300">
               <h2 className="text-sm font-semibold mb-1 text-slate-100">
                 How Freedom School Works
               </h2>
               <ul className="list-disc list-inside space-y-1">
-                <li>Lessons, lectures, and study handouts are stored in the Freedom School bucket.</li>
-                <li>Click any item in the library below to play or open it.</li>
-                <li>
-                  Use <span className="font-semibold">Play Featured Lesson</span> for a quick-start
-                  video.
-                </li>
+                <li>MP4s appear in the video playlist and will auto-loop.</li>
+                <li>PDFs and other files appear below as downloadable resources.</li>
+                <li>Click any video in the playlist to jump to that lesson.</li>
               </ul>
+            </div>
+
+            {/* Video Playlist */}
+            <div className="rounded-lg border border-slate-700 bg-slate-900/70 p-3">
+              <h3 className="text-sm font-semibold mb-2 text-slate-100">
+                Video Playlist (MP4 Only)
+              </h3>
+              {videoAssets.length === 0 ? (
+                <p className="text-xs text-slate-400">
+                  No MP4 videos found in the freedom-school bucket.
+                </p>
+              ) : (
+                <div className="space-y-2 max-h-80 overflow-y-auto">
+                  {videoAssets.map((asset) => {
+                    const isActive =
+                      selectedVideo && selectedVideo.name === asset.name;
+                    const title = makeTitleFromFilename(asset.name);
+
+                    return (
+                      <button
+                        key={asset.name}
+                        type="button"
+                        onClick={() => handleSelectVideo(asset)}
+                        className={`w-full text-left rounded-md border px-2 py-1.5 text-[11px] transition 
+                          ${
+                            isActive
+                              ? "border-emerald-500 bg-emerald-900/40"
+                              : "border-slate-700 bg-slate-900/70 hover:bg-slate-800/70"
+                          }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-semibold text-slate-100 line-clamp-2">
+                            {title}
+                          </span>
+                          <PlayCircle className="h-3 w-3 text-emerald-400 flex-shrink-0" />
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </aside>
         </section>
 
-        {/* Library List */}
+        {/* Downloadable Resources (non-video) */}
         <section className="space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-slate-100">
-              Freedom School Library
+              Downloads & Study Resources
             </h2>
             <p className="text-xs text-slate-400">
-              {assets.length} item{assets.length === 1 ? "" : "s"} loaded from the freedom-school bucket.
+              {downloadAssets.length} downloadable item
+              {downloadAssets.length === 1 ? "" : "s"} from the freedom-school bucket.
             </p>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
-            {loading ? (
-              <div className="col-span-full flex items-center justify-center py-10 text-slate-300 text-sm">
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Loading Freedom School library…
-              </div>
-            ) : assets.length === 0 ? (
-              <div className="col-span-full text-xs text-slate-400">
-                No media has been published to Freedom School yet.
-              </div>
-            ) : (
-              assets.map((asset) => {
-                const isActive = selected && selected.name === asset.name;
+          {downloadAssets.length === 0 ? (
+            <p className="text-xs text-slate-400">
+              No additional handouts or audio files uploaded yet.
+            </p>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
+              {downloadAssets.map((asset) => {
                 const title = makeTitleFromFilename(asset.name);
 
                 return (
-                  <button
+                  <a
                     key={asset.name}
-                    type="button"
-                    onClick={() => handleSelect(asset)}
-                    className={`text-left rounded-lg border px-3 py-2 text-xs transition 
-                      ${
-                        isActive
-                          ? "border-emerald-500 bg-emerald-900/40"
-                          : "border-slate-700 bg-slate-900/70 hover:bg-slate-800/70"
-                      }`}
+                    href={asset.publicUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded-lg border border-slate-700 bg-slate-900/70 px-3 py-2 text-xs 
+                               text-slate-100 hover:bg-slate-800/70 flex flex-col gap-1"
                   >
-                    <div className="flex items-center justify-between gap-2 mb-1">
-                      <span className="font-semibold text-slate-100 line-clamp-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-semibold line-clamp-2">
                         {title}
                       </span>
-                      {asset.type === "video" && (
-                        <PlayCircle className="h-4 w-4 text-emerald-400 flex-shrink-0" />
+                      {asset.type === "pdf" && (
+                        <FileText className="h-4 w-4 text-amber-400 flex-shrink-0" />
                       )}
                       {asset.type === "audio" && (
                         <Headphones className="h-4 w-4 text-sky-400 flex-shrink-0" />
                       )}
-                      {asset.type === "pdf" && (
-                        <FileText className="h-4 w-4 text-amber-400 flex-shrink-0" />
+                      {asset.type === "other" && (
+                        <Download className="h-4 w-4 text-slate-300 flex-shrink-0" />
                       )}
                     </div>
-                    <div className="text-[11px] text-slate-400 capitalize">
-                      {asset.type} resource
-                    </div>
-                  </button>
+                    <span className="text-[11px] text-slate-400 capitalize">
+                      {asset.type} — click to open/download
+                    </span>
+                  </a>
                 );
-              })
-            )}
-          </div>
+              })}
+            </div>
+          )}
         </section>
       </div>
     </div>
