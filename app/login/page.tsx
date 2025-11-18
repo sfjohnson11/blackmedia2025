@@ -1,133 +1,203 @@
-// app/login/page.tsx
-"use client";
+'use client';
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
-import { Button } from "@/components/ui/button";
+import { FormEvent, useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { getSupabaseClient } from '@/utils/supabase/client';
 
 export default function LoginPage() {
-  const supabase = createClientComponentClient();
   const router = useRouter();
+  const searchParams = useSearchParams();
 
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  async function handleSubmit(e: React.FormEvent) {
+  // Read ?error= from the URL
+  useEffect(() => {
+    const err = searchParams.get('error');
+    if (!err) return;
+
+    if (err === 'not_admin') {
+      setErrorMsg("You don't have admin access on this account.");
+    } else if (err === 'not_logged_in') {
+      setErrorMsg('Please log in to continue.');
+    } else {
+      // generic message if some other error text shows up
+      setErrorMsg(err.replace(/_/g, ' '));
+    }
+  }, [searchParams]);
+
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    setErr(null);
     setLoading(true);
+    setErrorMsg(null);
 
-    try {
-      // 1) Supabase email/password login
-      const { data, error } = await supabase.auth.signInWithPassword({
+    const supabase = getSupabaseClient();
+
+    // 1) Sign in with Supabase
+    const { data: signInData, error: signInError } =
+      await supabase.auth.signInWithPassword({
         email,
         password,
       });
 
-      if (error) {
-        console.error("Login error", error);
-        setErr(error.message);
-        return;
-      }
-
-      const user = data.user;
-      if (!user) {
-        setErr("No user returned from Supabase.");
-        return;
-      }
-
-      // 2) Look up role from user_profiles
-      const { data: profile, error: profileError } = await supabase
-        .from("user_profiles")
-        .select("role")
-        .eq("id", user.id)
-        .maybeSingle();
-
-      if (profileError) {
-        console.error("Profile lookup error", profileError);
-        setErr("Could not load your profile. Contact support.");
-        return;
-      }
-
-      const role = profile?.role ?? "user";
-
-      // 3) Route based on role
-      if (role === "admin") {
-        router.replace("/admin");
-      } else {
-        // regular viewers / students → main app
-        router.replace("/");
-      }
-    } catch (e: any) {
-      console.error("Unexpected login error", e);
-      setErr(e?.message || "Unexpected error during login.");
-    } finally {
+    if (signInError || !signInData.user) {
+      setErrorMsg(signInError?.message || 'Unable to sign in. Check your email and password.');
       setLoading(false);
+      return;
     }
-  }
+
+    const user = signInData.user;
+
+    // 2) Fetch profile to get role + trade
+    const { data: profile, error: profileError } = await supabase
+      .from('user_profiles')
+      .select('role, trade')
+      .eq('id', user.id)
+      .maybeSingle();
+
+    if (profileError) {
+      console.error(profileError);
+      setErrorMsg('Could not load your profile. Please contact support.');
+      setLoading(false);
+      return;
+    }
+
+    const role = profile?.role;
+
+    // 3) Redirect based on role
+    if (role === 'admin') {
+      router.push('/admin');
+    } else {
+      // you can get fancy here later and route by trade if you want
+      router.push('/student/dashboard');
+    }
+
+    setLoading(false);
+  };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-[#040814] via-[#050b1a] to-black flex items-center justify-center px-4">
-      <div className="w-full max-w-md rounded-xl border border-slate-800 bg-slate-900/80 p-6 shadow-xl">
-        <h1 className="text-2xl font-bold text-white mb-1">
-          Black Truth TV Login
+    <div
+      style={{
+        minHeight: '100vh',
+        background: 'radial-gradient(circle at top, #1f3b73 0, #050816 55%, #000 100%)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '24px',
+        color: '#fff',
+        fontFamily: 'system-ui, -apple-system, Segoe UI, sans-serif',
+      }}
+    >
+      <div
+        style={{
+          width: '100%',
+          maxWidth: 420,
+          background: 'rgba(10,20,40,0.9)',
+          borderRadius: 16,
+          padding: '28px 24px 24px',
+          boxShadow: '0 18px 45px rgba(0,0,0,0.65)',
+          border: '1px solid rgba(255,255,255,0.08)',
+        }}
+      >
+        <h1
+          style={{
+            fontSize: '1.75rem',
+            fontWeight: 700,
+            marginBottom: 6,
+            textAlign: 'center',
+          }}
+        >
+          E-Deck ConstructIQ Login
         </h1>
-        <p className="text-sm text-slate-300 mb-4">
-          Sign in to manage channels, programs, or watch as a registered user.
+        <p
+          style={{
+            fontSize: 14,
+            opacity: 0.8,
+            textAlign: 'center',
+            marginBottom: 18,
+          }}
+        >
+          Use your email and password. Admins will be routed to the admin dashboard.
         </p>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-xs font-medium text-slate-300 mb-1">
-              Email
-            </label>
+        {errorMsg && (
+          <div
+            style={{
+              marginBottom: 16,
+              padding: '10px 12px',
+              borderRadius: 8,
+              background: 'rgba(127,29,29,0.2)',
+              border: '1px solid rgba(248,113,113,0.5)',
+              fontSize: 13,
+            }}
+          >
+            {errorMsg}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 12 }}>
+          <label style={{ fontSize: 13 }}>
+            <span style={{ display: 'block', marginBottom: 4 }}>Email</span>
             <input
               type="email"
+              required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              required
-              className="w-full rounded-md border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-white focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
-              placeholder="you@example.com"
+              style={{
+                width: '100%',
+                padding: '9px 10px',
+                borderRadius: 8,
+                border: '1px solid rgba(148,163,184,0.7)',
+                background: 'rgba(15,23,42,0.9)',
+                color: '#fff',
+                fontSize: 14,
+              }}
             />
-          </div>
+          </label>
 
-          <div>
-            <label className="block text-xs font-medium text-slate-300 mb-1">
-              Password
-            </label>
+          <label style={{ fontSize: 13 }}>
+            <span style={{ display: 'block', marginBottom: 4 }}>Password</span>
             <input
               type="password"
+              required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              required
-              className="w-full rounded-md border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-white focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
-              placeholder="••••••••"
+              style={{
+                width: '100%',
+                padding: '9px 10px',
+                borderRadius: 8,
+                border: '1px solid rgba(148,163,184,0.7)',
+                background: 'rgba(15,23,42,0.9)',
+                color: '#fff',
+                fontSize: 14,
+              }}
             />
-          </div>
+          </label>
 
-          {err && (
-            <div className="rounded-md border border-red-500/60 bg-red-950/60 px-3 py-2 text-xs text-red-100">
-              {err}
-            </div>
-          )}
-
-          <Button
+          <button
             type="submit"
             disabled={loading}
-            className="w-full bg-amber-600 hover:bg-amber-700 text-sm font-semibold"
+            style={{
+              marginTop: 8,
+              padding: '10px 12px',
+              borderRadius: 999,
+              border: 'none',
+              cursor: loading ? 'default' : 'pointer',
+              background:
+                'linear-gradient(135deg, #FFD700 0%, #fbbf24 35%, #f97316 80%)',
+              color: '#111827',
+              fontWeight: 700,
+              fontSize: 14,
+              textTransform: 'uppercase',
+              letterSpacing: 0.06,
+              boxShadow: '0 10px 25px rgba(180,83,9,0.5)',
+            }}
           >
-            {loading ? "Signing in…" : "Sign In"}
-          </Button>
+            {loading ? 'Signing in…' : 'Sign In'}
+          </button>
         </form>
-
-        <p className="mt-4 text-[11px] text-slate-400">
-          Having trouble signing in? Make sure your email exists in{" "}
-          <code className="text-amber-300">user_profiles</code> with the
-          correct role.
-        </p>
       </div>
     </div>
   );
