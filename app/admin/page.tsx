@@ -37,9 +37,6 @@ import ConfirmLink from "@/components/ConfirmLink";
 import ClearCacheCard from "@/components/ClearCacheCard";
 import { ADMIN_BETA, ALLOW_DANGER } from "@/lib/flags";
 
-// 👉 hard-coded admin emails as a safety fallback
-const ADMIN_EMAILS = ["info@sfjohnsonconsulting.com"];
-
 type Stats = {
   channelCount: number;
   programCount: number;
@@ -63,7 +60,10 @@ type AdminSection = {
 };
 
 /**
- * ✅ Wrapper: check session + admin via profile OR email
+ * ✅ This is the ONLY guard for /admin:
+ * - If no session → /login
+ * - If not admin → /
+ * - If admin → show AdminDashboardInner
  */
 export default function AdminPage() {
   const supabase = createClientComponentClient();
@@ -77,45 +77,49 @@ export default function AdminPage() {
       try {
         const {
           data: { session },
+          error: sessionError,
         } = await supabase.auth.getSession();
 
-        if (!session) {
-          if (!cancelled) router.replace("/login?error=not_logged_in");
+        if (cancelled) return;
+
+        if (sessionError) {
+          console.error("Error getting session", sessionError);
+          router.replace("/login");
           return;
         }
 
-        const user = session.user;
-        let role: string | null = null;
-
-        // Try to read user_profiles.role, but don't rely ONLY on it
-        try {
-          const { data: profile, error } = await supabase
-            .from("user_profiles")
-            .select("role")
-            .eq("id", user.id)
-            .maybeSingle();
-
-          if (!error && profile?.role) {
-            role = profile.role;
-          }
-        } catch (err) {
-          console.error("Admin profile lookup failed:", err);
+        // ❌ Not logged in → send to login
+        if (!session) {
+          router.replace("/login");
+          return;
         }
 
-        const isEmailAdmin =
-          user.email && ADMIN_EMAILS.includes(user.email.toLowerCase());
-        const isAdmin = role === "admin" || isEmailAdmin;
+        // ✅ Logged in → check role
+        const { data: profile, error: profileError } = await supabase
+          .from("user_profiles")
+          .select("role")
+          .eq("id", session.user.id)
+          .maybeSingle();
 
-        if (!cancelled) {
-          if (!isAdmin) {
-            router.replace("/login?error=not_admin");
-          } else {
-            setChecking(false);
-          }
+        if (cancelled) return;
+
+        if (profileError) {
+          console.error("Error loading user profile", profileError);
+          router.replace("/");
+          return;
         }
+
+        // ❌ Logged in but not admin → send to main app
+        if (profile?.role !== "admin") {
+          router.replace("/");
+          return;
+        }
+
+        // ✅ Admin → allow dashboard to render
+        setChecking(false);
       } catch (e) {
         console.error("Unexpected admin check error", e);
-        if (!cancelled) router.replace("/login?error=not_logged_in");
+        if (!cancelled) router.replace("/login");
       }
     })();
 
@@ -136,7 +140,7 @@ export default function AdminPage() {
 }
 
 /**
- * 🎛 Your original dashboard UI, unchanged
+ * 🎛 Your original dashboard UI (unchanged)
  */
 function AdminDashboardInner() {
   const [stats, setStats] = useState<Stats>({
