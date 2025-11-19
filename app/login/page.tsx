@@ -44,18 +44,10 @@ export default function LoginPage() {
 
     const authUser = data.user;
 
-    // 2️⃣ Look up profile role (id first, then email)
+    // 2️⃣ Look up profile role (email first, then id)
     let role: string | null = null;
 
-    const { data: profileById } = await supabase
-      .from("user_profiles")
-      .select("id, role, email, full_name")
-      .eq("id", authUser.id)
-      .maybeSingle<UserProfile>();
-
-    if (profileById && profileById.role) {
-      role = profileById.role;
-    } else if (authUser.email) {
+    if (authUser.email) {
       const { data: profileByEmail } = await supabase
         .from("user_profiles")
         .select("id, role, email, full_name")
@@ -68,20 +60,36 @@ export default function LoginPage() {
     }
 
     if (!role) {
-      role = "member"; // default if no explicit role
+      const { data: profileById } = await supabase
+        .from("user_profiles")
+        .select("id, role, email, full_name")
+        .eq("id", authUser.id)
+        .maybeSingle<UserProfile>();
+
+      if (profileById && profileById.role) {
+        role = profileById.role;
+      }
+    }
+
+    // Default if no explicit role found
+    if (!role) {
+      role = "member";
     }
 
     // 3️⃣ Decide where to go next
-    const safeRedirect =
-      redirectParam && redirectParam.startsWith("/")
-        ? redirectParam
-        : "";
+    let safeRedirect = "";
+    if (redirectParam && redirectParam.startsWith("/")) {
+      // ❗ If redirect is just "/", ignore it and use role instead
+      if (redirectParam !== "/") {
+        safeRedirect = redirectParam;
+      }
+    }
 
     if (safeRedirect) {
       // If we came from /watch/21 or /channels etc → go back there
       router.push(safeRedirect);
     } else if (role === "admin") {
-      // Admin with no redirect → go to admin dashboard
+      // Admin with no "real" redirect → go to admin dashboard
       router.push("/admin");
     } else {
       // Member with no redirect → go to main app
