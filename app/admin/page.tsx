@@ -1,4 +1,3 @@
-// app/admin/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -12,34 +11,34 @@ export default function AdminPage() {
 
   useEffect(() => {
     (async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      const { data: sessionData } = await supabase.auth.getSession();
 
-      if (!session) {
+      if (!sessionData?.session) {
         router.replace("/login");
         return;
       }
 
+      const user = sessionData.session.user;
+
       const { data: profile } = await supabase
         .from("user_profiles")
         .select("role")
-        .eq("id", session.user.id)
+        .eq("id", user.id)
         .maybeSingle();
 
       if (!profile || profile.role !== "admin") {
-        router.replace("/login");
+        router.replace("/");
         return;
       }
 
       setChecking(false);
     })();
-  }, [router, supabase]);
+  }, []);
 
   if (checking) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-black text-white">
-        <p className="text-gray-300">Checking admin access…</p>
+      <div className="min-h-screen bg-black flex items-center justify-center text-white">
+        Checking admin…
       </div>
     );
   }
@@ -49,11 +48,10 @@ export default function AdminPage() {
 
 function AdminDashboardInner() {
   return (
-    <div className="min-h-screen bg-gradient-to-b from-[#040814] via-[#050b1a] to-black text-white p-10">
-      <h1 className="text-3xl font-bold">Black Truth TV Admin</h1>
-      <p className="text-gray-300 mt-2">Operate your Black Truth TV platform.</p>
-
-      {/* Keep ALL your original admin UI here exactly as is */}
+    <div className="min-h-screen bg-black text-white p-10">
+      <h1 className="text-3xl font-bold mb-6">Admin Dashboard</h1>
+      <p>Welcome admin!</p>
+      {/* keep rest of your code here */}
     </div>
   );
 }
