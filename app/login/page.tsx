@@ -1,7 +1,7 @@
 // app/login/page.tsx
 "use client";
 
-import { useEffect, useState, FormEvent } from "react";
+import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
@@ -11,70 +11,30 @@ export default function LoginPage() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  // Read ?error= from the URL without useSearchParams
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const params = new URLSearchParams(window.location.search);
-    const err = params.get("error");
-    if (!err) return;
-
-    if (err === "not_admin") {
-      setErrorMsg("You don't have admin access on this account.");
-    } else if (err === "not_logged_in") {
-      setErrorMsg("Please log in to continue.");
-    } else {
-      setErrorMsg(err.replace(/_/g, " "));
-    }
-  }, []);
-
-  const handleSubmit = async (e: FormEvent) => {
+  async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setLoading(true);
     setErrorMsg(null);
 
-    const { data: signInData, error: signInError } =
-      await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
 
-    if (signInError || !signInData.user) {
-      setErrorMsg(
-        signInError?.message ||
-          "Unable to sign in. Please check your email and password."
-      );
+    if (error || !data.user) {
+      setErrorMsg(error?.message ?? "Invalid email or password.");
       setLoading(false);
       return;
     }
 
-    const user = signInData.user;
-
-    const { data: profile, error: profileError } = await supabase
-      .from("user_profiles")
-      .select("role")
-      .eq("id", user.id)
-      .maybeSingle();
-
-    if (profileError) {
-      console.error(profileError);
-      setErrorMsg("Could not load your profile. Please contact support.");
-      setLoading(false);
-      return;
-    }
-
-    const role = profile?.role;
-
-    if (role === "admin") {
-      router.push("/admin");
-    } else {
-      router.push("/");
-    }
+    // ✅ Logged in → go to main app
+    router.push("/");
 
     setLoading(false);
-  };
+  }
 
   return (
     <div
@@ -119,8 +79,7 @@ export default function LoginPage() {
             marginBottom: 18,
           }}
         >
-          Use your email and password. Admin accounts will be routed to the admin
-          dashboard.
+          Sign in with your email and password.
         </p>
 
         {errorMsg && (
