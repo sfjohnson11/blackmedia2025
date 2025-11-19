@@ -1,23 +1,36 @@
+// app/login/page.tsx
 "use client";
 
 import { useState, FormEvent } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
+type UserProfile = {
+  id: string;
+  role: string | null;
+  email: string | null;
+  full_name?: string | null;
+};
+
 export default function LoginPage() {
-  const supabase = createClientComponentClient();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const supabase = createClientComponentClient();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // Read ?redirect=/watch/21 or similar
+  const redirectParam = searchParams?.get("redirect") || "";
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    setErrorMsg(null);
     setLoading(true);
+    setErrorMsg(null);
 
+    // 1️⃣ Sign in with Supabase
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
@@ -29,18 +42,51 @@ export default function LoginPage() {
       return;
     }
 
-    // 🔥 Fetch the profile to get the role
-    const { data: profile } = await supabase
+    const authUser = data.user;
+
+    // 2️⃣ Look up profile role (id first, then email)
+    let role: string | null = null;
+
+    const { data: profileById } = await supabase
       .from("user_profiles")
-      .select("role")
-      .eq("id", data.user.id)
-      .maybeSingle();
+      .select("id, role, email, full_name")
+      .eq("id", authUser.id)
+      .maybeSingle<UserProfile>();
 
-    const role = profile?.role ?? "member";
+    if (profileById && profileById.role) {
+      role = profileById.role;
+    } else if (authUser.email) {
+      const { data: profileByEmail } = await supabase
+        .from("user_profiles")
+        .select("id, role, email, full_name")
+        .eq("email", authUser.email)
+        .maybeSingle<UserProfile>();
 
-    // 🔥 Correct redirect logic
-    if (role === "admin") router.push("/admin");
-    else router.push("/");
+      if (profileByEmail && profileByEmail.role) {
+        role = profileByEmail.role;
+      }
+    }
+
+    if (!role) {
+      role = "member"; // default if no explicit role
+    }
+
+    // 3️⃣ Decide where to go next
+    const safeRedirect =
+      redirectParam && redirectParam.startsWith("/")
+        ? redirectParam
+        : "";
+
+    if (safeRedirect) {
+      // If we came from /watch/21 or /channels etc → go back there
+      router.push(safeRedirect);
+    } else if (role === "admin") {
+      // Admin with no redirect → go to admin dashboard
+      router.push("/admin");
+    } else {
+      // Member with no redirect → go to main app
+      router.push("/");
+    }
 
     setLoading(false);
   }
@@ -80,6 +126,16 @@ export default function LoginPage() {
         >
           Black Truth TV Login
         </h1>
+        <p
+          style={{
+            fontSize: 14,
+            opacity: 0.8,
+            textAlign: "center",
+            marginBottom: 18,
+          }}
+        >
+          Sign in with your email and password.
+        </p>
 
         {errorMsg && (
           <div
@@ -97,35 +153,43 @@ export default function LoginPage() {
         )}
 
         <form onSubmit={handleSubmit} style={{ display: "grid", gap: 12 }}>
-          <input
-            type="email"
-            required
-            placeholder="Email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            style={{
-              padding: "9px 10px",
-              borderRadius: 8,
-              background: "rgba(15,23,42,0.9)",
-              color: "#fff",
-              border: "1px solid rgba(148,163,184,0.7)",
-            }}
-          />
+          <label style={{ fontSize: 13 }}>
+            <span style={{ display: "block", marginBottom: 4 }}>Email</span>
+            <input
+              type="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              style={{
+                width: "100%",
+                padding: "9px 10px",
+                borderRadius: 8,
+                border: "1px solid rgba(148,163,184,0.7)",
+                background: "rgba(15,23,42,0.9)",
+                color: "#fff",
+                fontSize: 14,
+              }}
+            />
+          </label>
 
-          <input
-            type="password"
-            required
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            style={{
-              padding: "9px 10px",
-              borderRadius: 8,
-              background: "rgba(15,23,42,0.9)",
-              color: "#fff",
-              border: "1px solid rgba(148,163,184,0.7)",
-            }}
-          />
+          <label style={{ fontSize: 13 }}>
+            <span style={{ display: "block", marginBottom: 4 }}>Password</span>
+            <input
+              type="password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              style={{
+                width: "100%",
+                padding: "9px 10px",
+                borderRadius: 8,
+                border: "1px solid rgba(148,163,184,0.7)",
+                background: "rgba(15,23,42,0.9)",
+                color: "#fff",
+                fontSize: 14,
+              }}
+            />
+          </label>
 
           <button
             type="submit"
@@ -134,11 +198,16 @@ export default function LoginPage() {
               marginTop: 8,
               padding: "10px 12px",
               borderRadius: 999,
+              border: "none",
+              cursor: loading ? "default" : "pointer",
               background:
                 "linear-gradient(135deg, #FFD700 0%, #fbbf24 35%, #f97316 80%)",
               color: "#111827",
               fontWeight: 700,
-              cursor: "pointer",
+              fontSize: 14,
+              textTransform: "uppercase",
+              letterSpacing: 0.06,
+              boxShadow: "0 10px 25px rgba(180,83,9,0.5)",
             }}
           >
             {loading ? "Signing in…" : "Sign In"}
