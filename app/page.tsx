@@ -1,25 +1,45 @@
 import Link from "next/link";
-import { createClient } from "@supabase/supabase-js";
+import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
+import { createServerComponentClient } from "@supabase/auth-helpers-nextjs";
 import type { Channel } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export default async function HomePage() {
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
+  // 🔐 Server-side Supabase client that knows about the user's session cookies
+  const supabase = createServerComponentClient({ cookies });
 
+  // 1️⃣ Check if user is logged in
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError) {
+    console.error("Error getting user on HomePage:", userError.message);
+  }
+
+  // ❌ No user → force login
+  if (!user) {
+    redirect("/login");
+  }
+
+  // 2️⃣ Logged in → load channels exactly like before
   const { data, error } = await supabase
     .from("channels")
-    .select("id, name, slug, description, logo_url, youtube_channel_id, youtube_is_live");
+    .select(
+      "id, name, slug, description, logo_url, youtube_channel_id, youtube_is_live"
+    );
 
   if (error) {
     return (
       <div className="min-h-screen bg-black text-white p-6">
         <h1 className="text-2xl font-bold mb-2">Black Truth TV</h1>
-        <div className="text-gray-300">Couldn’t load channels: {error.message}</div>
+        <div className="text-gray-300">
+          Couldn’t load channels: {error.message}
+        </div>
       </div>
     );
   }
@@ -74,7 +94,9 @@ export default async function HomePage() {
           <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
             {channels.map((ch) => {
               const art = ch.logo_url || null;
-              const isCh21YouTube = Number(ch.id) === 21 && !!(ch.youtube_channel_id || "").trim();
+              const isCh21YouTube =
+                Number(ch.id) === 21 &&
+                !!(ch.youtube_channel_id || "").trim();
 
               return (
                 <Link
