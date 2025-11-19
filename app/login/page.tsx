@@ -5,10 +5,6 @@ import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
-type UserProfile = {
-  role: string | null;
-};
-
 export default function LoginPage() {
   const router = useRouter();
   const supabase = createClientComponentClient();
@@ -23,6 +19,7 @@ export default function LoginPage() {
     setLoading(true);
     setErrorMsg(null);
 
+    // 1) Login
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
@@ -34,53 +31,25 @@ export default function LoginPage() {
       return;
     }
 
-    try {
-      const authUser = data.user;
+    const authUser = data.user;
 
-      // 1️⃣ Try to load profile by ID
-      let role: string | null = null;
+    // 2) Read their role from user_profiles
+    const { data: profile, error: profileError } = await supabase
+      .from("user_profiles")
+      .select("role")
+      .eq("id", authUser.id)
+      .maybeSingle();
 
-      const { data: profileById, error: profileIdError } = await supabase
-        .from("user_profiles")
-        .select("role")
-        .eq("id", authUser.id)
-        .maybeSingle<UserProfile>();
+    if (profileError || !profile) {
+      setErrorMsg("Could not load role.");
+      setLoading(false);
+      return;
+    }
 
-      if (profileIdError) {
-        console.error("Error loading profile by id after login:", profileIdError);
-      }
-
-      if (profileById && profileById.role) {
-        role = profileById.role;
-      } else if (authUser.email) {
-        // 2️⃣ Fallback: try by email (for older rows keyed by email)
-        const { data: profileByEmail, error: profileEmailError } =
-          await supabase
-            .from("user_profiles")
-            .select("role")
-            .eq("email", authUser.email)
-            .maybeSingle<UserProfile>();
-
-        if (profileEmailError) {
-          console.error(
-            "Error loading profile by email after login:",
-            profileEmailError
-          );
-        }
-
-        if (profileByEmail && profileByEmail.role) {
-          role = profileByEmail.role;
-        }
-      }
-
-      // 3️⃣ Route by role
-      if (role === "admin") {
-        router.push("/admin");
-      } else {
-        router.push("/");
-      }
-    } catch (e) {
-      console.error("Unexpected error after login", e);
+    // 3) Redirect based on role
+    if (profile.role === "admin") {
+      router.push("/admin");
+    } else {
       router.push("/");
     }
 
@@ -112,31 +81,14 @@ export default function LoginPage() {
           border: "1px solid rgba(255,255,255,0.08)",
         }}
       >
-        <h1
-          style={{
-            fontSize: "1.75rem",
-            fontWeight: 700,
-            marginBottom: 6,
-            textAlign: "center",
-          }}
-        >
+        <h1 style={{ textAlign: "center", fontSize: "1.75rem", fontWeight: 700 }}>
           Black Truth TV Login
         </h1>
-        <p
-          style={{
-            fontSize: 14,
-            opacity: 0.8,
-            textAlign: "center",
-            marginBottom: 18,
-          }}
-        >
-          Sign in with your email and password.
-        </p>
 
         {errorMsg && (
           <div
             style={{
-              marginBottom: 16,
+              marginTop: 16,
               padding: "10px 12px",
               borderRadius: 8,
               background: "rgba(127,29,29,0.2)",
@@ -148,9 +100,9 @@ export default function LoginPage() {
           </div>
         )}
 
-        <form onSubmit={handleSubmit} style={{ display: "grid", gap: 12 }}>
+        <form onSubmit={handleSubmit} style={{ display: "grid", gap: 12, marginTop: 16 }}>
           <label style={{ fontSize: 13 }}>
-            <span style={{ display: "block", marginBottom: 4 }}>Email</span>
+            Email
             <input
               type="email"
               required
@@ -164,12 +116,13 @@ export default function LoginPage() {
                 background: "rgba(15,23,42,0.9)",
                 color: "#fff",
                 fontSize: 14,
+                marginTop: 4
               }}
             />
           </label>
 
           <label style={{ fontSize: 13 }}>
-            <span style={{ display: "block", marginBottom: 4 }}>Password</span>
+            Password
             <input
               type="password"
               required
@@ -183,6 +136,7 @@ export default function LoginPage() {
                 background: "rgba(15,23,42,0.9)",
                 color: "#fff",
                 fontSize: 14,
+                marginTop: 4
               }}
             />
           </label>
@@ -194,16 +148,11 @@ export default function LoginPage() {
               marginTop: 8,
               padding: "10px 12px",
               borderRadius: 999,
-              border: "none",
-              cursor: loading ? "default" : "pointer",
               background:
                 "linear-gradient(135deg, #FFD700 0%, #fbbf24 35%, #f97316 80%)",
               color: "#111827",
               fontWeight: 700,
-              fontSize: 14,
-              textTransform: "uppercase",
               letterSpacing: 0.06,
-              boxShadow: "0 10px 25px rgba(180,83,9,0.5)",
             }}
           >
             {loading ? "Signing in…" : "Sign In"}
