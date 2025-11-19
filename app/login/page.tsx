@@ -23,7 +23,6 @@ export default function LoginPage() {
     setLoading(true);
     setErrorMsg(null);
 
-    // 1) Log in with Supabase
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
@@ -36,24 +35,45 @@ export default function LoginPage() {
     }
 
     try {
-      // 2) Look up this user's profile to get the role
-      const { data: profile, error: profileError } = await supabase
+      const authUser = data.user;
+
+      // 1️⃣ Try to load profile by ID
+      let role: string | null = null;
+
+      const { data: profileById, error: profileIdError } = await supabase
         .from("user_profiles")
         .select("role")
-        .eq("id", data.user.id)
+        .eq("id", authUser.id)
         .maybeSingle<UserProfile>();
 
-      if (profileError) {
-        console.error("Error loading user profile after login", profileError);
-        // If profile lookup fails, just send to main app
-        router.push("/");
-        setLoading(false);
-        return;
+      if (profileIdError) {
+        console.error("Error loading profile by id after login:", profileIdError);
       }
 
-      const role = profile?.role ?? null;
+      if (profileById && profileById.role) {
+        role = profileById.role;
+      } else if (authUser.email) {
+        // 2️⃣ Fallback: try by email (for older rows keyed by email)
+        const { data: profileByEmail, error: profileEmailError } =
+          await supabase
+            .from("user_profiles")
+            .select("role")
+            .eq("email", authUser.email)
+            .maybeSingle<UserProfile>();
 
-      // 3) Route based on role
+        if (profileEmailError) {
+          console.error(
+            "Error loading profile by email after login:",
+            profileEmailError
+          );
+        }
+
+        if (profileByEmail && profileByEmail.role) {
+          role = profileByEmail.role;
+        }
+      }
+
+      // 3️⃣ Route by role
       if (role === "admin") {
         router.push("/admin");
       } else {
