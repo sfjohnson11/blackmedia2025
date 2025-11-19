@@ -66,7 +66,7 @@ type UserProfile = {
 };
 
 /**
- * ✅ Guard /admin:
+ * Guard /admin:
  * - No session → /login?redirect=/admin
  * - Not admin → /
  * - Admin → show AdminDashboardInner
@@ -95,7 +95,6 @@ export default function AdminPage() {
         }
 
         if (!session) {
-          // ❌ Not logged in → go to login, then bounce back here
           router.replace("/login?redirect=/admin");
           return;
         }
@@ -103,7 +102,7 @@ export default function AdminPage() {
         const authUser = session.user;
         let role: string | null = null;
 
-        // 1️⃣ Try by email (your table has email)
+        // 1️⃣ Try by email
         if (authUser.email) {
           const { data: profileByEmail, error: emailError } = await supabase
             .from("user_profiles")
@@ -137,16 +136,13 @@ export default function AdminPage() {
           }
         }
 
-        // Normalize: "Admin", " admin " → "admin"
         role = (role || "member").toLowerCase().trim();
 
-        // ❌ Logged in but not admin → send to main app
         if (role !== "admin") {
           router.replace("/");
           return;
         }
 
-        // ✅ Admin → allow dashboard to render
         setChecking(false);
       } catch (e) {
         console.error("Unexpected admin check error", e);
@@ -171,7 +167,7 @@ export default function AdminPage() {
 }
 
 /**
- * 🎛 Full Admin Dashboard UI with all your tool cards
+ * Full Admin Dashboard UI
  */
 function AdminDashboardInner() {
   const [stats, setStats] = useState<Stats>({
@@ -180,7 +176,6 @@ function AdminDashboardInner() {
     loading: true,
   });
 
-  // Fetch counts via server API (avoids RLS headaches in client)
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -202,7 +197,6 @@ function AdminDashboardInner() {
     };
   }, []);
 
-  // ⬇⬇ THIS is where all 10–12+ admin tools live ⬇⬇
   const adminSections: AdminSection[] = [
     {
       title: "Scheduling & Programs",
@@ -363,7 +357,6 @@ function AdminDashboardInner() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#040814] via-[#050b1a] to-black text-white pb-10">
       <div className="mx-auto max-w-6xl px-4 pt-8">
-        {/* DEBUG BANNER – remove when you're happy */}
         <div className="mb-6 rounded-lg border border-amber-400/60 bg-amber-500/10 px-4 py-3">
           <p className="text-sm font-semibold text-amber-300">
             ✅ You are on the{" "}
@@ -422,7 +415,7 @@ function AdminDashboardInner() {
           </Card>
         </section>
 
-        {/* Sections & tool cards */}
+        {/* Tool sections */}
         <section className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
           {adminSections.map((section, index) => (
             <Card
@@ -474,7 +467,6 @@ function AdminDashboardInner() {
             </Card>
           ))}
 
-          {/* Reset Programs (danger-gated + confirmed) */}
           {ALLOW_DANGER && (
             <Card className="border border-red-900/60 bg-red-950/40">
               <CardHeader>
@@ -503,7 +495,7 @@ function AdminDashboardInner() {
           )}
         </section>
 
-        {/* Client-side Clear Cache */}
+        {/* Clear cache */}
         <section className="mt-10">
           <ClearCacheCard />
         </section>
