@@ -7,20 +7,28 @@ import { createServerComponentClient } from "@supabase/auth-helpers-nextjs";
 
 export const metadata: Metadata = {
   title: "Black Truth TV",
-  description: "24/7 programming dedicated to truth, culture, history, and community uplift.",
+  description:
+    "24/7 programming dedicated to truth, culture, history, and community uplift.",
 };
 
-export default async function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  // 🔐 Server-side Supabase client (reads auth cookies)
   const supabase = createServerComponentClient({ cookies });
+
   const {
-    data: { user }
+    data: { user },
   } = await supabase.auth.getUser();
 
   return (
     <html lang="en">
       <body className="bg-black text-white">
-        {/* Only show TopNav if logged in */}
+        {/* Only show TopNav when logged in */}
         {user ? <TopNav /> : null}
+
         {children}
       </body>
     </html>
