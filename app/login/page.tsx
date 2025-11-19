@@ -5,6 +5,10 @@ import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
+type UserProfile = {
+  role: string | null;
+};
+
 export default function LoginPage() {
   const router = useRouter();
   const supabase = createClientComponentClient();
@@ -19,6 +23,7 @@ export default function LoginPage() {
     setLoading(true);
     setErrorMsg(null);
 
+    // 1) Log in with Supabase
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
@@ -30,8 +35,34 @@ export default function LoginPage() {
       return;
     }
 
-    // ✅ Logged in → go to main app
-    router.push("/");
+    try {
+      // 2) Look up this user's profile to get the role
+      const { data: profile, error: profileError } = await supabase
+        .from("user_profiles")
+        .select("role")
+        .eq("id", data.user.id)
+        .maybeSingle<UserProfile>();
+
+      if (profileError) {
+        console.error("Error loading user profile after login", profileError);
+        // If profile lookup fails, just send to main app
+        router.push("/");
+        setLoading(false);
+        return;
+      }
+
+      const role = profile?.role ?? null;
+
+      // 3) Route based on role
+      if (role === "admin") {
+        router.push("/admin");
+      } else {
+        router.push("/");
+      }
+    } catch (e) {
+      console.error("Unexpected error after login", e);
+      router.push("/");
+    }
 
     setLoading(false);
   }
