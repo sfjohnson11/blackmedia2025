@@ -10,22 +10,22 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export default async function HomePage() {
-  // 🔐 Server-side Supabase using auth cookies
+  // 🔐 Server-side Supabase client with auth cookies
   const supabase = createServerComponentClient({ cookies });
 
-  // 1️⃣ Require a logged-in user
+  // 1️⃣ Require logged-in user
   const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser();
+    data: { session },
+    error: sessionError,
+  } = await supabase.auth.getSession();
 
-  if (userError) {
-    console.error("Error getting user on HomePage:", userError.message);
+  if (sessionError) {
+    console.error("Error getting session on /:", sessionError.message);
   }
 
-  if (!user) {
-    // ❌ No session → force login
-    redirect("/login?redirect=/");
+  if (!session) {
+    // No session → force login
+    redirect("/login");
   }
 
   // 2️⃣ Logged in → load channels
@@ -46,7 +46,6 @@ export default async function HomePage() {
     );
   }
 
-  // Force numeric sort
   const channels = (data ?? []).sort(
     (a, b) => Number(a.id) - Number(b.id)
   ) as Channel[];
@@ -60,7 +59,7 @@ export default async function HomePage() {
           Streaming live and on-demand. Choose a channel to start watching.
         </p>
 
-        {/* ===== ON-DEMAND BUTTON ===== */}
+        {/* On-demand button */}
         <div className="mt-6 flex">
           <Link href="/on-demand" className="mx-auto">
             <button
