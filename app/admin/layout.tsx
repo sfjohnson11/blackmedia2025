@@ -13,28 +13,36 @@ type Props = {
 export default async function AdminLayout({ children }: Props) {
   const supabase = createServerComponentClient({ cookies });
 
-  // --- 1) Require logged-in user ---
+  // 1) Require logged-in user
   const {
     data: { user },
     error: userError,
   } = await supabase.auth.getUser();
 
   if (userError || !user) {
-    redirect("/admin/login");
+    // No session → go to the ONE login page
+    redirect("/login?redirect=/admin");
   }
 
-  // --- 2) Look up user_profiles BY EMAIL ---
+  // 2) Look up user_profiles by ID (most reliable), fall back to email if needed
   const { data: profile, error: profileError } = await supabase
     .from("user_profiles")
-    .select("role, email")
-    .eq("email", user.email)
+    .select("id, role, email")
+    .eq("id", user.id)
     .maybeSingle();
 
-  // If profile doesn’t exist OR not admin → boot them
-  if (profileError || !profile || profile.role !== "admin") {
-    redirect("/admin/login?error=not_admin");
+  if (profileError || !profile) {
+    // No profile row = no access to admin
+    redirect("/login?error=no_profile");
   }
 
-  // --- 3) Authorized admin - show admin panel ---
+  const role = (profile.role || "member").toLowerCase().trim();
+
+  if (role !== "admin") {
+    // Logged in but not admin → push them out of /admin
+    redirect("/?error=not_admin");
+  }
+
+  // 3) Authorized admin - show admin panel
   return <>{children}</>;
 }
