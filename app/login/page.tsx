@@ -2,19 +2,11 @@
 "use client";
 
 import { useState, FormEvent } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
-
-type UserProfile = {
-  id: string;
-  role: string | null;
-  email: string | null;
-  full_name?: string | null;
-};
 
 export default function LoginPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const supabase = createClientComponentClient();
 
   const [email, setEmail] = useState("");
@@ -22,15 +14,18 @@ export default function LoginPage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // Read ?redirect=/watch/21 or similar
-  const redirectParam = searchParams?.get("redirect") || "";
-
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setLoading(true);
     setErrorMsg(null);
 
-    // 1️⃣ Sign in with Supabase
+    // Read ?redirect=/something WITHOUT useSearchParams (avoids Suspense build error)
+    let redirectTo: string | null = null;
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      redirectTo = params.get("redirect");
+    }
+
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
@@ -42,57 +37,27 @@ export default function LoginPage() {
       return;
     }
 
-    const authUser = data.user;
+    const user = data.user;
 
-    // 2️⃣ Look up profile role (email first, then id)
-    let role: string | null = null;
+    // Look up role from user_profiles
+    const { data: profile, error: profileError } = await supabase
+      .from("user_profiles")
+      .select("role")
+      .eq("id", user.id)
+      .maybeSingle();
 
-    if (authUser.email) {
-      const { data: profileByEmail } = await supabase
-        .from("user_profiles")
-        .select("id, role, email, full_name")
-        .eq("email", authUser.email)
-        .maybeSingle<UserProfile>();
-
-      if (profileByEmail && profileByEmail.role) {
-        role = profileByEmail.role;
-      }
+    if (profileError) {
+      console.error("Error loading profile:", profileError.message);
     }
 
-    if (!role) {
-      const { data: profileById } = await supabase
-        .from("user_profiles")
-        .select("id, role, email, full_name")
-        .eq("id", authUser.id)
-        .maybeSingle<UserProfile>();
+    const role = (profile?.role || "member").toLowerCase().trim();
 
-      if (profileById && profileById.role) {
-        role = profileById.role;
-      }
-    }
-
-    // Default if no explicit role found
-    if (!role) {
-      role = "member";
-    }
-
-    // 3️⃣ Decide where to go next
-    let safeRedirect = "";
-    if (redirectParam && redirectParam.startsWith("/")) {
-      // ❗ If redirect is just "/", ignore it and use role instead
-      if (redirectParam !== "/") {
-        safeRedirect = redirectParam;
-      }
-    }
-
-    if (safeRedirect) {
-      // If we came from /watch/21 or /channels etc → go back there
-      router.push(safeRedirect);
+    // Decide where to go
+    if (redirectTo) {
+      router.push(redirectTo);
     } else if (role === "admin") {
-      // Admin with no "real" redirect → go to admin dashboard
       router.push("/admin");
     } else {
-      // Member with no redirect → go to main app
       router.push("/");
     }
 
