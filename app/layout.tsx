@@ -26,9 +26,8 @@ export default async function RootLayout({
   return (
     <html lang="en">
       <body className="bg-black text-white">
-        {/* Only show TopNav when logged in */}
+        {/* Only show TopNav AFTER login */}
         {user ? <TopNav /> : null}
-
         {children}
       </body>
     </html>
