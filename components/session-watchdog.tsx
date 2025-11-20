@@ -17,14 +17,21 @@ export default function SessionWatchdog() {
     let lastActivity = Date.now();
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
+    // We treat these as "user is here" signals
     const activityEvents: (keyof WindowEventMap)[] = [
       "click",
       "keydown",
       "mousemove",
       "touchstart",
+      "focus",
+      "visibilitychange",
     ];
 
     const resetTimer = () => {
+      // If the tab is hidden, we don't count that as "active"
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
       lastActivity = Date.now();
     };
 
@@ -40,7 +47,7 @@ export default function SessionWatchdog() {
           console.error("Error during signOut:", e);
         }
 
-        // Preserve where they were, so you *could* send them back later if you want
+        // Preserve where they were, so you can send them back there after login
         const currentPath =
           pathname +
           (searchParams && searchParams.toString()
