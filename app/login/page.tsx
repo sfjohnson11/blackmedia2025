@@ -19,7 +19,14 @@ export default function LoginPage() {
     setLoading(true);
     setErrorMsg(null);
 
-    // 1) Try to log in
+    // Read ?redirect=... (e.g. /admin) if present
+    let redirectTo: string | null = null;
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      redirectTo = params.get("redirect");
+    }
+
+    // 1️⃣ Login with Supabase
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
@@ -33,15 +40,14 @@ export default function LoginPage() {
 
     const user = data.user;
 
-    // 2) Figure out role from user_profiles (email first, then id)
+    // 2️⃣ 🔧 FIXED: load profile BY EMAIL, not by id
     let role: string | null = null;
 
-    // Try by email (this is how it worked "yesterday")
     if (user.email) {
       const { data: profileByEmail, error: emailError } = await supabase
         .from("user_profiles")
         .select("id, role, email")
-        .eq("email", user.email)
+        .eq("email", user.email) // ✅ THIS matches your table
         .maybeSingle();
 
       if (emailError) {
@@ -53,26 +59,18 @@ export default function LoginPage() {
       }
     }
 
-    // Fallback: by id, in case profile is keyed that way
-    if (!role) {
-      const { data: profileById, error: idError } = await supabase
-        .from("user_profiles")
-        .select("id, role, email")
-        .eq("id", user.id)
-        .maybeSingle();
-
-      if (idError) {
-        console.error("Error loading profile by id:", idError.message);
-      }
-
-      if (profileById?.role) {
-        role = String(profileById.role);
-      }
-    }
-
+    // If somehow still no role, default to member
     const finalRole = (role || "member").toLowerCase().trim();
 
-    // 3) Route by role ONLY — no more redirect query tricks
+    // 3️⃣ Redirect logic:
+    // If ?redirect=/admin was on the URL, honor it
+    if (redirectTo && redirectTo.startsWith("/")) {
+      router.push(redirectTo);
+      setLoading(false);
+      return;
+    }
+
+    // Otherwise, route by role
     if (finalRole === "admin") {
       router.push("/admin");
     } else {
