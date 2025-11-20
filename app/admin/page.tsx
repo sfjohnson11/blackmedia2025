@@ -2,8 +2,6 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
-import { useRouter } from "next/navigation";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import {
@@ -59,123 +57,14 @@ type AdminSection = {
   links: AdminLink[];
 };
 
-type UserProfile = {
-  id: string;
-  role: string | null;
-  email?: string | null;
-};
-
-/**
- * Guard /admin:
- * - No session → /login?redirect=/admin
- * - Not admin → /
- * - Admin → show AdminDashboardInner
- */
 export default function AdminPage() {
-  const supabase = createClientComponentClient();
-  const router = useRouter();
-  const [checking, setChecking] = useState(true);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    (async () => {
-      try {
-        const {
-          data: { session },
-          error: sessionError,
-        } = await supabase.auth.getSession();
-
-        if (cancelled) return;
-
-        if (sessionError) {
-          console.error("Error getting session", sessionError);
-          router.replace("/login?redirect=/admin");
-          return;
-        }
-
-        if (!session) {
-          router.replace("/login?redirect=/admin");
-          return;
-        }
-
-        const authUser = session.user;
-        let role: string | null = null;
-
-        // 1️⃣ Try by email
-        if (authUser.email) {
-          const { data: profileByEmail, error: emailError } = await supabase
-            .from("user_profiles")
-            .select("id, role, email")
-            .eq("email", authUser.email)
-            .maybeSingle<UserProfile>();
-
-          if (emailError) {
-            console.error("Error loading profile by email:", emailError.message);
-          }
-
-          if (profileByEmail && profileByEmail.role) {
-            role = profileByEmail.role;
-          }
-        }
-
-        // 2️⃣ Fallback: by id
-        if (!role) {
-          const { data: profileById, error: idError } = await supabase
-            .from("user_profiles")
-            .select("id, role, email")
-            .eq("id", authUser.id)
-            .maybeSingle<UserProfile>();
-
-          if (idError) {
-            console.error("Error loading profile by id:", idError.message);
-          }
-
-          if (profileById && profileById.role) {
-            role = profileById.role;
-          }
-        }
-
-        role = (role || "member").toLowerCase().trim();
-
-        if (role !== "admin") {
-          router.replace("/");
-          return;
-        }
-
-        setChecking(false);
-      } catch (e) {
-        console.error("Unexpected admin check error", e);
-        if (!cancelled) router.replace("/login?redirect=/admin");
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [router, supabase]);
-
-  if (checking) {
-    return (
-      <div className="min-h-screen bg-gradient-to-b from-[#040814] via-[#050b1a] to-black text-white flex items-center justify-center">
-        <p className="text-sm text-slate-300">Checking admin access…</p>
-      </div>
-    );
-  }
-
-  return <AdminDashboardInner />;
-}
-
-/**
- * Full Admin Dashboard UI
- */
-function AdminDashboardInner() {
   const [stats, setStats] = useState<Stats>({
     channelCount: 0,
     programCount: 0,
     loading: true,
   });
 
+  // Fetch counts via server API (avoids RLS headaches in client)
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -357,6 +246,7 @@ function AdminDashboardInner() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#040814] via-[#050b1a] to-black text-white pb-10">
       <div className="mx-auto max-w-6xl px-4 pt-8">
+        {/* Debug banner so you KNOW you're on /admin */}
         <div className="mb-6 rounded-lg border border-amber-400/60 bg-amber-500/10 px-4 py-3">
           <p className="text-sm font-semibold text-amber-300">
             ✅ You are on the{" "}
