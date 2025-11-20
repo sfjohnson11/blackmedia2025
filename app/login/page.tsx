@@ -1,3 +1,4 @@
+// app/login/page.tsx
 "use client";
 
 import { useState, FormEvent } from "react";
@@ -18,14 +19,7 @@ export default function LoginPage() {
     setLoading(true);
     setErrorMsg(null);
 
-    // Read ?redirect=... param (e.g. /login?redirect=/admin)
-    let redirectTo: string | null = null;
-    if (typeof window !== "undefined") {
-      const params = new URLSearchParams(window.location.search);
-      redirectTo = params.get("redirect");
-    }
-
-    // 1. Attempt login
+    // 1) Try to log in
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
@@ -39,33 +33,46 @@ export default function LoginPage() {
 
     const user = data.user;
 
-    // 2. If we were sent here with ?redirect=..., ALWAYS go back there first
-    //    (e.g. /admin → /login?redirect=/admin → login → /admin)
-    if (redirectTo) {
-      router.push(redirectTo);
-      setLoading(false);
-      return;
-    }
+    // 2) Figure out role from user_profiles (email first, then id)
+    let role: string | null = null;
 
-    // 3. No redirect param → use role to decide default landing page
-    let finalRole = "member";
-
+    // Try by email (this is how it worked "yesterday")
     if (user.email) {
-      const { data: profile, error: profileError } = await supabase
+      const { data: profileByEmail, error: emailError } = await supabase
         .from("user_profiles")
-        .select("role, email")
+        .select("id, role, email")
         .eq("email", user.email)
         .maybeSingle();
 
-      if (profileError) {
-        console.error("Error loading profile:", profileError.message);
+      if (emailError) {
+        console.error("Error loading profile by email:", emailError.message);
       }
 
-      if (profile?.role) {
-        finalRole = String(profile.role).toLowerCase().trim();
+      if (profileByEmail?.role) {
+        role = String(profileByEmail.role);
       }
     }
 
+    // Fallback: by id, in case profile is keyed that way
+    if (!role) {
+      const { data: profileById, error: idError } = await supabase
+        .from("user_profiles")
+        .select("id, role, email")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      if (idError) {
+        console.error("Error loading profile by id:", idError.message);
+      }
+
+      if (profileById?.role) {
+        role = String(profileById.role);
+      }
+    }
+
+    const finalRole = (role || "member").toLowerCase().trim();
+
+    // 3) Route by role ONLY — no more redirect query tricks
     if (finalRole === "admin") {
       router.push("/admin");
     } else {
