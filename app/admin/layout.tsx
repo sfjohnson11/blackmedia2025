@@ -13,25 +13,25 @@ type Props = {
 export default async function AdminLayout({ children }: Props) {
   const supabase = createServerComponentClient({ cookies });
 
-  // 1) Require logged-in user
+  // 1️⃣ Require logged-in user
   const {
     data: { user },
     error: userError,
   } = await supabase.auth.getUser();
 
   if (userError || !user) {
-    // Not logged in → go to the main login page
-    redirect("/login");
+    // Not logged in → go to login and come back to /admin after
+    redirect("/login?redirect=/admin");
   }
 
-  // 2) Determine role from user_profiles (email first, then id)
+  // 2️⃣ Load profile BY EMAIL (same as login page)
   let role: string | null = null;
 
   if (user.email) {
     const { data: profileByEmail, error: emailError } = await supabase
       .from("user_profiles")
       .select("id, role, email")
-      .eq("email", user.email)
+      .eq("email", user.email) // ✅ same key you showed in the SQL output
       .maybeSingle();
 
     if (emailError) {
@@ -43,29 +43,13 @@ export default async function AdminLayout({ children }: Props) {
     }
   }
 
-  if (!role) {
-    const { data: profileById, error: idError } = await supabase
-      .from("user_profiles")
-      .select("id, role, email")
-      .eq("id", user.id)
-      .maybeSingle();
-
-    if (idError) {
-      console.error("Error loading admin profile by id:", idError.message);
-    }
-
-    if (profileById?.role) {
-      role = String(profileById.role);
-    }
-  }
-
   const finalRole = (role || "member").toLowerCase().trim();
 
-  // 3) If not admin → boot them to regular app
+  // 3️⃣ If not admin → send them to main app
   if (finalRole !== "admin") {
     redirect("/");
   }
 
-  // 4) Authorized admin - show admin tools page
+  // 4️⃣ Authorized admin - show admin tools page
   return <>{children}</>;
 }
