@@ -18,14 +18,14 @@ export default function LoginPage() {
     setLoading(true);
     setErrorMsg(null);
 
-    // Read ?redirect=... param
+    // Read ?redirect=... param (e.g. /login?redirect=/admin)
     let redirectTo: string | null = null;
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       redirectTo = params.get("redirect");
     }
 
-    // --- 1. Attempt login ---
+    // 1. Attempt login
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
@@ -39,52 +39,39 @@ export default function LoginPage() {
 
     const user = data.user;
 
-    // --- 2. Load profile to determine role ---
-    let role: string | null = null;
-
-    // Try by ID
-    const { data: profileById } = await supabase
-      .from("user_profiles")
-      .select("id, role, email")
-      .eq("id", user.id)
-      .maybeSingle();
-
-    if (profileById?.role) {
-      role = profileById.role;
-    }
-
-    // Fallback by email
-    if (!role && user.email) {
-      const { data: profileByEmail } = await supabase
-        .from("user_profiles")
-        .select("id, role, email")
-        .eq("email", user.email)
-        .maybeSingle();
-
-      if (profileByEmail?.role) {
-        role = profileByEmail.role;
-      }
-    }
-
-    const finalRole = (role || "member").toLowerCase().trim();
-
-    // --- 3. Redirect logic (FIXED) ---
-    // Admin ALWAYS goes to /admin
-    if (finalRole === "admin") {
-      router.push("/admin");
-      setLoading(false);
-      return;
-    }
-
-    // Members: if there was a redirect, honor it
+    // 2. If we were sent here with ?redirect=..., ALWAYS go back there first
+    //    (e.g. /admin → /login?redirect=/admin → login → /admin)
     if (redirectTo) {
       router.push(redirectTo);
       setLoading(false);
       return;
     }
 
-    // Members default to main app page
-    router.push("/");
+    // 3. No redirect param → use role to decide default landing page
+    let finalRole = "member";
+
+    if (user.email) {
+      const { data: profile, error: profileError } = await supabase
+        .from("user_profiles")
+        .select("role, email")
+        .eq("email", user.email)
+        .maybeSingle();
+
+      if (profileError) {
+        console.error("Error loading profile:", profileError.message);
+      }
+
+      if (profile?.role) {
+        finalRole = String(profile.role).toLowerCase().trim();
+      }
+    }
+
+    if (finalRole === "admin") {
+      router.push("/admin");
+    } else {
+      router.push("/");
+    }
+
     setLoading(false);
   }
 
