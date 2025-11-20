@@ -2,11 +2,18 @@
 "use client";
 
 import { useState, FormEvent } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+
+type UserProfile = {
+  id: string;
+  role: string | null;
+  email?: string | null;
+};
 
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const supabase = createClientComponentClient();
 
   const [email, setEmail] = useState("");
@@ -19,12 +26,8 @@ export default function LoginPage() {
     setLoading(true);
     setErrorMsg(null);
 
-    // Read ?redirect=... (e.g. /admin) if present
-    let redirectTo: string | null = null;
-    if (typeof window !== "undefined") {
-      const params = new URLSearchParams(window.location.search);
-      redirectTo = params.get("redirect");
-    }
+    // Read ?redirect=/something from URL (middleware sets this)
+    const redirectTo = searchParams.get("redirect");
 
     // 1️⃣ Login with Supabase
     const { data, error } = await supabase.auth.signInWithPassword({
@@ -39,16 +42,15 @@ export default function LoginPage() {
     }
 
     const user = data.user;
-
-    // 2️⃣ 🔧 FIXED: load profile BY EMAIL, not by id
     let role: string | null = null;
 
+    // 2️⃣ Load profile BY EMAIL (matches your table)
     if (user.email) {
       const { data: profileByEmail, error: emailError } = await supabase
         .from("user_profiles")
         .select("id, role, email")
-        .eq("email", user.email) // ✅ THIS matches your table
-        .maybeSingle();
+        .eq("email", user.email)
+        .maybeSingle<UserProfile>();
 
       if (emailError) {
         console.error("Error loading profile by email:", emailError.message);
@@ -59,19 +61,15 @@ export default function LoginPage() {
       }
     }
 
-    // If somehow still no role, default to member
     const finalRole = (role || "member").toLowerCase().trim();
 
-    // 3️⃣ Redirect logic:
-    // If ?redirect=/admin was on the URL, honor it
+    // 3️⃣ Redirect priority:
+    //    a) If ?redirect exists → go there
+    //    b) Else admin → /admin
+    //    c) Else member → /
     if (redirectTo && redirectTo.startsWith("/")) {
       router.push(redirectTo);
-      setLoading(false);
-      return;
-    }
-
-    // Otherwise, route by role
-    if (finalRole === "admin") {
+    } else if (finalRole === "admin") {
       router.push("/admin");
     } else {
       router.push("/");
