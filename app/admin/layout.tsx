@@ -20,29 +20,52 @@ export default async function AdminLayout({ children }: Props) {
   } = await supabase.auth.getUser();
 
   if (userError || !user) {
-    // No session → go to the ONE login page
-    redirect("/login?redirect=/admin");
+    // Not logged in → go to the main login page
+    redirect("/login");
   }
 
-  // 2) Look up user_profiles by ID (most reliable), fall back to email if needed
-  const { data: profile, error: profileError } = await supabase
-    .from("user_profiles")
-    .select("id, role, email")
-    .eq("id", user.id)
-    .maybeSingle();
+  // 2) Determine role from user_profiles (email first, then id)
+  let role: string | null = null;
 
-  if (profileError || !profile) {
-    // No profile row = no access to admin
-    redirect("/login?error=no_profile");
+  if (user.email) {
+    const { data: profileByEmail, error: emailError } = await supabase
+      .from("user_profiles")
+      .select("id, role, email")
+      .eq("email", user.email)
+      .maybeSingle();
+
+    if (emailError) {
+      console.error("Error loading admin profile by email:", emailError.message);
+    }
+
+    if (profileByEmail?.role) {
+      role = String(profileByEmail.role);
+    }
   }
 
-  const role = (profile.role || "member").toLowerCase().trim();
+  if (!role) {
+    const { data: profileById, error: idError } = await supabase
+      .from("user_profiles")
+      .select("id, role, email")
+      .eq("id", user.id)
+      .maybeSingle();
 
-  if (role !== "admin") {
-    // Logged in but not admin → push them out of /admin
-    redirect("/?error=not_admin");
+    if (idError) {
+      console.error("Error loading admin profile by id:", idError.message);
+    }
+
+    if (profileById?.role) {
+      role = String(profileById.role);
+    }
   }
 
-  // 3) Authorized admin - show admin panel
+  const finalRole = (role || "member").toLowerCase().trim();
+
+  // 3) If not admin → boot them to regular app
+  if (finalRole !== "admin") {
+    redirect("/");
+  }
+
+  // 4) Authorized admin - show admin tools page
   return <>{children}</>;
 }
