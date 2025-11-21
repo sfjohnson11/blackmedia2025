@@ -25,14 +25,14 @@ export default function LoginPage() {
     setError(null);
     setSubmitting(true);
 
-    // 1️⃣ Supabase auth verifies email + password
+    // 1️⃣ Supabase auth: check email + password
     const { data, error: authError } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
 
     if (authError || !data.user) {
-      // Human-friendly auth errors
+      // Human message for wrong login
       if (authError?.message?.toLowerCase().includes("invalid login")) {
         setError("Your email or password is incorrect. Please try again.");
       } else {
@@ -48,42 +48,62 @@ export default function LoginPage() {
 
     if (!user.id) {
       setError(
-        "We found your account, but your user ID is missing. Please contact support."
+        "We found your account, but your user ID is missing. Please contact the admin."
       );
       setSubmitting(false);
       return;
     }
 
-    // 2️⃣ Fetch profile by Supabase UUID (auth.users.id)
-    const { data: profile, error: profileError } = await supabase
+    // 2️⃣ Try to load profile by UUID first
+    let profile: UserProfile | null = null;
+
+    const { data: profileById, error: profileErrorById } = await supabase
       .from("user_profiles")
       .select("id, email, role")
       .eq("id", user.id)
       .maybeSingle();
 
-    if (profileError) {
-      console.error("Profile error:", profileError);
-      setError(
-        "Your login is correct, but we could not load your profile. " +
-          "This usually means your membership is not fully set up. Please contact the admin."
-      );
-      setSubmitting(false);
-      return;
+    if (profileErrorById) {
+      console.error("Profile by id error:", profileErrorById);
     }
 
+    if (profileById) {
+      profile = profileById as UserProfile;
+    }
+
+    // 3️⃣ If not found by id, fall back to email (saves you if IDs aren't wired yet)
+    if (!profile && user.email) {
+      const { data: profileByEmail, error: profileErrorByEmail } =
+        await supabase
+          .from("user_profiles")
+          .select("id, email, role")
+          .eq("email", user.email)
+          .maybeSingle();
+
+      if (profileErrorByEmail) {
+        console.error("Profile by email error:", profileErrorByEmail);
+      }
+
+      if (profileByEmail) {
+        profile = profileByEmail as UserProfile;
+      }
+    }
+
+    // 4️⃣ No profile at all → logged in but no app access
     if (!profile) {
       setError(
-        "Your login is correct, but your profile is missing. " +
-          "Ask the admin to add your account to the user_profiles table."
+        "Your login is correct, but your profile is not set up. " +
+          "Ask the admin to add you to the user_profiles table with a role."
       );
       setSubmitting(false);
       return;
     }
 
+    // 5️⃣ Profile found but no role
     if (!profile.role) {
       setError(
         "Your login is correct, but no role is assigned to your account. " +
-          "You need a role of admin or member to continue. Please contact the admin."
+          "You need a role of admin or member. Please contact the admin."
       );
       setSubmitting(false);
       return;
@@ -91,7 +111,7 @@ export default function LoginPage() {
 
     const role = profile.role as Role;
 
-    // 3️⃣ Route based on role from user_profiles
+    // 6️⃣ Route based on role from user_profiles
     if (role === "admin") {
       router.replace("/admin");
     } else {
