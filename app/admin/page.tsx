@@ -1,118 +1,66 @@
-// app/admin/page.tsx
+// app/login/page.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { loadProfileByEmail, type UserProfile } from "@/lib/loadProfile";
+import {
+  loadProfileByEmail,
+  type Role,
+  type UserProfile,
+} from "@/lib/loadProfile";
 
 const ADMIN_EMAIL = "info@sfjohnsonconsulting.com";
 
-export default function AdminPage() {
+export default function LoginPage() {
   const router = useRouter();
-  const [loading, setLoading] = useState(true);
-  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    async function checkAdmin() {
-      setLoading(true);
-      setError(null);
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSubmitting(true);
 
-      const {
-        data: { user },
-        error: userError,
-      } = await supabase.auth.getUser();
+    const { data, error: authError } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
 
-      if (userError || !user || !user.email) {
-        router.replace("/login");
-        return;
-      }
-
-      const profile = await loadProfileByEmail(user.email);
-      let isAdmin = false;
-
-      if (profile && profile.role === "admin") {
-        isAdmin = true;
-      } else if (user.email === ADMIN_EMAIL) {
-        // fallback: special-case admin email
-        isAdmin = true;
-      }
-
-      if (!isAdmin) {
-        router.replace("/app");
-        return;
-      }
-
-      setProfile(profile);
-      setLoading(false);
+    if (authError || !data.user) {
+      setError(authError?.message || "Login failed. Check email/password.");
+      setSubmitting(false);
+      return;
     }
 
-    checkAdmin();
-  }, [router]);
+    const user = data.user;
 
-  if (loading) {
-    return (
-      <div
-        style={{
-          minHeight: "100vh",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          background: "#020617",
-          color: "#e5e7eb",
-        }}
-      >
-        Checking admin access…
-      </div>
-    );
+    if (!user.email) {
+      setError("Your account is missing an email. Contact admin.");
+      setSubmitting(false);
+      return;
+    }
+
+    // 🔹 TRY user_profiles, fallback by email
+    const profile: UserProfile | null = await loadProfileByEmail(user.email);
+    let role: Role;
+
+    if (profile && profile.role) {
+      role = profile.role;
+    } else {
+      role = user.email === ADMIN_EMAIL ? "admin" : "member";
+    }
+
+    if (role === "admin") {
+      router.replace("/admin");
+    } else {
+      router.replace("/app");
+    }
+
+    setSubmitting(false);
   }
 
-  if (error) {
-    return (
-      <div
-        style={{
-          minHeight: "100vh",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          background: "#020617",
-          color: "#fecaca",
-          padding: "24px",
-          textAlign: "center",
-          whiteSpace: "pre-line",
-        }}
-      >
-        {error}
-      </div>
-    );
-  }
-
-  return (
-    <div
-      style={{
-        minHeight: "100vh",
-        background: "#020617",
-        color: "#e5e7eb",
-        padding: "24px",
-      }}
-    >
-      <h1 style={{ fontSize: "24px", fontWeight: 700, marginBottom: "16px" }}>
-        Black Truth TV Admin
-      </h1>
-      <p style={{ color: "#9ca3af", marginBottom: "24px" }}>
-        Signed in as{" "}
-        <strong>
-          {profile?.email ?? profile?.full_name ?? profile?.name ?? ADMIN_EMAIL}
-        </strong>
-      </p>
-
-      <main>
-        <p style={{ color: "#9ca3af" }}>
-          Admin tools dashboard placeholder. Replace this with your scheduler,
-          channel tools, playlists, etc.
-        </p>
-      </main>
-    </div>
-  );
+  // ... keep the JSX for the form the same
 }
