@@ -100,6 +100,11 @@ const libraryTools: Tool[] = [
     path: "/admin/freedom-school-library",
     description: "Upload and organize Freedom School content.",
   },
+  {
+    name: "On-Demand Library",
+    path: "/on-demand",
+    description: "Upload, edit, and manage On-Demand videos and collections.",
+  },
 ];
 
 const systemTools: Tool[] = [
@@ -164,12 +169,7 @@ function Section({
 
 function ToolCard({ tool }: { tool: Tool }) {
   return (
-    <Link
-      href={tool.path}
-      style={{
-        textDecoration: "none",
-      }}
-    >
+    <Link href={tool.path} style={{ textDecoration: "none" }}>
       <div
         style={{
           background:
@@ -276,12 +276,7 @@ function QuickLink({
   detail: string;
 }) {
   return (
-    <Link
-      href={path}
-      style={{
-        textDecoration: "none",
-      }}
-    >
+    <Link href={path} style={{ textDecoration: "none" }}>
       <div
         style={{
           borderRadius: "999px",
@@ -316,23 +311,9 @@ function QuickLink({
       >
         <div>
           <div style={{ fontWeight: 600 }}>{label}</div>
-          <div
-            style={{
-              fontSize: "11px",
-              opacity: 0.8,
-            }}
-          >
-            {detail}
-          </div>
+          <div style={{ fontSize: "11px", opacity: 0.8 }}>{detail}</div>
         </div>
-        <span
-          style={{
-            fontSize: "16px",
-            lineHeight: 1,
-          }}
-        >
-          →
-        </span>
+        <span style={{ fontSize: "16px", lineHeight: 1 }}>→</span>
       </div>
     </Link>
   );
@@ -348,7 +329,6 @@ export default function AdminDashboard() {
         color: "white",
       }}
     >
-      {/* Top bar */}
       <header
         style={{
           padding: "20px 40px 10px",
@@ -424,6 +404,7 @@ export default function AdminDashboard() {
             >
               Role: <strong style={{ color: "#facc15" }}>Admin</strong>
             </span>
+
             <span
               style={{
                 padding: "4px 10px",
@@ -439,7 +420,6 @@ export default function AdminDashboard() {
         </div>
       </header>
 
-      {/* Main content */}
       <main
         style={{
           padding: "28px 40px 40px",
@@ -447,7 +427,6 @@ export default function AdminDashboard() {
           margin: "0 auto",
         }}
       >
-        {/* Hero row */}
         <div
           style={{
             display: "grid",
@@ -467,6 +446,7 @@ export default function AdminDashboard() {
               Welcome back to{" "}
               <span style={{ color: "#facc15" }}>Black Truth TV Admin</span>
             </h1>
+
             <p
               style={{
                 fontSize: "14px",
@@ -545,6 +525,7 @@ export default function AdminDashboard() {
               >
                 Quick Access
               </div>
+
               <p
                 style={{
                   fontSize: "13px",
@@ -554,6 +535,7 @@ export default function AdminDashboard() {
               >
                 Most-used tools for weekly operations:
               </p>
+
               <div
                 style={{
                   display: "grid",
@@ -581,7 +563,6 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        {/* Sections */}
         <Section
           title="Channel Tools"
           subtitle="Set up and manage channels, names, branding, and live controls."
