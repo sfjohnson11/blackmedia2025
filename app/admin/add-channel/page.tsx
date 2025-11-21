@@ -15,10 +15,11 @@ export default function AddChannelPage() {
 
   const [channelId, setChannelId] = useState<string>("");
   const [name, setName] = useState<string>("");
-  const [bucket, setBucket] = useState<string>("");
+  const [bucket, setBucket] = useState<string>(""); // we will store this into slug
   const [status, setStatus] = useState<InsertStatus>("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // Auto-suggest "channel{n}" when channelId changes
   useEffect(() => {
     if (!channelId) {
       setBucket("");
@@ -29,6 +30,14 @@ export default function AddChannelPage() {
       setBucket(`channel${n}`);
     }
   }, [channelId]);
+
+  function makeSlugFromName(name: string): string {
+    return name
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)/g, "");
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -46,17 +55,21 @@ export default function AddChannelPage() {
       setStatus("error");
       return;
     }
-    if (!bucket.trim()) {
-      setErrorMsg("Please enter a storage bucket.");
+
+    // Use bucket field as slug if provided, otherwise derive from name
+    const slugValue = (bucket || makeSlugFromName(name)).trim();
+    if (!slugValue) {
+      setErrorMsg("Could not determine a channel slug. Please enter a bucket/slug.");
       setStatus("error");
       return;
     }
 
-    // ACTUAL CHANNEL CREATION
+    // ✅ Insert into your real channels table:
+    //    id, name, slug (only; others use defaults/nulls)
     const { error } = await supabase.from("channels").insert({
       id: n,
       name: name.trim(),
-      bucket: bucket.trim(),
+      slug: slugValue,
     });
 
     if (error) {
@@ -73,16 +86,14 @@ export default function AddChannelPage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#040814] via-[#050b1a] to-black text-white pb-10">
       <div className="mx-auto max-w-3xl px-4 pt-8 space-y-6">
-
-        {/* HEADER */}
+        {/* Header */}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Add Channel</h1>
             <p className="mt-1 text-sm text-slate-300">
-              Create a new Black Truth TV channel directly in the database.
+              Create a new Black Truth TV channel directly in the channels table.
             </p>
           </div>
-
           <div className="flex gap-2">
             <Link href="/admin/channel-manager">
               <Button
@@ -93,7 +104,6 @@ export default function AddChannelPage() {
                 Channel Manager
               </Button>
             </Link>
-
             <Link href="/admin">
               <Button
                 variant="outline"
@@ -106,16 +116,19 @@ export default function AddChannelPage() {
           </div>
         </div>
 
-        {/* INFO BOX */}
+        {/* Info box */}
         <div className="flex gap-2 rounded-lg border border-slate-700 bg-slate-900/70 px-4 py-3 text-xs text-slate-200">
           <Info className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-300" />
           <p>
-            This saves a row directly into the <code className="text-amber-300">channels</code> table.<br />
-            No redirect tricks. No hidden logic. This is the real creation.
+            This page now writes directly to{" "}
+            <code className="text-amber-300">channels</code> using{" "}
+            <code>id</code>, <code>name</code>, and <code>slug</code>. The slug is taken
+            from your bucket/slug field (e.g. <code>channel16</code>) or auto-generated
+            from the channel name.
           </p>
         </div>
 
-        {/* STATUS / ERRORS */}
+        {/* Status / errors */}
         {(status === "error" || status === "success") && (
           <div
             className={`rounded-lg border px-4 py-3 text-xs ${
@@ -131,7 +144,7 @@ export default function AddChannelPage() {
           </div>
         )}
 
-        {/* FORM */}
+        {/* Form */}
         <form
           onSubmit={handleSubmit}
           className="space-y-5 rounded-lg border border-slate-700 bg-slate-900/70 p-5"
@@ -146,10 +159,13 @@ export default function AddChannelPage() {
               value={channelId}
               onChange={(e) => setChannelId(e.target.value)}
               className="w-full rounded-md border border-slate-600 bg-slate-950 px-3 py-1.5 text-sm text-white focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
+              placeholder="e.g. 1, 16, 29"
               min={1}
-              placeholder="1, 6, 12, 25..."
               required
             />
+            <p className="mt-1 text-[10px] text-slate-400">
+              This should match the numeric channel ID you use in your guide/viewer.
+            </p>
           </div>
 
           {/* Channel Name */}
@@ -162,24 +178,31 @@ export default function AddChannelPage() {
               value={name}
               onChange={(e) => setName(e.target.value)}
               className="w-full rounded-md border border-slate-600 bg-slate-950 px-3 py-1.5 text-sm text-white focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
-              placeholder="Resistance TV, Politics Live, etc."
+              placeholder="e.g. Resistance TV, Freedom School, Nature & Discovery"
               required
             />
+            <p className="mt-1 text-[10px] text-slate-400">
+              This is what viewers will see as the channel title.
+            </p>
           </div>
 
-          {/* Bucket */}
+          {/* Slug / Bucket code */}
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-200">
-              Storage Bucket
+              Channel Slug / Bucket Code
             </label>
             <input
               type="text"
               value={bucket}
               onChange={(e) => setBucket(e.target.value)}
               className="w-full rounded-md border border-slate-600 bg-slate-950 px-3 py-1.5 text-sm text-white focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
-              placeholder="channel5, channel20, freedom-school"
-              required
+              placeholder="e.g. channel16, resistance-tv, freedom-school"
             />
+            <p className="mt-1 text-[10px] text-slate-400">
+              Used as the <code>slug</code> in your{" "}
+              <code className="text-amber-300">channels</code> table. If you leave this
+              blank, we&apos;ll generate one from the channel name.
+            </p>
           </div>
 
           <div className="pt-2">
@@ -189,7 +212,7 @@ export default function AddChannelPage() {
               disabled={status === "saving"}
             >
               <PlusCircle className="mr-2 h-4 w-4" />
-              {status === "saving" ? "Creating…" : "Create Channel"}
+              {status === "saving" ? "Creating Channel…" : "Create Channel"}
             </Button>
           </div>
         </form>
