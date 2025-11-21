@@ -1,51 +1,15 @@
-// app/admin/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import SessionTimeout from "@/components/SessionTimeout";
-
-type Role = "admin" | "member" | "student";
-
-type Profile = {
-  id: string;
-  email: string | null;
-  name?: string | null;
-  role: Role | null;
-  created_at: string | null;
-  _table?: string;
-};
-
-// Same helper as login
-async function fetchProfileByEmail(email: string): Promise<Profile | null> {
-  const tableCandidates = ["profiles", "user_profiles", "users"];
-
-  for (const table of tableCandidates) {
-    const { data, error } = await supabase
-      .from(table)
-      .select("id,email,name,role,created_at")
-      .eq("email", email)
-      .maybeSingle();
-
-    if (error) {
-      console.warn(`Error querying ${table}:`, error.message);
-      continue;
-    }
-
-    if (data) {
-      console.log(`Loaded admin profile from table: ${table}`, data);
-      return { ...(data as any), _table: table };
-    }
-  }
-
-  return null;
-}
+import { loadProfileForEmail, type UserProfile } from "@/lib/loadProfile";
 
 export default function AdminPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
-  const [profile, setProfile] = useState<Profile | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -69,18 +33,18 @@ export default function AdminPage() {
         return;
       }
 
-      const profile = await fetchProfileByEmail(user.email);
+      const profile = await loadProfileForEmail(user.email);
 
       if (!profile) {
         setError(
-          "Could not load admin profile. Make sure this email exists in your users table with role = 'admin'."
+          "Could not load admin profile from user_profiles. Make sure this email exists there with role = 'admin'."
         );
         setLoading(false);
         return;
       }
 
       if (profile.role !== "admin") {
-        router.replace("/app"); // change if non-admin home is different
+        router.replace("/app"); // non-admin users go to app
         return;
       }
 
@@ -128,7 +92,7 @@ export default function AdminPage() {
     );
   }
 
-  // ✅ At this point: user is admin
+  // ✅ At this point: user is admin from user_profiles
   return (
     <div
       style={{
@@ -138,7 +102,6 @@ export default function AdminPage() {
         padding: "24px",
       }}
     >
-      {/* Auto-logout after 30 min inactivity */}
       <SessionTimeout />
 
       <header
@@ -154,13 +117,9 @@ export default function AdminPage() {
         </h1>
         {profile && (
           <div style={{ fontSize: "14px", color: "#9ca3af" }}>
-            Signed in as <strong>{profile.email}</strong> (admin)
-            {profile._table && (
-              <span style={{ marginLeft: 8, fontSize: 12 }}>
-                {/* Debug: which table we used */}
-                [profile table: {profile._table}]
-              </span>
-            )}
+            Signed in as{" "}
+            <strong>{profile.email ?? profile.full_name ?? profile.name}</strong>{" "}
+            (admin)
           </div>
         )}
       </header>
@@ -170,7 +129,6 @@ export default function AdminPage() {
           Admin tools go here. Replace this with your scheduler, channel tools,
           playlists, etc.
         </p>
-        {/* ⬇️ Drop your real admin dashboard JSX here */}
       </main>
     </div>
   );
