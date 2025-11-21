@@ -19,7 +19,6 @@ export default function LoginPage() {
     e.preventDefault();
     setError("");
 
-    // SIGN IN
     const {
       data: { user },
       error: loginError,
@@ -33,14 +32,12 @@ export default function LoginPage() {
       return;
     }
 
-    // LOOK UP ROLE
     const { data: profile } = await supabase
       .from("user_profiles")
       .select("role")
       .eq("id", user.id)
       .single();
 
-    // ROUTE
     if (profile?.role === "admin") {
       router.push("/admin");
     } else {
@@ -49,87 +46,29 @@ export default function LoginPage() {
   }
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        background: "#000",
-        color: "#fff",
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
-        padding: 20,
-      }}
-    >
-      <form
-        onSubmit={handleLogin}
-        style={{
-          width: "100%",
-          maxWidth: 400,
-          background: "#111",
-          padding: 24,
-          borderRadius: 12,
-        }}
-      >
-        <h1 style={{ marginBottom: 16 }}>Sign In</h1>
+    <div style={{ padding: 40 }}>
+      <h1>Login</h1>
 
-        {error && (
-          <div
-            style={{
-              background: "#500",
-              padding: 10,
-              borderRadius: 8,
-              marginBottom: 12,
-            }}
-          >
-            {error}
-          </div>
-        )}
+      {error && <p style={{ color: "red" }}>{error}</p>}
 
+      <form onSubmit={handleLogin}>
         <input
           type="email"
           placeholder="Email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          style={{
-            width: "100%",
-            padding: 10,
-            marginBottom: 12,
-            borderRadius: 8,
-            border: "1px solid #333",
-            background: "#222",
-            color: "white",
-          }}
-        />
+          required
+        /><br/><br/>
 
         <input
           type="password"
           placeholder="Password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          style={{
-            width: "100%",
-            padding: 10,
-            marginBottom: 20,
-            borderRadius: 8,
-            border: "1px solid #333",
-            background: "#222",
-            color: "white",
-          }}
-        />
+          required
+        /><br/><br/>
 
-        <button
-          type="submit"
-          style={{
-            width: "100%",
-            padding: 12,
-            borderRadius: 8,
-            background: "#FFD700",
-            color: "#000",
-            fontWeight: 600,
-          }}
-        >
-          Login
-        </button>
+        <button type="submit">Login</button>
       </form>
     </div>
   );
