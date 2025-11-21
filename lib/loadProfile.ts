@@ -1,7 +1,7 @@
 // lib/loadProfile.ts
 import { supabase } from "@/lib/supabase";
 
-export type Role = "admin" | "member" | "student";
+export type Role = "admin" | "member";
 
 export type UserProfile = {
   id: string;
@@ -19,7 +19,7 @@ export async function loadProfileByEmail(
   email: string
 ): Promise<UserProfile | null> {
   const { data, error } = await supabase
-    .from("user_profiles") // 👈 your table
+    .from("user_profiles") // your table
     .select("id,email,name,full_name,role,created_at")
     .eq("email", email)
     .maybeSingle();
