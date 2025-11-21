@@ -14,7 +14,33 @@ type Profile = {
   name?: string | null;
   role: Role | null;
   created_at: string | null;
+  _table?: string;
 };
+
+// Same helper as login
+async function fetchProfileByEmail(email: string): Promise<Profile | null> {
+  const tableCandidates = ["profiles", "user_profiles", "users"];
+
+  for (const table of tableCandidates) {
+    const { data, error } = await supabase
+      .from(table)
+      .select("id,email,name,role,created_at")
+      .eq("email", email)
+      .maybeSingle();
+
+    if (error) {
+      console.warn(`Error querying ${table}:`, error.message);
+      continue;
+    }
+
+    if (data) {
+      console.log(`Loaded admin profile from table: ${table}`, data);
+      return { ...(data as any), _table: table };
+    }
+  }
+
+  return null;
+}
 
 export default function AdminPage() {
   const router = useRouter();
@@ -37,24 +63,28 @@ export default function AdminPage() {
         return;
       }
 
-      const { data, error: profileError } = await supabase
-        .from("profiles")
-        .select("id,email,name,role,created_at")
-        .eq("id", user.id)
-        .single();
-
-      if (profileError || !data) {
-        setError("Could not load profile. Contact admin.");
+      if (!user.email) {
+        setError("Your account is missing an email. Contact admin.");
         setLoading(false);
         return;
       }
 
-      if (data.role !== "admin") {
-        router.replace("/app"); // CHANGE if your non-admin home is different
+      const profile = await fetchProfileByEmail(user.email);
+
+      if (!profile) {
+        setError(
+          "Could not load admin profile. Make sure this email exists in your users table with role = 'admin'."
+        );
+        setLoading(false);
         return;
       }
 
-      setProfile(data as Profile);
+      if (profile.role !== "admin") {
+        router.replace("/app"); // change if non-admin home is different
+        return;
+      }
+
+      setProfile(profile);
       setLoading(false);
     }
 
@@ -88,6 +118,9 @@ export default function AdminPage() {
           justifyContent: "center",
           background: "#020617",
           color: "#fecaca",
+          padding: "24px",
+          textAlign: "center",
+          whiteSpace: "pre-line",
         }}
       >
         {error}
@@ -95,6 +128,7 @@ export default function AdminPage() {
     );
   }
 
+  // ✅ At this point: user is admin
   return (
     <div
       style={{
@@ -104,7 +138,7 @@ export default function AdminPage() {
         padding: "24px",
       }}
     >
-      {/* 🔐 Auto-logout after 30 min inactivity */}
+      {/* Auto-logout after 30 min inactivity */}
       <SessionTimeout />
 
       <header
@@ -121,6 +155,12 @@ export default function AdminPage() {
         {profile && (
           <div style={{ fontSize: "14px", color: "#9ca3af" }}>
             Signed in as <strong>{profile.email}</strong> (admin)
+            {profile._table && (
+              <span style={{ marginLeft: 8, fontSize: 12 }}>
+                {/* Debug: which table we used */}
+                [profile table: {profile._table}]
+              </span>
+            )}
           </div>
         )}
       </header>
