@@ -13,16 +13,15 @@ export type UserProfile = {
 };
 
 /**
- * Load the profile row from user_profiles for a given email.
- * This is the ONLY place we hit user_profiles.
+ * Load the profile row from user_profiles for a given Supabase auth user id.
  */
-export async function loadProfileForEmail(
-  email: string
+export async function loadProfileForUserId(
+  userId: string
 ): Promise<UserProfile | null> {
   const { data, error } = await supabase
     .from("user_profiles") // 👈 your real table
     .select("id,email,name,full_name,role,created_at")
-    .eq("email", email)
+    .eq("id", userId)
     .maybeSingle();
 
   if (error) {
