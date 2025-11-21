@@ -1,13 +1,10 @@
+// app/admin/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import SessionTimeout from "@/components/SessionTimeout";
-import {
-  loadProfileForUserId,
-  type UserProfile,
-} from "@/lib/loadProfile";
+import { loadProfileByEmail, type UserProfile } from "@/lib/loadProfile";
 
 export default function AdminPage() {
   const router = useRouter();
@@ -25,23 +22,23 @@ export default function AdminPage() {
         error: userError,
       } = await supabase.auth.getUser();
 
-      if (userError || !user) {
+      if (userError || !user || !user.email) {
         router.replace("/login");
         return;
       }
 
-      const profile = await loadProfileForUserId(user.id);
+      const profile = await loadProfileByEmail(user.email);
 
       if (!profile) {
         setError(
-          "Could not load admin profile from user_profiles. Make sure this auth user id exists there with role = 'admin'."
+          "Could not load admin profile from user_profiles. Make sure this email exists there with role = 'admin'."
         );
         setLoading(false);
         return;
       }
 
       if (profile.role !== "admin") {
-        router.replace("/app"); // non-admin → app
+        router.replace("/app");
         return;
       }
 
@@ -98,34 +95,23 @@ export default function AdminPage() {
         padding: "24px",
       }}
     >
-      <SessionTimeout />
-
-      <header
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: "24px",
-        }}
-      >
-        <h1 style={{ fontSize: "24px", fontWeight: 700 }}>
-          Black Truth TV Admin
-        </h1>
-        {profile && (
-          <div style={{ fontSize: "14px", color: "#9ca3af" }}>
-            Signed in as{" "}
-            <strong>
-              {profile.email ?? profile.full_name ?? profile.name}
-            </strong>{" "}
-            (admin)
-          </div>
-        )}
-      </header>
+      <h1 style={{ fontSize: "24px", fontWeight: 700, marginBottom: "16px" }}>
+        Black Truth TV Admin
+      </h1>
+      {profile && (
+        <p style={{ color: "#9ca3af", marginBottom: "24px" }}>
+          Signed in as{" "}
+          <strong>
+            {profile.email ?? profile.full_name ?? profile.name ?? "Admin"}
+          </strong>
+        </p>
+      )}
 
       <main>
-        <p style={{ color: "#9ca3af", marginBottom: "16px" }}>
-          Admin tools go here. Replace this with your scheduler, channel tools,
-          playlists, etc.
+        {/* Your real admin tools go here */}
+        <p style={{ color: "#9ca3af" }}>
+          Admin tools dashboard placeholder. Replace this with your scheduler,
+          channel tools, playlists, etc.
         </p>
       </main>
     </div>
