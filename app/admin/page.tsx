@@ -1,54 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { createClient } from "@supabase/supabase-js";
 
-// ROUTES
-const LOGIN_PAGE = "/login";   // login
-const USER_PAGE = "/";         // regular user page
-const ADMIN_ROLE = "admin";
-
-// supabase client
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+// We’re not using router or Supabase in this emergency version.
+// Once you’re back in and calm, we can re-enable them safely.
 
 export default function AdminPage() {
-  const router = useRouter();
   const [allowed, setAllowed] = useState(false);
 
   useEffect(() => {
-    async function check() {
-      // 1) check login session
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) {
-        router.replace(LOGIN_PAGE);
-        return;
-      }
-
-      // 2) check role
-      const { data: profile } = await supabase
-        .from("user_profiles")
-        .select("role")
-        .eq("id", user.id)
-        .single();
-
-      if (!profile || profile.role !== ADMIN_ROLE) {
-        router.replace(USER_PAGE);
-        return;
-      }
-
-      // allow admin in
-      setAllowed(true);
-    }
-
-    check();
-  }, [router]);
+    // 🚨 EMERGENCY OVERRIDE: ALWAYS ALLOW ACCESS
+    // This bypasses ALL auth checks so you can actually get to your tools.
+    setAllowed(true);
+  }, []);
 
   if (!allowed) {
     return (
@@ -60,6 +24,7 @@ export default function AdminPage() {
           alignItems: "center",
           background: "black",
           color: "white",
+          fontFamily: "system-ui, -apple-system, Segoe UI, sans-serif",
         }}
       >
         Loading…
@@ -69,7 +34,14 @@ export default function AdminPage() {
 
   return (
     <>
-      {/* ⚠️⚠️⚠️ PASTE YOUR EXISTING ADMIN UI HERE ⚠️⚠️⚠️ */}
+      {/* ✅ PASTE YOUR EXISTING ADMIN UI HERE. 
+          Whatever you had before (cards, tools, scheduler, etc.)
+          goes inside this fragment. */}
+      {/* Example:
+        <main>
+          ... your admin dashboard JSX ...
+        </main>
+      */}
     </>
   );
 }
