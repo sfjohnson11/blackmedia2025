@@ -3,8 +3,8 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 export function middleware(req: NextRequest) {
-  // 🔥 DO NOTHING. NO AUTH CHECKS IN MIDDLEWARE.
-  // Login, admin logic, redirects ALL handled in pages, not here.
+  // 🔹 No redirects, no auth checks.
+  // Just let Next.js handle routing normally.
   return NextResponse.next();
 }
 
