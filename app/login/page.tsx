@@ -1,3 +1,4 @@
+// app/login/page.tsx
 "use client";
 
 import { useState, useEffect, FormEvent } from "react";
@@ -20,7 +21,7 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // If user is already logged in, send them where they belong
+  // If already logged in, send them where they belong
   useEffect(() => {
     async function checkExistingSession() {
       const {
@@ -40,7 +41,7 @@ export default function LoginPage() {
       if (role === "admin") {
         router.replace("/admin");
       } else {
-        router.replace("/app"); // <- change to your non-admin home if different
+        router.replace("/app"); // CHANGE THIS if your non-admin home is different
       }
     }
 
@@ -52,7 +53,6 @@ export default function LoginPage() {
     setError(null);
     setSubmitting(true);
 
-    // 1) Sign in with Supabase
     const { data, error: authError } = await supabase.auth.signInWithPassword({
       email,
       password,
@@ -66,7 +66,6 @@ export default function LoginPage() {
 
     const user = data.user;
 
-    // 2) Look up role from profiles table
     const { data: profile, error: profileError } = await supabase
       .from("profiles")
       .select("id,email,role,created_at")
@@ -81,11 +80,10 @@ export default function LoginPage() {
 
     const role = (profile.role ?? "member") as Role;
 
-    // 3) Redirect based on role
     if (role === "admin") {
       router.replace("/admin");
     } else {
-      router.replace("/app"); // <- again, change if your viewer is elsewhere
+      router.replace("/app"); // CHANGE HERE too if needed
     }
 
     setSubmitting(false);
