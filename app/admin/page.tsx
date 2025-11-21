@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { loadProfileByEmail, type UserProfile } from "@/lib/loadProfile";
 
+const ADMIN_EMAIL = "info@sfjohnsonconsulting.com";
+
 export default function AdminPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -28,16 +30,16 @@ export default function AdminPage() {
       }
 
       const profile = await loadProfileByEmail(user.email);
+      let isAdmin = false;
 
-      if (!profile) {
-        setError(
-          "Could not load admin profile from user_profiles. Make sure this email exists there with role = 'admin'."
-        );
-        setLoading(false);
-        return;
+      if (profile && profile.role === "admin") {
+        isAdmin = true;
+      } else if (user.email === ADMIN_EMAIL) {
+        // fallback: special-case admin email
+        isAdmin = true;
       }
 
-      if (profile.role !== "admin") {
+      if (!isAdmin) {
         router.replace("/app");
         return;
       }
@@ -98,17 +100,14 @@ export default function AdminPage() {
       <h1 style={{ fontSize: "24px", fontWeight: 700, marginBottom: "16px" }}>
         Black Truth TV Admin
       </h1>
-      {profile && (
-        <p style={{ color: "#9ca3af", marginBottom: "24px" }}>
-          Signed in as{" "}
-          <strong>
-            {profile.email ?? profile.full_name ?? profile.name ?? "Admin"}
-          </strong>
-        </p>
-      )}
+      <p style={{ color: "#9ca3af", marginBottom: "24px" }}>
+        Signed in as{" "}
+        <strong>
+          {profile?.email ?? profile?.full_name ?? profile?.name ?? ADMIN_EMAIL}
+        </strong>
+      </p>
 
       <main>
-        {/* Your real admin tools go here */}
         <p style={{ color: "#9ca3af" }}>
           Admin tools dashboard placeholder. Replace this with your scheduler,
           channel tools, playlists, etc.
