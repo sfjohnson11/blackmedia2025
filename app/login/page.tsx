@@ -5,7 +5,7 @@ import { useState, useEffect, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import {
-  loadProfileForUserId,
+  loadProfileByEmail,
   type Role,
   type UserProfile,
 } from "@/lib/loadProfile";
@@ -17,17 +17,17 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // If already logged in, route based on role in user_profiles
+  // If already logged in, send them where user_profiles says
   useEffect(() => {
     async function checkExistingSession() {
       const {
         data: { user },
       } = await supabase.auth.getUser();
 
-      if (!user) return;
+      if (!user || !user.email) return;
 
-      const profile = await loadProfileForUserId(user.id);
-      if (!profile) return; // no profile row, stay on login
+      const profile = await loadProfileByEmail(user.email);
+      if (!profile) return;
 
       const role: Role = (profile.role ?? "member") as Role;
 
@@ -46,7 +46,7 @@ export default function LoginPage() {
     setError(null);
     setSubmitting(true);
 
-    // 1) Sign in with Supabase auth
+    // 1) Supabase email/password login
     const { data, error: authError } = await supabase.auth.signInWithPassword({
       email,
       password,
@@ -60,12 +60,18 @@ export default function LoginPage() {
 
     const user = data.user;
 
-    // 2) Look up this user in user_profiles by auth user id
-    const profile: UserProfile | null = await loadProfileForUserId(user.id);
+    if (!user.email) {
+      setError("Your account is missing an email. Contact admin.");
+      setSubmitting(false);
+      return;
+    }
+
+    // 2) Look up user_profiles row by email
+    const profile: UserProfile | null = await loadProfileByEmail(user.email);
 
     if (!profile) {
       setError(
-        "Could not load profile/role from user_profiles. Make sure this auth user id exists there with a role."
+        "Could not load profile/role from user_profiles. Make sure this email exists there with a role."
       );
       setSubmitting(false);
       return;
@@ -73,7 +79,9 @@ export default function LoginPage() {
 
     const role: Role = (profile.role ?? "member") as Role;
 
-    // 3) ONLY TWO BRANCHES, LIKE YOU SAID
+    // 3) ONLY TWO BRANCHES:
+    //    - admin -> /admin
+    //    - everyone else -> /app
     if (role === "admin") {
       router.replace("/admin");
     } else {
@@ -83,5 +91,145 @@ export default function LoginPage() {
     setSubmitting(false);
   }
 
-  // ... keep your JSX/form UI the same below
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "#020617",
+        padding: "24px",
+      }}
+    >
+      <div
+        style={{
+          width: "100%",
+          maxWidth: "420px",
+          background: "#0b1120",
+          borderRadius: "16px",
+          padding: "32px 24px",
+          boxShadow: "0 20px 40px rgba(0,0,0,0.6)",
+          border: "1px solid rgba(148,163,184,0.4)",
+        }}
+      >
+        <h1
+          style={{
+            color: "#e5e7eb",
+            fontSize: "24px",
+            fontWeight: 700,
+            marginBottom: "8px",
+            textAlign: "center",
+          }}
+        >
+          Sign in to Black Truth TV
+        </h1>
+        <p
+          style={{
+            color: "#9ca3af",
+            fontSize: "14px",
+            textAlign: "center",
+            marginBottom: "24px",
+          }}
+        >
+          Use your email and password to continue.
+        </p>
+
+        {error && (
+          <div
+            style={{
+              marginBottom: "16px",
+              padding: "10px 12px",
+              borderRadius: "8px",
+              background: "rgba(248,113,113,0.1)",
+              border: "1px solid rgba(248,113,113,0.6)",
+              color: "#fecaca",
+              fontSize: "13px",
+            }}
+          >
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} style={{ display: "grid", gap: "16px" }}>
+          <div>
+            <label
+              style={{
+                display: "block",
+                fontSize: "13px",
+                color: "#e5e7eb",
+                marginBottom: "6px",
+              }}
+            >
+              Email
+            </label>
+            <input
+              type="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              style={{
+                width: "100%",
+                padding: "10px 12px",
+                borderRadius: "8px",
+                border: "1px solid #4b5563",
+                background: "#020617",
+                color: "#e5e7eb",
+                fontSize: "14px",
+              }}
+            />
+          </div>
+
+          <div>
+            <label
+              style={{
+                display: "block",
+                fontSize: "13px",
+                color: "#e5e7eb",
+                marginBottom: "6px",
+              }}
+            >
+              Password
+            </label>
+            <input
+              type="password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              style={{
+                width: "100%",
+                padding: "10px 12px",
+                borderRadius: "8px",
+                border: "1px solid #4b5563",
+                background: "#020617",
+                color: "#e5e7eb",
+                fontSize: "14px",
+              }}
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={submitting}
+            style={{
+              marginTop: "8px",
+              width: "100%",
+              padding: "10px 12px",
+              borderRadius: "999px",
+              border: "none",
+              background:
+                "linear-gradient(90deg, #f59e0b, #eab308, #facc15, #f97316)",
+              color: "#111827",
+              fontWeight: 700,
+              fontSize: "14px",
+              cursor: submitting ? "default" : "pointer",
+              opacity: submitting ? 0.6 : 1,
+            }}
+          >
+            {submitting ? "Signing in..." : "Sign In"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
 }
