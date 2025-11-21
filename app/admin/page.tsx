@@ -1,120 +1,75 @@
-// File: app/admin/page.tsx
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 
-// 🔐 ROUTES – adjust if needed
-const LOGIN_PAGE = "/login";   // where people log in
-const USER_APP_HOME = "/";     // your main Black Truth TV app page (app/page.tsx)
+// ROUTES
+const LOGIN_PAGE = "/login";   // login
+const USER_PAGE = "/";         // regular user page
 const ADMIN_ROLE = "admin";
 
-// 🔐 Supabase browser client
+// supabase client
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
 
-function AdminGuard({ children }: { children: ReactNode }) {
+export default function AdminPage() {
   const router = useRouter();
-  const [checking, setChecking] = useState(true);
+  const [allowed, setAllowed] = useState(false);
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function run() {
-      // 1️⃣ Check if user is logged in
+    async function check() {
+      // 1) check login session
       const {
         data: { user },
-        error: userError,
       } = await supabase.auth.getUser();
 
-      if (cancelled) return;
-
-      if (userError || !user) {
-        // Not logged in → send to login
+      if (!user) {
         router.replace(LOGIN_PAGE);
         return;
       }
 
-      // 2️⃣ Look up role from user_profiles
-      const { data: profile, error: profileError } = await supabase
+      // 2) check role
+      const { data: profile } = await supabase
         .from("user_profiles")
         .select("role")
         .eq("id", user.id)
         .single();
 
-      if (cancelled) return;
-
-      if (profileError || !profile) {
-        // No profile or error → treat as regular user
-        router.replace(USER_APP_HOME);
+      if (!profile || profile.role !== ADMIN_ROLE) {
+        router.replace(USER_PAGE);
         return;
       }
 
-      // 3️⃣ Only admins allowed
-      if (profile.role !== ADMIN_ROLE) {
-        router.replace(USER_APP_HOME);
-        return;
-      }
-
-      // ✅ Admin allowed
-      setChecking(false);
+      // allow admin in
+      setAllowed(true);
     }
 
-    run();
-
-    return () => {
-      cancelled = true;
-    };
+    check();
   }, [router]);
 
-  if (checking) {
+  if (!allowed) {
     return (
       <div
         style={{
           minHeight: "100vh",
           display: "flex",
-          alignItems: "center",
           justifyContent: "center",
-          background: "#000",
-          color: "#fff",
-          fontFamily: "system-ui, -apple-system, Segoe UI, sans-serif",
+          alignItems: "center",
+          background: "black",
+          color: "white",
         }}
       >
-        Checking admin access…
+        Loading…
       </div>
     );
   }
 
-  return <>{children}</>;
-}
-
-// ⬇️ PUT YOUR EXISTING ADMIN UI HERE
-function AdminContent() {
-  // Take everything that used to be in your old AdminPage()
-  // and paste it inside the return below.
   return (
     <>
-      {/* 
-        ================================
-        PASTE YOUR EXISTING ADMIN JSX HERE
-        Example:
-        <main className="...">
-          ...all your cards, tools, tabs, etc...
-        </main>
-        ================================
-      */}
+      {/* ⚠️⚠️⚠️ PASTE YOUR EXISTING ADMIN UI HERE ⚠️⚠️⚠️ */}
     </>
-  );
-}
-
-// 👑 Final protected export
-export default function AdminPage() {
-  return (
-    <AdminGuard>
-      <AdminContent />
-    </AdminGuard>
   );
 }
