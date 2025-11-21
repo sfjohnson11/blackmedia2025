@@ -25,14 +25,13 @@ export default function LoginPage() {
     setError(null);
     setSubmitting(true);
 
-    // 1️⃣ Supabase auth: check email + password
+    // 1️⃣ Supabase auth: email + password
     const { data, error: authError } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
 
     if (authError || !data.user) {
-      // Human message for wrong login
       if (authError?.message?.toLowerCase().includes("invalid login")) {
         setError("Your email or password is incorrect. Please try again.");
       } else {
@@ -46,64 +45,57 @@ export default function LoginPage() {
 
     const user = data.user;
 
-    if (!user.id) {
-      setError(
-        "We found your account, but your user ID is missing. Please contact the admin."
-      );
-      setSubmitting(false);
-      return;
-    }
-
-    // 2️⃣ Try to load profile by UUID first
-    let profile: UserProfile | null = null;
-
-    const { data: profileById, error: profileErrorById } = await supabase
+    // 2️⃣ Look up profile in user_profiles by UUID ONLY
+    const { data: profile, error: profileError } = await supabase
       .from("user_profiles")
       .select("id, email, role")
       .eq("id", user.id)
       .maybeSingle();
 
-    if (profileErrorById) {
-      console.error("Profile by id error:", profileErrorById);
-    }
-
-    if (profileById) {
-      profile = profileById as UserProfile;
-    }
-
-    // 3️⃣ If not found by id, fall back to email (saves you if IDs aren't wired yet)
-    if (!profile && user.email) {
-      const { data: profileByEmail, error: profileErrorByEmail } =
-        await supabase
-          .from("user_profiles")
-          .select("id, email, role")
-          .eq("email", user.email)
-          .maybeSingle();
-
-      if (profileErrorByEmail) {
-        console.error("Profile by email error:", profileErrorByEmail);
-      }
-
-      if (profileByEmail) {
-        profile = profileByEmail as UserProfile;
-      }
-    }
-
-    // 4️⃣ No profile at all → logged in but no app access
-    if (!profile) {
+    if (profileError) {
+      console.error("user_profiles error:", profileError);
       setError(
-        "Your login is correct, but your profile is not set up. " +
-          "Ask the admin to add you to the user_profiles table with a role."
+        [
+          "We logged you in, but there was an error reading your profile from user_profiles.",
+          "",
+          `Supabase error: ${profileError.message}`,
+          "",
+          "This usually means a row-level security (RLS) rule or permission is blocking the read.",
+          "Make sure this user is allowed to select their own row in user_profiles."
+        ].join("\n")
       );
       setSubmitting(false);
       return;
     }
 
-    // 5️⃣ Profile found but no role
+    if (!profile) {
+      // 🔍 This is where you were stuck – now we show EXACTLY what we looked for
+      setError(
+        [
+          "Your login is correct, but we could not find your profile in user_profiles.",
+          "",
+          "We looked for a row in user_profiles with:",
+          `- id = ${user.id}`,
+          user.email ? `- (your email is: ${user.email})` : "",
+          "",
+          "Open Supabase → Table Editor → user_profiles and confirm there is a row with:",
+          "- id exactly equal to the id above, and",
+          "- a role column set to 'admin' or 'member'."
+        ].join("\n")
+      );
+      setSubmitting(false);
+      return;
+    }
+
     if (!profile.role) {
       setError(
-        "Your login is correct, but no role is assigned to your account. " +
-          "You need a role of admin or member. Please contact the admin."
+        [
+          "Your login is correct, but no role is assigned to your account in user_profiles.",
+          "",
+          "Open user_profiles and set the 'role' column for your row to:",
+          "- 'admin' (to access the admin dashboard), or",
+          "- 'member' (to access the member app)."
+        ].join("\n")
       );
       setSubmitting(false);
       return;
@@ -111,7 +103,7 @@ export default function LoginPage() {
 
     const role = profile.role as Role;
 
-    // 6️⃣ Route based on role from user_profiles
+    // 3️⃣ Route based on role from user_profiles
     if (role === "admin") {
       router.replace("/admin");
     } else {
@@ -161,6 +153,7 @@ export default function LoginPage() {
               borderRadius: "8px",
               marginBottom: "16px",
               whiteSpace: "pre-wrap",
+              fontSize: "13px",
             }}
           >
             {error}
