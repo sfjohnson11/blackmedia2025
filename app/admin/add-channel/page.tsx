@@ -15,19 +15,19 @@ export default function AddChannelPage() {
 
   const [channelId, setChannelId] = useState<string>("");
   const [name, setName] = useState<string>("");
-  const [bucket, setBucket] = useState<string>(""); // used as slug
+  const [slugInput, setSlugInput] = useState<string>(""); // used as slug
   const [status, setStatus] = useState<InsertStatus>("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Auto-suggest "channel{n}" when channelId changes
   useEffect(() => {
     if (!channelId) {
-      setBucket("");
+      setSlugInput("");
       return;
     }
     const n = Number(channelId);
     if (!Number.isNaN(n) && n > 0) {
-      setBucket(`channel${n}`);
+      setSlugInput(`channel${n}`);
     }
   }, [channelId]);
 
@@ -56,23 +56,20 @@ export default function AddChannelPage() {
       return;
     }
 
-    const slugValue = (bucket || makeSlugFromName(name)).trim();
+    const slugValue = (slugInput || makeSlugFromName(name)).trim();
     if (!slugValue) {
-      setErrorMsg("Could not determine a channel slug. Please enter a slug/bucket.");
+      setErrorMsg("Could not determine a channel slug. Please enter a slug.");
       setStatus("error");
       return;
     }
 
-    // 🔥 IMPORTANT: logo_url is NOT NULL in your table,
-    // so we MUST send SOME string. We'll default to "" for now.
+    // 👉 ONLY send the columns we actually need:
+    // id, name, slug, logo_url
     const { error } = await supabase.from("channels").insert({
       id: n,
       name: name.trim(),
       slug: slugValue,
-      description: "",     // optional: safe to send empty string
-      logo_url: "",        // <-- THIS FIXES THE NOT NULL ERROR
-      youtube_channel_id: null,
-      youtibe_is_live: false,
+      logo_url: "", // non-null to satisfy NOT NULL
     });
 
     if (error) {
@@ -94,7 +91,7 @@ export default function AddChannelPage() {
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Add Channel</h1>
             <p className="mt-1 text-sm text-slate-300">
-              Create a new Black Truth TV channel directly in the channels table.
+              Create a new Black Truth TV channel in the channels table.
             </p>
           </div>
           <div className="flex gap-2">
@@ -123,11 +120,10 @@ export default function AddChannelPage() {
         <div className="flex gap-2 rounded-lg border border-slate-700 bg-slate-900/70 px-4 py-3 text-xs text-slate-200">
           <Info className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-300" />
           <p>
-            This writes directly to{" "}
-            <code className="text-amber-300">channels</code> using{" "}
-            <code>id</code>, <code>name</code>, <code>slug</code> and sets{" "}
-            <code>logo_url</code> to an empty string so it passes the NOT NULL
-            rule. You can update the logo later from Channel Manager or Supabase.
+            This writes only <code>id</code>, <code>name</code>,{" "}
+            <code>slug</code> and a blank <code>logo_url</code> to{" "}
+            <code className="text-amber-300">channels</code>. No YouTube fields, no extra
+            columns.
           </p>
         </div>
 
@@ -184,27 +180,24 @@ export default function AddChannelPage() {
               placeholder="e.g. Resistance TV, Freedom School, Nature & Discovery"
               required
             />
-            <p className="mt-1 text-[10px] text-slate-400">
-              This is what viewers will see as the channel title.
-            </p>
           </div>
 
-          {/* Slug / Bucket code */}
+          {/* Slug */}
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-200">
-              Channel Slug / Bucket Code
+              Channel Slug
             </label>
             <input
               type="text"
-              value={bucket}
-              onChange={(e) => setBucket(e.target.value)}
+              value={slugInput}
+              onChange={(e) => setSlugInput(e.target.value)}
               className="w-full rounded-md border border-slate-600 bg-slate-950 px-3 py-1.5 text-sm text-white focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
               placeholder="e.g. channel16, resistance-tv, freedom-school"
             />
             <p className="mt-1 text-[10px] text-slate-400">
               Used as the <code>slug</code> in{" "}
               <code className="text-amber-300">channels</code>. If left blank, we
-              generate from the channel name.
+              generate one from the name.
             </p>
           </div>
 
@@ -214,7 +207,7 @@ export default function AddChannelPage() {
               className="bg-emerald-600 text-sm hover:bg-emerald-700"
               disabled={status === "saving"}
             >
-            <PlusCircle className="mr-2 h-4 w-4" />
+              <PlusCircle className="mr-2 h-4 w-4" />
               {status === "saving" ? "Creating Channel…" : "Create Channel"}
             </Button>
           </div>
