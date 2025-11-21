@@ -12,7 +12,34 @@ type Profile = {
   email: string | null;
   role: Role | null;
   created_at: string | null;
+  _table?: string; // which table we found it in (for debugging)
 };
+
+// 🔹 Helper: try to load profile by email from a few possible tables
+async function fetchProfileByEmail(email: string): Promise<Profile | null> {
+  const tableCandidates = ["profiles", "user_profiles", "users"];
+
+  for (const table of tableCandidates) {
+    const { data, error } = await supabase
+      .from(table)
+      .select("id,email,role,created_at")
+      .eq("email", email)
+      .maybeSingle();
+
+    // If table doesn't exist or other error, skip to the next one
+    if (error) {
+      console.warn(`Error querying ${table}:`, error.message);
+      continue;
+    }
+
+    if (data) {
+      console.log(`Loaded profile from table: ${table}`, data);
+      return { ...(data as any), _table: table };
+    }
+  }
+
+  return null;
+}
 
 export default function LoginPage() {
   const router = useRouter();
@@ -28,20 +55,15 @@ export default function LoginPage() {
         data: { user },
       } = await supabase.auth.getUser();
 
-      if (!user) return;
+      if (!user || !user.email) return;
 
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("role")
-        .eq("id", user.id)
-        .single();
-
+      const profile = await fetchProfileByEmail(user.email);
       const role = (profile?.role ?? "member") as Role;
 
       if (role === "admin") {
         router.replace("/admin");
       } else {
-        router.replace("/app"); // CHANGE THIS if your non-admin home is different
+        router.replace("/app"); // change if your non-admin home is different
       }
     }
 
@@ -53,6 +75,7 @@ export default function LoginPage() {
     setError(null);
     setSubmitting(true);
 
+    // 1) Sign in
     const { data, error: authError } = await supabase.auth.signInWithPassword({
       email,
       password,
@@ -66,24 +89,30 @@ export default function LoginPage() {
 
     const user = data.user;
 
-    const { data: profile, error: profileError } = await supabase
-      .from("profiles")
-      .select("id,email,role,created_at")
-      .eq("id", user.id)
-      .single();
+    if (!user.email) {
+      setError("Your account is missing an email. Contact admin.");
+      setSubmitting(false);
+      return;
+    }
 
-    if (profileError || !profile) {
-      setError("Could not load profile/role. Contact admin.");
+    // 2) Get profile / role using email
+    const profile = await fetchProfileByEmail(user.email);
+
+    if (!profile) {
+      setError(
+        "Could not load profile/role. Contact admin and check the users table."
+      );
       setSubmitting(false);
       return;
     }
 
     const role = (profile.role ?? "member") as Role;
 
+    // 3) Route based on role
     if (role === "admin") {
       router.replace("/admin");
     } else {
-      router.replace("/app"); // CHANGE HERE too if needed
+      router.replace("/app"); // change if your non-admin home is different
     }
 
     setSubmitting(false);
