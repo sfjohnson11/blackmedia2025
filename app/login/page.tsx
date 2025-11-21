@@ -1,45 +1,9 @@
-// app/login/page.tsx
 "use client";
 
 import { useState, useEffect, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-
-type Role = "admin" | "member" | "student";
-
-type Profile = {
-  id: string;
-  email: string | null;
-  role: Role | null;
-  created_at: string | null;
-  _table?: string; // which table we found it in (for debugging)
-};
-
-// 🔹 Helper: try to load profile by email from a few possible tables
-async function fetchProfileByEmail(email: string): Promise<Profile | null> {
-  const tableCandidates = ["profiles", "user_profiles", "users"];
-
-  for (const table of tableCandidates) {
-    const { data, error } = await supabase
-      .from(table)
-      .select("id,email,role,created_at")
-      .eq("email", email)
-      .maybeSingle();
-
-    // If table doesn't exist or other error, skip to the next one
-    if (error) {
-      console.warn(`Error querying ${table}:`, error.message);
-      continue;
-    }
-
-    if (data) {
-      console.log(`Loaded profile from table: ${table}`, data);
-      return { ...(data as any), _table: table };
-    }
-  }
-
-  return null;
-}
+import { loadProfileForEmail, type Role } from "@/lib/loadProfile";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -48,7 +12,7 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // If already logged in, send them where they belong
+  // If already logged in, send them where user_profiles says they belong
   useEffect(() => {
     async function checkExistingSession() {
       const {
@@ -57,8 +21,10 @@ export default function LoginPage() {
 
       if (!user || !user.email) return;
 
-      const profile = await fetchProfileByEmail(user.email);
-      const role = (profile?.role ?? "member") as Role;
+      const profile = await loadProfileForEmail(user.email);
+      if (!profile) return; // no profile row, stay on login
+
+      const role: Role = (profile.role ?? "member") as Role;
 
       if (role === "admin") {
         router.replace("/admin");
@@ -75,7 +41,7 @@ export default function LoginPage() {
     setError(null);
     setSubmitting(true);
 
-    // 1) Sign in
+    // 1) Sign in with Supabase auth
     const { data, error: authError } = await supabase.auth.signInWithPassword({
       email,
       password,
@@ -95,24 +61,24 @@ export default function LoginPage() {
       return;
     }
 
-    // 2) Get profile / role using email
-    const profile = await fetchProfileByEmail(user.email);
+    // 2) Look up this email in user_profiles
+    const profile = await loadProfileForEmail(user.email);
 
     if (!profile) {
       setError(
-        "Could not load profile/role. Contact admin and check the users table."
+        "Could not load profile/role from user_profiles. Make sure this email exists there with a role."
       );
       setSubmitting(false);
       return;
     }
 
-    const role = (profile.role ?? "member") as Role;
+    const role: Role = (profile.role ?? "member") as Role;
 
-    // 3) Route based on role
+    // 3) Route based on role in user_profiles
     if (role === "admin") {
       router.replace("/admin");
     } else {
-      router.replace("/app"); // change if your non-admin home is different
+      router.replace("/app"); // change this if your regular users go somewhere else
     }
 
     setSubmitting(false);
