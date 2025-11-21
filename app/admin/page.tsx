@@ -1,138 +1,137 @@
 // app/admin/page.tsx
-// CLEAN ADMIN DASHBOARD – NO LOGIN, NO SUPABASE, JUST YOUR TOOLS.
+"use client";
 
-import Link from "next/link";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabase";
+import SessionTimeout from "@/components/SessionTimeout";
 
-type AdminTool = {
-  href: string;
-  title: string;
-  description: string;
+type Role = "admin" | "member" | "student";
+
+type Profile = {
+  id: string;
+  email: string | null;
+  name?: string | null;
+  role: Role | null;
+  created_at: string | null;
 };
-
-const ADMIN_TOOLS: AdminTool[] = [
-  {
-    href: "/admin/add-channel",
-    title: "Add Channel",
-    description: "Create new Black Truth TV channels and configure settings.",
-  },
-  {
-    href: "/admin/auto-schedule",
-    title: "Auto-Schedule",
-    description: "Auto-generate weekly schedules for your channels.",
-  },
-  {
-    href: "/admin/channel-live",
-    title: "Channel Live Monitor",
-    description: "Check and manage live/live-status for channels.",
-  },
-  {
-    href: "/admin/channel-manager",
-    title: "Channel Manager",
-    description: "Edit channel names, logos, and basic configuration.",
-  },
-  {
-    href: "/admin/cleanup-programs",
-    title: "Cleanup Programs",
-    description: "Find and clean up duplicate or broken program records.",
-  },
-  {
-    href: "/admin/continue",
-    title: "Continue Setup / Tools",
-    description: "Jump back into ongoing admin setup and workflows.",
-  },
-  {
-    href: "/admin/database-inspector",
-    title: "Database Inspector",
-    description: "Inspect and troubleshoot Supabase tables.",
-  },
-  {
-    href: "/admin/freedom-school-library",
-    title: "Freedom School Library",
-    description: "Manage Freedom School lessons, videos, and resources.",
-  },
-  {
-    href: "/admin/invite-codes",
-    title: "Invite Codes",
-    description: "Create and manage invite codes for new users.",
-  },
-  {
-    href: "/admin/library-manager",
-    title: "On-Demand Library Manager",
-    description: "Organize on-demand videos and categories.",
-  },
-  {
-    href: "/admin/news",
-    title: "News Manager",
-    description: "Manage news items, ticker messages, and highlights.",
-  },
-  {
-    href: "/admin/program-titles",
-    title: "Program Titles",
-    description: "Standardize and edit program titles across channels.",
-  },
-  {
-    href: "/admin/programs",
-    title: "Programs Manager",
-    description: "Add, edit, and assign programs to channels.",
-  },
-  {
-    href: "/admin/refresh-programs",
-    title: "Refresh Programs",
-    description: "Refresh program metadata and sync schedules.",
-  },
-  {
-    href: "/admin/reset-programs",
-    title: "Reset Programs",
-    description: "Reset daily/weekly schedules back to defaults.",
-  },
-];
 
 export default function AdminPage() {
-  return (
-    <main className="min-h-screen bg-black text-white p-6">
-      <header className="mb-6 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-3xl font-bold mb-1">Black Truth TV — Admin</h1>
-          <p className="text-sm text-gray-300">
-            Admin hub for channels, programs, Freedom School, and more.
-          </p>
-        </div>
+  const router = useRouter();
+  const [loading, setLoading] = useState(true);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-        <Link
-          href="/"
-          className="text-sm text-gray-300 underline hover:text-white"
-        >
-          ← Back to Viewer Site
-        </Link>
+  useEffect(() => {
+    async function checkAdmin() {
+      setLoading(true);
+      setError(null);
+
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+
+      if (userError || !user) {
+        router.replace("/login");
+        return;
+      }
+
+      const { data, error: profileError } = await supabase
+        .from("profiles")
+        .select("id,email,name,role,created_at")
+        .eq("id", user.id)
+        .single();
+
+      if (profileError || !data) {
+        setError("Could not load profile. Contact admin.");
+        setLoading(false);
+        return;
+      }
+
+      if (data.role !== "admin") {
+        router.replace("/app"); // CHANGE if your non-admin home is different
+        return;
+      }
+
+      setProfile(data as Profile);
+      setLoading(false);
+    }
+
+    checkAdmin();
+  }, [router]);
+
+  if (loading) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: "#020617",
+          color: "#e5e7eb",
+        }}
+      >
+        Checking admin access…
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: "#020617",
+          color: "#fecaca",
+        }}
+      >
+        {error}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        background: "#020617",
+        color: "#e5e7eb",
+        padding: "24px",
+      }}
+    >
+      {/* 🔐 Auto-logout after 30 min inactivity */}
+      <SessionTimeout />
+
+      <header
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: "24px",
+        }}
+      >
+        <h1 style={{ fontSize: "24px", fontWeight: 700 }}>
+          Black Truth TV Admin
+        </h1>
+        {profile && (
+          <div style={{ fontSize: "14px", color: "#9ca3af" }}>
+            Signed in as <strong>{profile.email}</strong> (admin)
+          </div>
+        )}
       </header>
 
-      <section className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-        {ADMIN_TOOLS.map((tool) => (
-          <AdminCard
-            key={tool.href}
-            href={tool.href}
-            title={tool.title}
-            description={tool.description}
-          />
-        ))}
-      </section>
-    </main>
-  );
-}
-
-type AdminCardProps = {
-  href: string;
-  title: string;
-  description: string;
-};
-
-function AdminCard({ href, title, description }: AdminCardProps) {
-  return (
-    <Link href={href}>
-      <div className="h-full cursor-pointer rounded-xl border border-gray-700 bg-gray-900/70 p-4 hover:border-red-500 hover:bg-gray-900 transition-colors">
-        <h2 className="text-lg font-semibold mb-1">{title}</h2>
-        <p className="text-xs text-gray-300">{description}</p>
-      </div>
-    </Link>
+      <main>
+        <p style={{ color: "#9ca3af", marginBottom: "16px" }}>
+          Admin tools go here. Replace this with your scheduler, channel tools,
+          playlists, etc.
+        </p>
+        {/* ⬇️ Drop your real admin dashboard JSX here */}
+      </main>
+    </div>
   );
 }
