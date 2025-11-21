@@ -15,7 +15,7 @@ export default function AddChannelPage() {
 
   const [channelId, setChannelId] = useState<string>("");
   const [name, setName] = useState<string>("");
-  const [bucket, setBucket] = useState<string>(""); // we will store this into slug
+  const [bucket, setBucket] = useState<string>(""); // used as slug
   const [status, setStatus] = useState<InsertStatus>("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -56,20 +56,23 @@ export default function AddChannelPage() {
       return;
     }
 
-    // Use bucket field as slug if provided, otherwise derive from name
     const slugValue = (bucket || makeSlugFromName(name)).trim();
     if (!slugValue) {
-      setErrorMsg("Could not determine a channel slug. Please enter a bucket/slug.");
+      setErrorMsg("Could not determine a channel slug. Please enter a slug/bucket.");
       setStatus("error");
       return;
     }
 
-    // ✅ Insert into your real channels table:
-    //    id, name, slug (only; others use defaults/nulls)
+    // 🔥 IMPORTANT: logo_url is NOT NULL in your table,
+    // so we MUST send SOME string. We'll default to "" for now.
     const { error } = await supabase.from("channels").insert({
       id: n,
       name: name.trim(),
       slug: slugValue,
+      description: "",     // optional: safe to send empty string
+      logo_url: "",        // <-- THIS FIXES THE NOT NULL ERROR
+      youtube_channel_id: null,
+      youtibe_is_live: false,
     });
 
     if (error) {
@@ -120,11 +123,11 @@ export default function AddChannelPage() {
         <div className="flex gap-2 rounded-lg border border-slate-700 bg-slate-900/70 px-4 py-3 text-xs text-slate-200">
           <Info className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-300" />
           <p>
-            This page now writes directly to{" "}
+            This writes directly to{" "}
             <code className="text-amber-300">channels</code> using{" "}
-            <code>id</code>, <code>name</code>, and <code>slug</code>. The slug is taken
-            from your bucket/slug field (e.g. <code>channel16</code>) or auto-generated
-            from the channel name.
+            <code>id</code>, <code>name</code>, <code>slug</code> and sets{" "}
+            <code>logo_url</code> to an empty string so it passes the NOT NULL
+            rule. You can update the logo later from Channel Manager or Supabase.
           </p>
         </div>
 
@@ -199,9 +202,9 @@ export default function AddChannelPage() {
               placeholder="e.g. channel16, resistance-tv, freedom-school"
             />
             <p className="mt-1 text-[10px] text-slate-400">
-              Used as the <code>slug</code> in your{" "}
-              <code className="text-amber-300">channels</code> table. If you leave this
-              blank, we&apos;ll generate one from the channel name.
+              Used as the <code>slug</code> in{" "}
+              <code className="text-amber-300">channels</code>. If left blank, we
+              generate from the channel name.
             </p>
           </div>
 
@@ -211,7 +214,7 @@ export default function AddChannelPage() {
               className="bg-emerald-600 text-sm hover:bg-emerald-700"
               disabled={status === "saving"}
             >
-              <PlusCircle className="mr-2 h-4 w-4" />
+            <PlusCircle className="mr-2 h-4 w-4" />
               {status === "saving" ? "Creating Channel…" : "Create Channel"}
             </Button>
           </div>
