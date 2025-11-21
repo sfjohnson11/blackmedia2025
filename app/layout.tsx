@@ -1,34 +1,24 @@
 // app/layout.tsx
 import "./globals.css";
 import type { Metadata } from "next";
-import TopNav from "@/components/top-nav";
-import { cookies } from "next/headers";
-import { createServerComponentClient } from "@supabase/auth-helpers-nextjs";
+import type { ReactNode } from "react";
+import AuthGate from "@/components/AuthGate";
 
 export const metadata: Metadata = {
   title: "Black Truth TV",
-  description:
-    "24/7 programming dedicated to truth, culture, history, and community uplift.",
+  description: "Streaming live and on-demand Black history and culture.",
 };
 
-export default async function RootLayout({
+export default function RootLayout({
   children,
 }: {
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
-  // 🔐 Server-side Supabase client (reads auth cookies)
-  const supabase = createServerComponentClient({ cookies });
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
   return (
     <html lang="en">
-      <body className="bg-black text-white">
-        {/* Only show TopNav AFTER login */}
-        {user ? <TopNav /> : null}
-        {children}
+      <body>
+        {/* 🔒 Global lock: everything except /login goes through AuthGate */}
+        <AuthGate>{children}</AuthGate>
       </body>
     </html>
   );
