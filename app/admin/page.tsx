@@ -4,7 +4,10 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import SessionTimeout from "@/components/SessionTimeout";
-import { loadProfileForEmail, type UserProfile } from "@/lib/loadProfile";
+import {
+  loadProfileForUserId,
+  type UserProfile,
+} from "@/lib/loadProfile";
 
 export default function AdminPage() {
   const router = useRouter();
@@ -27,24 +30,18 @@ export default function AdminPage() {
         return;
       }
 
-      if (!user.email) {
-        setError("Your account is missing an email. Contact admin.");
-        setLoading(false);
-        return;
-      }
-
-      const profile = await loadProfileForEmail(user.email);
+      const profile = await loadProfileForUserId(user.id);
 
       if (!profile) {
         setError(
-          "Could not load admin profile from user_profiles. Make sure this email exists there with role = 'admin'."
+          "Could not load admin profile from user_profiles. Make sure this auth user id exists there with role = 'admin'."
         );
         setLoading(false);
         return;
       }
 
       if (profile.role !== "admin") {
-        router.replace("/app"); // non-admin users go to app
+        router.replace("/app"); // non-admin → app
         return;
       }
 
@@ -92,7 +89,6 @@ export default function AdminPage() {
     );
   }
 
-  // ✅ At this point: user is admin from user_profiles
   return (
     <div
       style={{
@@ -118,7 +114,9 @@ export default function AdminPage() {
         {profile && (
           <div style={{ fontSize: "14px", color: "#9ca3af" }}>
             Signed in as{" "}
-            <strong>{profile.email ?? profile.full_name ?? profile.name}</strong>{" "}
+            <strong>
+              {profile.email ?? profile.full_name ?? profile.name}
+            </strong>{" "}
             (admin)
           </div>
         )}
