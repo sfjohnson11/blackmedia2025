@@ -10,6 +10,8 @@ import {
   type UserProfile,
 } from "@/lib/loadProfile";
 
+const ADMIN_EMAIL = "info@sfjohnsonconsulting.com";
+
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
@@ -17,7 +19,7 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // If already logged in, send them where user_profiles says
+  // If already logged in, send them where user_profiles (or fallback) says
   useEffect(() => {
     async function checkExistingSession() {
       const {
@@ -27,9 +29,14 @@ export default function LoginPage() {
       if (!user || !user.email) return;
 
       const profile = await loadProfileByEmail(user.email);
-      if (!profile) return;
+      let role: Role;
 
-      const role: Role = (profile.role ?? "member") as Role;
+      if (profile && profile.role) {
+        role = profile.role;
+      } else {
+        // fallback based on email only
+        role = user.email === ADMIN_EMAIL ? "admin" : "member";
+      }
 
       if (role === "admin") {
         router.replace("/admin");
@@ -46,7 +53,6 @@ export default function LoginPage() {
     setError(null);
     setSubmitting(true);
 
-    // 1) Supabase email/password login
     const { data, error: authError } = await supabase.auth.signInWithPassword({
       email,
       password,
@@ -66,22 +72,16 @@ export default function LoginPage() {
       return;
     }
 
-    // 2) Look up user_profiles row by email
     const profile: UserProfile | null = await loadProfileByEmail(user.email);
+    let role: Role;
 
-    if (!profile) {
-      setError(
-        "Could not load profile/role from user_profiles. Make sure this email exists there with a role."
-      );
-      setSubmitting(false);
-      return;
+    if (profile && profile.role) {
+      role = profile.role;
+    } else {
+      // 🔥 NO MORE BLOCKING – fallback by email:
+      role = user.email === ADMIN_EMAIL ? "admin" : "member";
     }
 
-    const role: Role = (profile.role ?? "member") as Role;
-
-    // 3) ONLY TWO BRANCHES:
-    //    - admin -> /admin
-    //    - everyone else -> /app
     if (role === "admin") {
       router.replace("/admin");
     } else {
