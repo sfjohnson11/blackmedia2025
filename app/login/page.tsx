@@ -1,206 +1,167 @@
-// app/login/page.tsx
+// File: app/login/page.tsx
 "use client";
 
-import { useState, FormEvent } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { createClient } from "@supabase/supabase-js";
 
-type UserProfile = {
-  id: string;
-  role: string | null;
-  email?: string | null;
-};
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
 export default function LoginPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const supabase = createClientComponentClient();
-
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  async function handleSubmit(e: FormEvent) {
+  async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
-    setLoading(true);
     setErrorMsg(null);
+    setLoading(true);
 
-    // Read ?redirect=/something from URL (middleware sets this)
-    const redirectTo = searchParams.get("redirect");
-
-    // 1️⃣ Login with Supabase
-    const { data, error } = await supabase.auth.signInWithPassword({
+    // 1️⃣ Sign in
+    const {
+      data: { user },
+      error,
+    } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
 
-    if (error || !data.user) {
-      setErrorMsg(error?.message ?? "Invalid email or password.");
+    if (error || !user) {
+      setErrorMsg("Invalid email or password.");
       setLoading(false);
       return;
     }
 
-    const user = data.user;
-    let role: string | null = null;
+    // 2️⃣ Look up role
+    const { data: profile, error: profileError } = await supabase
+      .from("user_profiles")
+      .select("role")
+      .eq("id", user.id)
+      .single();
 
-    // 2️⃣ Load profile BY EMAIL (matches your table)
-    if (user.email) {
-      const { data: profileByEmail, error: emailError } = await supabase
-        .from("user_profiles")
-        .select("id, role, email")
-        .eq("email", user.email)
-        .maybeSingle<UserProfile>();
+    setLoading(false);
 
-      if (emailError) {
-        console.error("Error loading profile by email:", emailError.message);
-      }
-
-      if (profileByEmail?.role) {
-        role = String(profileByEmail.role);
-      }
+    if (profileError || !profile) {
+      // No profile → treat as regular user
+      router.push("/");
+      return;
     }
 
-    const finalRole = (role || "member").toLowerCase().trim();
-
-    // 3️⃣ Redirect priority:
-    //    a) If ?redirect exists → go there
-    //    b) Else admin → /admin
-    //    c) Else member → /
-    if (redirectTo && redirectTo.startsWith("/")) {
-      router.push(redirectTo);
-    } else if (finalRole === "admin") {
+    // 3️⃣ Route based on role
+    if (profile.role === "admin") {
       router.push("/admin");
     } else {
       router.push("/");
     }
-
-    setLoading(false);
   }
 
   return (
     <div
       style={{
         minHeight: "100vh",
-        background:
-          "radial-gradient(circle at top, #1f3b73 0, #050816 55%, #000 100%)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        padding: "24px",
+        background: "#000",
         color: "#fff",
         fontFamily: "system-ui, -apple-system, Segoe UI, sans-serif",
+        padding: "20px",
       }}
     >
-      <div
+      <form
+        onSubmit={handleLogin}
         style={{
           width: "100%",
-          maxWidth: 420,
-          background: "rgba(10,20,40,0.9)",
-          borderRadius: 16,
-          padding: "28px 24px 24px",
-          boxShadow: "0 18px 45px rgba(0,0,0,0.65)",
-          border: "1px solid rgba(255,255,255,0.08)",
+          maxWidth: "400px",
+          background: "#0b1f3a",
+          padding: "24px",
+          borderRadius: "12px",
+          boxShadow: "0 10px 30px rgba(0,0,0,0.6)",
         }}
       >
-        <h1
-          style={{
-            fontSize: "1.75rem",
-            fontWeight: 700,
-            marginBottom: 6,
-            textAlign: "center",
-          }}
-        >
+        <h1 style={{ marginBottom: "16px", fontSize: "1.8rem" }}>
           Black Truth TV Login
         </h1>
-        <p
-          style={{
-            fontSize: 14,
-            opacity: 0.8,
-            textAlign: "center",
-            marginBottom: 18,
-          }}
-        >
-          Sign in with your email and password.
+        <p style={{ marginBottom: "20px", fontSize: "0.9rem", color: "#d2e2ff" }}>
+          Enter your email and password to access your account.
         </p>
 
         {errorMsg && (
           <div
             style={{
-              marginBottom: 16,
-              padding: "10px 12px",
-              borderRadius: 8,
-              background: "rgba(127,29,29,0.2)",
-              border: "1px solid rgba(248,113,113,0.5)",
-              fontSize: 13,
+              marginBottom: "12px",
+              padding: "10px",
+              borderRadius: "8px",
+              background: "#5b0000",
+              color: "#ffe5e5",
+              fontSize: "0.85rem",
             }}
           >
             {errorMsg}
           </div>
         )}
 
-        <form onSubmit={handleSubmit} style={{ display: "grid", gap: 12 }}>
-          <label style={{ fontSize: 13 }}>
-            <span style={{ display: "block", marginBottom: 4 }}>Email</span>
-            <input
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              style={{
-                width: "100%",
-                padding: "9px 10px",
-                borderRadius: 8,
-                border: "1px solid rgba(148,163,184,0.7)",
-                background: "rgba(15,23,42,0.9)",
-                color: "#fff",
-                fontSize: 14,
-              }}
-            />
-          </label>
+        <label style={{ display: "block", marginBottom: "8px", fontSize: "0.85rem" }}>
+          Email
+        </label>
+        <input
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          required
+          style={{
+            width: "100%",
+            padding: "10px",
+            marginBottom: "16px",
+            borderRadius: "8px",
+            border: "1px solid #334",
+            background: "#111729",
+            color: "#fff",
+          }}
+        />
 
-          <label style={{ fontSize: 13 }}>
-            <span style={{ display: "block", marginBottom: 4 }}>Password</span>
-            <input
-              type="password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              style={{
-                width: "100%",
-                padding: "9px 10px",
-                borderRadius: 8,
-                border: "1px solid rgba(148,163,184,0.7)",
-                background: "rgba(15,23,42,0.9)",
-                color: "#fff",
-                fontSize: 14,
-              }}
-            />
-          </label>
+        <label style={{ display: "block", marginBottom: "8px", fontSize: "0.85rem" }}>
+          Password
+        </label>
+        <input
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          required
+          style={{
+            width: "100%",
+            padding: "10px",
+            marginBottom: "20px",
+            borderRadius: "8px",
+            border: "1px solid #334",
+            background: "#111729",
+            color: "#fff",
+          }}
+        />
 
-          <button
-            type="submit"
-            disabled={loading}
-            style={{
-              marginTop: 8,
-              padding: "10px 12px",
-              borderRadius: 999,
-              border: "none",
-              cursor: loading ? "default" : "pointer",
-              background:
-                "linear-gradient(135deg, #FFD700 0%, #fbbf24 35%, #f97316 80%)",
-              color: "#111827",
-              fontWeight: 700,
-              fontSize: 14,
-              textTransform: "uppercase",
-              letterSpacing: 0.06,
-              boxShadow: "0 10px 25px rgba(180,83,9,0.5)",
-            }}
-          >
-            {loading ? "Signing in…" : "Sign In"}
-          </button>
-        </form>
-      </div>
+        <button
+          type="submit"
+          disabled={loading}
+          style={{
+            width: "100%",
+            padding: "12px",
+            borderRadius: "999px",
+            border: "none",
+            fontWeight: 600,
+            cursor: "pointer",
+            background:
+              "linear-gradient(135deg, #FFD700 0%, #ffb300 40%, #ff8a00 100%)",
+            color: "#000",
+          }}
+        >
+          {loading ? "Signing in…" : "Sign In"}
+        </button>
+      </form>
     </div>
   );
 }
