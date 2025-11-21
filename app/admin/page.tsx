@@ -1,15 +1,7 @@
-"use client";
+// app/admin/page.tsx
+// CLEAN ADMIN DASHBOARD – NO LOGIN, NO SUPABASE, JUST YOUR TOOLS.
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { createClient } from "@supabase/supabase-js";
 import Link from "next/link";
-
-// Supabase client using your existing env keys
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
 
 type AdminTool = {
   href: string;
@@ -26,17 +18,17 @@ const ADMIN_TOOLS: AdminTool[] = [
   {
     href: "/admin/auto-schedule",
     title: "Auto-Schedule",
-    description: "Auto-generate weekly schedules for all or selected channels.",
+    description: "Auto-generate weekly schedules for your channels.",
   },
   {
     href: "/admin/channel-live",
     title: "Channel Live Monitor",
-    description: "Check and manage live status for channels.",
+    description: "Check and manage live/live-status for channels.",
   },
   {
     href: "/admin/channel-manager",
     title: "Channel Manager",
-    description: "Edit channel names, logos, and basic details.",
+    description: "Edit channel names, logos, and basic configuration.",
   },
   {
     href: "/admin/cleanup-programs",
@@ -46,12 +38,12 @@ const ADMIN_TOOLS: AdminTool[] = [
   {
     href: "/admin/continue",
     title: "Continue Setup / Tools",
-    description: "Return to ongoing admin setup and workflows.",
+    description: "Jump back into ongoing admin setup and workflows.",
   },
   {
     href: "/admin/database-inspector",
     title: "Database Inspector",
-    description: "Inspect and troubleshoot Supabase tables for Black Truth TV.",
+    description: "Inspect and troubleshoot Supabase tables.",
   },
   {
     href: "/admin/freedom-school-library",
@@ -96,70 +88,22 @@ const ADMIN_TOOLS: AdminTool[] = [
 ];
 
 export default function AdminPage() {
-  const router = useRouter();
-  const [checking, setChecking] = useState(true);
-
-  useEffect(() => {
-    async function checkAdmin() {
-      // 1️⃣ Get current Supabase user
-      const {
-        data: { user },
-        error,
-      } = await supabase.auth.getUser();
-
-      if (error) {
-        console.error("Error getting user in /admin:", error.message);
-      }
-
-      // Not logged in → send to login and come back to /admin
-      if (!user || !user.email) {
-        router.replace("/login?redirect=/admin");
-        return;
-      }
-
-      // 2️⃣ Look up profile BY EMAIL (matches your user_profiles table)
-      const { data: profile, error: profileError } = await supabase
-        .from("user_profiles")
-        .select("role")
-        .eq("email", user.email)
-        .maybeSingle();
-
-      if (profileError) {
-        console.error("Error loading profile in /admin:", profileError.message);
-      }
-
-      const role = (profile?.role || "member").toLowerCase().trim();
-
-      // Not admin → dump them back to viewer site
-      if (role !== "admin") {
-        router.replace("/");
-        return;
-      }
-
-      // Admin OK
-      setChecking(false);
-    }
-
-    checkAdmin();
-  }, [router]);
-
-  if (checking) {
-    return (
-      <div className="min-h-screen bg-black text-white flex items-center justify-center">
-        Loading…
-      </div>
-    );
-  }
-
-  // ✅ If we got here, user is admin
   return (
     <main className="min-h-screen bg-black text-white p-6">
-      <header className="mb-6">
-        <h1 className="text-3xl font-bold mb-2">Black Truth TV — Admin</h1>
-        <p className="text-sm text-gray-300">
-          Control channels, programs, Freedom School, and more from this admin
-          hub.
-        </p>
+      <header className="mb-6 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-3xl font-bold mb-1">Black Truth TV — Admin</h1>
+          <p className="text-sm text-gray-300">
+            Admin hub for channels, programs, Freedom School, and more.
+          </p>
+        </div>
+
+        <Link
+          href="/"
+          className="text-sm text-gray-300 underline hover:text-white"
+        >
+          ← Back to Viewer Site
+        </Link>
       </header>
 
       <section className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
@@ -172,15 +116,6 @@ export default function AdminPage() {
           />
         ))}
       </section>
-
-      <div className="mt-6">
-        <Link
-          href="/"
-          className="text-sm text-gray-300 underline hover:text-white"
-        >
-          ← Back to Black Truth TV main site
-        </Link>
-      </div>
     </main>
   );
 }
