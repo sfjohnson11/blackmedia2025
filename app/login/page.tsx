@@ -4,9 +4,14 @@
 import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { loadProfileByEmail, type Role } from "@/lib/loadProfile";
 
-const ADMIN_EMAIL = "info@sfjohnsonconsulting.com";
+type Role = "admin" | "member";
+
+type UserProfile = {
+  id: string;
+  email: string | null;
+  role: Role | null;
+};
 
 export default function LoginPage() {
   const router = useRouter();
@@ -20,72 +25,132 @@ export default function LoginPage() {
     setError(null);
     setSubmitting(true);
 
+    // 1️⃣ Supabase auth verifies email + password
     const { data, error: authError } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
 
     if (authError || !data.user) {
-      setError(authError?.message || "Login failed.");
+      // Human-friendly auth errors
+      if (authError?.message?.toLowerCase().includes("invalid login")) {
+        setError("Your email or password is incorrect. Please try again.");
+      } else {
+        setError(
+          "We could not log you in. Please check your email and password and try again."
+        );
+      }
       setSubmitting(false);
       return;
     }
 
     const user = data.user;
 
-    if (!user.email) {
-      setError("No email found on account.");
+    if (!user.id) {
+      setError(
+        "We found your account, but your user ID is missing. Please contact support."
+      );
       setSubmitting(false);
       return;
     }
 
-    const profile = await loadProfileByEmail(user.email);
-    let role: Role;
+    // 2️⃣ Fetch profile by Supabase UUID (auth.users.id)
+    const { data: profile, error: profileError } = await supabase
+      .from("user_profiles")
+      .select("id, email, role")
+      .eq("id", user.id)
+      .maybeSingle();
 
-    if (profile && profile.role) {
-      role = profile.role;
-    } else {
-      role = user.email === ADMIN_EMAIL ? "admin" : "member";
+    if (profileError) {
+      console.error("Profile error:", profileError);
+      setError(
+        "Your login is correct, but we could not load your profile. " +
+          "This usually means your membership is not fully set up. Please contact the admin."
+      );
+      setSubmitting(false);
+      return;
     }
 
-    router.replace(role === "admin" ? "/admin" : "/app");
+    if (!profile) {
+      setError(
+        "Your login is correct, but your profile is missing. " +
+          "Ask the admin to add your account to the user_profiles table."
+      );
+      setSubmitting(false);
+      return;
+    }
+
+    if (!profile.role) {
+      setError(
+        "Your login is correct, but no role is assigned to your account. " +
+          "You need a role of admin or member to continue. Please contact the admin."
+      );
+      setSubmitting(false);
+      return;
+    }
+
+    const role = profile.role as Role;
+
+    // 3️⃣ Route based on role from user_profiles
+    if (role === "admin") {
+      router.replace("/admin");
+    } else {
+      router.replace("/app");
+    }
+
     setSubmitting(false);
   }
 
   return (
-    <div style={{
-      minHeight: "100vh",
-      display: "flex",
-      justifyContent: "center",
-      alignItems: "center",
-      background: "#020617",
-      padding: "24px"
-    }}>
-      <div style={{
-        width: "100%",
-        maxWidth: "400px",
-        background: "#0f172a",
-        padding: "32px",
-        borderRadius: "12px",
-        border: "1px solid #475569"
-      }}>
-        <h1 style={{ color: "#fff", textAlign: "center", marginBottom: "16px" }}>
+    <div
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+        background: "#020617",
+        padding: "24px",
+      }}
+    >
+      <div
+        style={{
+          width: "100%",
+          maxWidth: "400px",
+          background: "#0f172a",
+          padding: "32px",
+          borderRadius: "12px",
+          border: "1px solid #475569",
+        }}
+      >
+        <h1
+          style={{
+            color: "#fff",
+            textAlign: "center",
+            marginBottom: "16px",
+          }}
+        >
           Black Truth TV Login
         </h1>
 
         {error && (
-          <div style={{
-            background: "#7f1d1d",
-            color: "#fecaca",
-            padding: "10px",
-            borderRadius: "8px",
-            marginBottom: "16px"
-          }}>
+          <div
+            style={{
+              background: "#7f1d1d",
+              color: "#fecaca",
+              padding: "10px",
+              borderRadius: "8px",
+              marginBottom: "16px",
+              whiteSpace: "pre-wrap",
+            }}
+          >
             {error}
           </div>
         )}
 
-        <form onSubmit={handleSubmit} style={{ display: "grid", gap: "16px" }}>
+        <form
+          onSubmit={handleSubmit}
+          style={{ display: "grid", gap: "16px" }}
+        >
           <input
             type="email"
             placeholder="Email"
@@ -97,7 +162,7 @@ export default function LoginPage() {
               borderRadius: "8px",
               border: "1px solid #475569",
               background: "#020617",
-              color: "#fff"
+              color: "#fff",
             }}
           />
 
@@ -112,7 +177,7 @@ export default function LoginPage() {
               borderRadius: "8px",
               border: "1px solid #475569",
               background: "#020617",
-              color: "#fff"
+              color: "#fff",
             }}
           />
 
@@ -124,7 +189,7 @@ export default function LoginPage() {
               borderRadius: "8px",
               background: "#fbbf24",
               color: "#000",
-              fontWeight: "bold"
+              fontWeight: "bold",
             }}
           >
             {submitting ? "Signing in..." : "Sign In"}
