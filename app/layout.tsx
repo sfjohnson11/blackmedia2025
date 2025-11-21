@@ -2,7 +2,6 @@
 import "./globals.css";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
-import AuthGate from "@/components/AuthGate";
 
 export const metadata: Metadata = {
   title: "Black Truth TV",
@@ -16,10 +15,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body>
-        {/* 🔒 Global lock: everything except /login goes through AuthGate */}
-        <AuthGate>{children}</AuthGate>
-      </body>
+      <body>{children}</body>
     </html>
   );
 }
