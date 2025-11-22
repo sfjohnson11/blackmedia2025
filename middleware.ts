@@ -6,8 +6,8 @@ import { createMiddlewareClient } from "@supabase/auth-helpers-nextjs";
 export async function middleware(req: NextRequest) {
   const res = NextResponse.next();
 
-  // ✅ Keep the Supabase session in sync via cookies.
-  // ❌ DO NOT redirect or block any route here.
+  // ✅ Only sync the Supabase session cookie.
+  // ❌ Do NOT redirect or block any route here.
   const supabase = createMiddlewareClient({ req, res });
   await supabase.auth.getSession();
 
