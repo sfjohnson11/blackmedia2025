@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
@@ -93,7 +94,9 @@ export default function FreedomSchoolClient() {
       const validRows = rows.filter((r) => r.url && r.url.trim().length > 0);
 
       if (!validRows.length) {
-        setSoftError("Freedom School lessons are coming soon. Please check back.");
+        setSoftError(
+          "Freedom School lessons are coming soon. Please check back."
+        );
         setLessons([]);
         setLoading(false);
         return;
@@ -155,6 +158,16 @@ export default function FreedomSchoolClient() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-black via-[#050b1a] to-black text-white">
       <div className="max-w-6xl mx-auto px-4 py-10 space-y-10">
+        {/* 🔙 Back to Member Hub button */}
+        <div className="mb-2">
+          <Link
+            href="/app"
+            className="inline-flex items-center gap-2 rounded-full border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-800"
+          >
+            ← Back to Member Hub
+          </Link>
+        </div>
+
         {/* HERO */}
         <section className="rounded-2xl border border-slate-800 bg-slate-900/70 px-6 py-6 md:px-8 md:py-8 shadow-xl">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
@@ -163,8 +176,9 @@ export default function FreedomSchoolClient() {
                 Freedom School
               </h1>
               <p className="mt-2 text-sm md:text-base text-slate-300 max-w-2xl">
-                Our virtual classroom is always open. Watch lessons, listen to audio,
-                and download study packets from the Freedom School library.
+                Our virtual classroom is always open. Watch lessons, listen to
+                audio, and download study packets from the Freedom School
+                library.
               </p>
             </div>
             <div className="flex flex-col items-start md:items-end gap-2">
@@ -269,8 +283,8 @@ export default function FreedomSchoolClient() {
 
                 {active.kind === "other" && (
                   <p className="text-sm text-slate-300">
-                    This file type can&apos;t be played directly, but you can open it in
-                    a new tab:
+                    This file type can&apos;t be played directly, but you can
+                    open it in a new tab:
                     <br />
                     <a
                       href={active.url}
