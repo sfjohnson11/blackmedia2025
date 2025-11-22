@@ -1,13 +1,21 @@
 // middleware.ts
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { createMiddlewareClient } from "@supabase/auth-helpers-nextjs";
 
-export function middleware(req: NextRequest) {
-  // 🔹 No redirects, no auth checks.
-  // Just let Next.js handle routing normally.
-  return NextResponse.next();
+export async function middleware(req: NextRequest) {
+  const res = NextResponse.next();
+
+  // ✅ Just keep the Supabase session in sync.
+  // ❌ Do NOT redirect or block anything here.
+  const supabase = createMiddlewareClient({ req, res });
+  await supabase.auth.getSession();
+
+  return res;
 }
 
+// Apply to all routes except Next.js internals and static files
 export const config = {
   matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 };
+
