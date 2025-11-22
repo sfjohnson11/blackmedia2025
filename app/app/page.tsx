@@ -21,9 +21,9 @@ export default function AppPage() {
 
         {/* QUICK ACTIONS */}
         <section className="grid gap-5 md:grid-cols-3">
-          {/* Live / Home */}
+          {/* 🔁 CHANGE IS HERE: link to /watch instead of / */}
           <Link
-            href="/"
+            href="/watch"
             className="group rounded-2xl border border-slate-800 bg-slate-950/70 p-5 shadow-lg hover:border-amber-400 hover:bg-slate-900/80 transition-colors"
           >
             <div className="mb-3 inline-flex rounded-full bg-amber-500/10 px-3 py-1 text-[11px] font-semibold text-amber-300">
