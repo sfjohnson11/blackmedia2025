@@ -1,11 +1,10 @@
 // app/login/page.tsx
 "use client";
 
-import { useState, FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
-// Only two roles in your app now
 type Role = "admin" | "member";
 
 export default function LoginPage() {
@@ -29,6 +28,7 @@ export default function LoginPage() {
     });
 
     if (authError || !data?.user) {
+      console.error("Supabase login error:", authError);
       setError(authError?.message || "Login failed. Check your email and password.");
       setSubmitting(false);
       return;
@@ -42,11 +42,11 @@ export default function LoginPage() {
       return;
     }
 
-    // 2️⃣ Load role from user_profiles (by id first, then email as backup)
+    // 2️⃣ Look up role in user_profiles (id first, then email)
     let role: Role = "member";
 
     try {
-      // Try by id (id = auth UID in your user_profiles table)
+      // Try by id (UUID = auth UID)
       const { data: profileById, error: profileByIdError } = await supabase
         .from("user_profiles")
         .select("id, role, email")
@@ -59,7 +59,7 @@ export default function LoginPage() {
 
       let finalRole: string | null = profileById?.role as string | null;
 
-      // If nothing by id, try by email as a backup
+      // Fallback: by email
       if (!finalRole) {
         const { data: profileByEmail, error: profileByEmailError } = await supabase
           .from("user_profiles")
@@ -81,7 +81,7 @@ export default function LoginPage() {
         const normalized = finalRole.toLowerCase().trim();
         role = normalized === "admin" ? "admin" : "member";
       } else {
-        // No profile row found at all — human-readable explanation
+        // No profile row found at all
         setError(
           "Your login is valid, but your profile is not set up yet. " +
             "Ask the site admin to add you to the user_profiles table with a role."
