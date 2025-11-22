@@ -15,7 +15,7 @@ export default function AppPage() {
       <p>Welcome to the member app homepage.</p>
       <p style={{ marginTop: "8px", fontSize: "14px", opacity: 0.8 }}>
         From here you&apos;ll be able to jump to live channels, Freedom School, and
-        On-Demand once we wire them up.
+        On-Demand once everything is wired.
       </p>
     </div>
   );
