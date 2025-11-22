@@ -3,107 +3,103 @@
 
 import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
+// Only two roles in your app now
 type Role = "admin" | "member";
-
-type UserProfile = {
-  id: string;
-  email: string | null;
-  role: Role | null;
-};
 
 export default function LoginPage() {
   const router = useRouter();
+  const supabase = createClientComponentClient();
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function handleSubmit(e: FormEvent) {
+  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
     setSubmitting(true);
 
-    // 1️⃣ Supabase auth: email + password
+    // 1️⃣ Supabase email/password login
     const { data, error: authError } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
 
-    if (authError || !data.user) {
-      if (authError?.message?.toLowerCase().includes("invalid login")) {
-        setError("Your email or password is incorrect. Please try again.");
-      } else {
-        setError(
-          "We could not log you in. Please check your email and password and try again."
-        );
-      }
+    if (authError || !data?.user) {
+      setError(authError?.message || "Login failed. Check your email and password.");
       setSubmitting(false);
       return;
     }
 
     const user = data.user;
 
-    // 2️⃣ Look up profile in user_profiles by UUID ONLY
-    const { data: profile, error: profileError } = await supabase
-      .from("user_profiles")
-      .select("id, email, role")
-      .eq("id", user.id)
-      .maybeSingle();
+    if (!user.email) {
+      setError("This account has no email address. Contact the site admin.");
+      setSubmitting(false);
+      return;
+    }
 
-    if (profileError) {
-      console.error("user_profiles error:", profileError);
+    // 2️⃣ Load role from user_profiles (by id first, then email as backup)
+    let role: Role = "member";
+
+    try {
+      // Try by id (id = auth UID in your user_profiles table)
+      const { data: profileById, error: profileByIdError } = await supabase
+        .from("user_profiles")
+        .select("id, role, email")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      if (profileByIdError) {
+        console.error("Error loading profile by id:", profileByIdError.message);
+      }
+
+      let finalRole: string | null = profileById?.role as string | null;
+
+      // If nothing by id, try by email as a backup
+      if (!finalRole) {
+        const { data: profileByEmail, error: profileByEmailError } = await supabase
+          .from("user_profiles")
+          .select("id, role, email")
+          .eq("email", user.email)
+          .maybeSingle();
+
+        if (profileByEmailError) {
+          console.error("Error loading profile by email:", profileByEmailError.message);
+        }
+
+        if (profileByEmail?.role) {
+          finalRole = profileByEmail.role as string;
+        }
+      }
+
+      // Normalize role
+      if (finalRole) {
+        const normalized = finalRole.toLowerCase().trim();
+        role = normalized === "admin" ? "admin" : "member";
+      } else {
+        // No profile row found at all — human-readable explanation
+        setError(
+          "Your login is valid, but your profile is not set up yet. " +
+            "Ask the site admin to add you to the user_profiles table with a role."
+        );
+        setSubmitting(false);
+        return;
+      }
+    } catch (err: any) {
+      console.error("Unexpected profile lookup error:", err);
       setError(
-        [
-          "We logged you in, but there was an error reading your profile from user_profiles.",
-          "",
-          `Supabase error: ${profileError.message}`,
-          "",
-          "This usually means a row-level security (RLS) rule or permission is blocking the read.",
-          "Make sure this user is allowed to select their own row in user_profiles."
-        ].join("\n")
+        "We logged you in, but there was an error reading your profile. " +
+          "Please contact the site admin."
       );
       setSubmitting(false);
       return;
     }
 
-    if (!profile) {
-      // 🔍 This is where you were stuck – now we show EXACTLY what we looked for
-      setError(
-        [
-          "Your login is correct, but we could not find your profile in user_profiles.",
-          "",
-          "We looked for a row in user_profiles with:",
-          `- id = ${user.id}`,
-          user.email ? `- (your email is: ${user.email})` : "",
-          "",
-          "Open Supabase → Table Editor → user_profiles and confirm there is a row with:",
-          "- id exactly equal to the id above, and",
-          "- a role column set to 'admin' or 'member'."
-        ].join("\n")
-      );
-      setSubmitting(false);
-      return;
-    }
-
-    if (!profile.role) {
-      setError(
-        [
-          "Your login is correct, but no role is assigned to your account in user_profiles.",
-          "",
-          "Open user_profiles and set the 'role' column for your row to:",
-          "- 'admin' (to access the admin dashboard), or",
-          "- 'member' (to access the member app)."
-        ].join("\n")
-      );
-      setSubmitting(false);
-      return;
-    }
-
-    const role = profile.role as Role;
-
-    // 3️⃣ Route based on role from user_profiles
+    // 3️⃣ Route based on role
     if (role === "admin") {
       router.replace("/admin");
     } else {
@@ -152,7 +148,6 @@ export default function LoginPage() {
               padding: "10px",
               borderRadius: "8px",
               marginBottom: "16px",
-              whiteSpace: "pre-wrap",
               fontSize: "13px",
             }}
           >
@@ -160,10 +155,7 @@ export default function LoginPage() {
           </div>
         )}
 
-        <form
-          onSubmit={handleSubmit}
-          style={{ display: "grid", gap: "16px" }}
-        >
+        <form onSubmit={handleSubmit} style={{ display: "grid", gap: "16px" }}>
           <input
             type="email"
             placeholder="Email"
@@ -176,6 +168,7 @@ export default function LoginPage() {
               border: "1px solid #475569",
               background: "#020617",
               color: "#fff",
+              fontSize: "14px",
             }}
           />
 
@@ -191,6 +184,7 @@ export default function LoginPage() {
               border: "1px solid #475569",
               background: "#020617",
               color: "#fff",
+              fontSize: "14px",
             }}
           />
 
@@ -203,6 +197,9 @@ export default function LoginPage() {
               background: "#fbbf24",
               color: "#000",
               fontWeight: "bold",
+              fontSize: "14px",
+              cursor: submitting ? "wait" : "pointer",
+              opacity: submitting ? 0.7 : 1,
             }}
           >
             {submitting ? "Signing in..." : "Sign In"}
