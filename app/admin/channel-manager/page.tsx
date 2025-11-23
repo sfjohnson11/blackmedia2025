@@ -1,211 +1,250 @@
-"use client"
+"use client";
 
-import { useState, useEffect } from "react"
-import { supabase } from "@/lib/supabase"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
-import { AlertCircle, CheckCircle, RefreshCw, Save } from "lucide-react"
-import Link from "next/link"
+import { useState, useEffect } from "react";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import Link from "next/link";
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { AlertCircle, CheckCircle, RefreshCw, Save } from "lucide-react";
 
 type Channel = {
-  id: string
-  name: string
-  slug?: string | null
-  description?: string | null
-  logo_url?: string | null
-  password_protected?: boolean | null
-  youtube_channel_id?: string | null
-}
+  id: string;
+  name: string;
+  slug?: string | null;
+  description?: string | null;
+  logo_url?: string | null;
+  password_protected?: boolean | null;
+};
 
-export default function ChannelManager() {
-  const [channels, setChannels] = useState<Channel[]>([])
-  const [editedChannels, setEditedChannels] = useState<Record<string, Channel>>({})
-  const [isLoading, setIsLoading] = useState(true)
-  const [isSaving, setIsSaving] = useState(false)
-  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
+type Message = {
+  type: "success" | "error";
+  text: string;
+};
 
-  // Load all channels
+export default function ChannelManagerPage() {
+  const supabase = createClientComponentClient();
+  const [channels, setChannels] = useState<Channel[]>([]);
+  const [edited, setEdited] = useState<
+    Record<
+      string,
+      {
+        name: string;
+        slug: string;
+        logo_url: string;
+      }
+    >
+  >({});
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [message, setMessage] = useState<Message | null>(null);
+
+  // 🔄 Load channels
   useEffect(() => {
+    let cancelled = false;
+
     async function loadChannels() {
-      setIsLoading(true)
+      setIsLoading(true);
+      setMessage(null);
+
       try {
-        const { data, error } = await supabase.from("channels").select("*").order("id")
+        const { data, error } = await supabase
+          .from("channels")
+          .select("id, name, slug, description, logo_url, password_protected");
 
-        if (error) throw error
+        if (error) {
+          throw error;
+        }
 
-        // Sort channels by ID numerically
-        data.sort((a: any, b: any) => {
-          const aNum = Number.parseInt(String(a.id), 10)
-          const bNum = Number.parseInt(String(b.id), 10)
-          return aNum - bNum
-        })
+        const sorted = (data || []).sort((a: any, b: any) => {
+          const aNum = Number.parseInt(String(a.id), 10);
+          const bNum = Number.parseInt(String(b.id), 10);
+          return aNum - bNum;
+        }) as Channel[];
 
-        const typed = (data || []) as Channel[]
-        setChannels(typed)
+        if (!cancelled) {
+          setChannels(sorted);
 
-        // Initialize edited channels as a full copy of each row
-        const initialEdited: Record<string, Channel> = {}
-        typed.forEach((channel) => {
-          initialEdited[channel.id] = { ...channel }
-        })
-        setEditedChannels(initialEdited)
-      } catch (error) {
-        console.error("Error loading channels:", error)
-        setMessage({
-          type: "error",
-          text: "Failed to load channels. Please try again.",
-        })
+          const initial: Record<
+            string,
+            { name: string; slug: string; logo_url: string }
+          > = {};
+          sorted.forEach((ch) => {
+            initial[ch.id] = {
+              name: ch.name ?? "",
+              slug: ch.slug ?? "",
+              logo_url: ch.logo_url ?? "",
+            };
+          });
+          setEdited(initial);
+        }
+      } catch (e) {
+        console.error("Error loading channels:", e);
+        if (!cancelled) {
+          setMessage({
+            type: "error",
+            text: "Failed to load channels. Please try again.",
+          });
+        }
       } finally {
-        setIsLoading(false)
+        if (!cancelled) setIsLoading(false);
       }
     }
 
-    loadChannels()
-  }, [])
+    loadChannels();
 
-  // Generic field change helper
-  const handleFieldChange = <K extends keyof Channel>(
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase]);
+
+  // 📝 Track changes
+  function updateField(
     channelId: string,
-    field: K,
-    value: Channel[K],
-  ) => {
-    setEditedChannels((prev) => ({
+    field: "name" | "slug" | "logo_url",
+    value: string
+  ) {
+    setEdited((prev) => ({
       ...prev,
       [channelId]: {
-        ...(prev[channelId] || ({} as Channel)),
+        ...(prev[channelId] || { name: "", slug: "", logo_url: "" }),
         [field]: value,
       },
-    }))
+    }));
   }
 
-  // Save changes
-  const saveChanges = async () => {
-    setIsSaving(true)
-    setMessage(null)
+  // 🧮 Have any edits?
+  const hasChanges = channels.some((ch) => {
+    const current = edited[ch.id];
+    if (!current) return false;
+    return (
+      current.name !== (ch.name ?? "") ||
+      current.slug !== (ch.slug ?? "") ||
+      current.logo_url !== (ch.logo_url ?? "")
+    );
+  });
+
+  // 💾 Save edits
+  async function saveChanges() {
+    if (!hasChanges) {
+      setMessage({ type: "success", text: "No changes to save." });
+      return;
+    }
+
+    setIsSaving(true);
+    setMessage(null);
 
     try {
-      // Find which channels have changed (any relevant field)
-      const changedChannels = channels.filter((channel) => {
-        const edited = editedChannels[channel.id]
-        if (!edited) return false
-
+      const changed = channels.filter((ch) => {
+        const current = edited[ch.id];
+        if (!current) return false;
         return (
-          edited.name !== channel.name ||
-          (edited.slug || "") !== (channel.slug || "") ||
-          (edited.description || "") !== (channel.description || "") ||
-          (edited.logo_url || "") !== (channel.logo_url || "") ||
-          (edited.youtube_channel_id || "") !== (channel.youtube_channel_id || "") ||
-          (edited.password_protected ?? false) !== (channel.password_protected ?? false)
-        )
-      })
+          current.name !== (ch.name ?? "") ||
+          current.slug !== (ch.slug ?? "") ||
+          current.logo_url !== (ch.logo_url ?? "")
+        );
+      });
 
-      if (changedChannels.length === 0) {
-        setMessage({ type: "success", text: "No changes to save." })
-        setIsSaving(false)
-        return
-      }
+      for (const ch of changed) {
+        const values = edited[ch.id];
+        if (!values) continue;
 
-      // Update each changed channel with all editable fields
-      const updates = changedChannels.map((channel) => {
-        const edited = editedChannels[channel.id]
-        return supabase
+        const { error } = await supabase
           .from("channels")
           .update({
-            name: edited.name,
-            slug: edited.slug ?? null,
-            description: edited.description ?? null,
-            logo_url: edited.logo_url ?? null,
-            youtube_channel_id: edited.youtube_channel_id ?? null,
-            password_protected: edited.password_protected ?? false,
+            name: values.name,
+            slug: values.slug || null,
+            logo_url: values.logo_url || null,
           })
-          .eq("id", channel.id)
-      })
+          .eq("id", ch.id);
 
-      await Promise.all(updates)
+        if (error) {
+          console.error("Error updating channel", ch.id, error);
+          throw error;
+        }
+      }
 
-      // Refresh channel list
-      const { data, error } = await supabase.from("channels").select("*").order("id")
-      if (error) throw error
+      // Reload fresh data so UI matches DB
+      const { data: refreshed, error: reloadError } = await supabase
+        .from("channels")
+        .select("id, name, slug, description, logo_url, password_protected");
 
-      data.sort((a: any, b: any) => {
-        const aNum = Number.parseInt(String(a.id), 10)
-        const bNum = Number.parseInt(String(b.id), 10)
-        return aNum - bNum
-      })
+      if (reloadError) {
+        throw reloadError;
+      }
 
-      const refreshed = (data || []) as Channel[]
-      setChannels(refreshed)
+      const sorted = (refreshed || []).sort((a: any, b: any) => {
+        const aNum = Number.parseInt(String(a.id), 10);
+        const bNum = Number.parseInt(String(b.id), 10);
+        return aNum - bNum;
+      }) as Channel[];
 
-      // Re-sync editedChannels with fresh data
-      const newEdited: Record<string, Channel> = {}
-      refreshed.forEach((channel) => {
-        newEdited[channel.id] = { ...channel }
-      })
-      setEditedChannels(newEdited)
+      setChannels(sorted);
+
+      const resetEdited: Record<
+        string,
+        { name: string; slug: string; logo_url: string }
+      > = {};
+      sorted.forEach((ch) => {
+        resetEdited[ch.id] = {
+          name: ch.name ?? "",
+          slug: ch.slug ?? "",
+          logo_url: ch.logo_url ?? "",
+        };
+      });
+      setEdited(resetEdited);
 
       setMessage({
         type: "success",
-        text: `Successfully updated ${changedChannels.length} channel${
-          changedChannels.length !== 1 ? "s" : ""
+        text: `Updated ${changed.length} channel${
+          changed.length === 1 ? "" : "s"
         }.`,
-      })
-
-      // Force refresh cache to ensure changes are visible
-      try {
-        await fetch("/api/refresh-cache", {
-          method: "GET",
-          headers: {
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-          },
-        })
-      } catch (e) {
-        console.warn("Failed to refresh cache, changes may not be immediately visible")
-      }
-    } catch (error) {
-      console.error("Error saving changes:", error)
+      });
+    } catch (e) {
+      console.error("Error saving changes:", e);
       setMessage({
         type: "error",
         text: "Failed to save changes. Please try again.",
-      })
+      });
     } finally {
-      setIsSaving(false)
+      setIsSaving(false);
     }
   }
 
-  // Reset changes
-  const resetChanges = () => {
-    const initialEdited: Record<string, Channel> = {}
-    channels.forEach((channel) => {
-      initialEdited[channel.id] = { ...channel }
-    })
-    setEditedChannels(initialEdited)
-    setMessage(null)
+  // 🔄 Reset to DB values
+  function resetChanges() {
+    const reset: Record<
+      string,
+      { name: string; slug: string; logo_url: string }
+    > = {};
+    channels.forEach((ch) => {
+      reset[ch.id] = {
+        name: ch.name ?? "",
+        slug: ch.slug ?? "",
+        logo_url: ch.logo_url ?? "",
+      };
+    });
+    setEdited(reset);
+    setMessage(null);
   }
 
-  // Check if any changes have been made
-  const hasChanges = channels.some((channel) => {
-    const edited = editedChannels[channel.id]
-    if (!edited) return false
-    return (
-      edited.name !== channel.name ||
-      (edited.slug || "") !== (channel.slug || "") ||
-      (edited.description || "") !== (channel.description || "") ||
-      (edited.logo_url || "") !== (channel.logo_url || "") ||
-      (edited.youtube_channel_id || "") !== (channel.youtube_channel_id || "") ||
-      (edited.password_protected ?? false) !== (channel.password_protected ?? false)
-    )
-  })
-
-  return {
-    /* outer wrapper */
-  } (
+  return (
     <div className="container mx-auto py-8">
       <div className="flex justify-between items-center mb-6">
         <div>
           <h1 className="text-3xl font-bold">Channel Manager</h1>
-          <p className="text-gray-400">Update channel names, slugs, logos, and other info</p>
+          <p className="text-gray-400">
+            Update channel names, slugs, and artwork URLs.
+          </p>
         </div>
         <Link href="/admin">
           <Button variant="outline">Back to Admin</Button>
@@ -215,11 +254,17 @@ export default function ChannelManager() {
       {message && (
         <div
           className={`mb-6 p-4 rounded-md flex items-center gap-2 ${
-            message.type === "success" ? "bg-green-900/20 text-green-400" : "bg-red-900/20 text-red-400"
+            message.type === "success"
+              ? "bg-green-900/20 text-green-400"
+              : "bg-red-900/20 text-red-400"
           }`}
         >
-          {message.type === "success" ? <CheckCircle className="h-5 w-5" /> : <AlertCircle className="h-5 w-5" />}
-          {message.text}
+          {message.type === "success" ? (
+            <CheckCircle className="h-5 w-5" />
+          ) : (
+            <AlertCircle className="h-5 w-5" />
+          )}
+          <span>{message.text}</span>
         </div>
       )}
 
@@ -227,7 +272,8 @@ export default function ChannelManager() {
         <CardHeader>
           <CardTitle>Channels</CardTitle>
           <CardDescription>
-            Edit channel display names, slugs, descriptions, thumbnails, and YouTube IDs.
+            Edit the display name, slug (URL piece), and logo URL for each
+            channel.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -237,158 +283,126 @@ export default function ChannelManager() {
             </div>
           ) : (
             <div className="space-y-6">
-              {channels.map((channel) => {
-                const edited = editedChannels[channel.id] || channel
+              {channels.map((ch) => {
+                const current = edited[ch.id] || {
+                  name: "",
+                  slug: "",
+                  logo_url: "",
+                };
+
+                const changed =
+                  current.name !== (ch.name ?? "") ||
+                  current.slug !== (ch.slug ?? "") ||
+                  current.logo_url !== (ch.logo_url ?? "");
+
                 return (
                   <div
-                    key={channel.id}
-                    className="rounded-md border border-slate-700 bg-slate-900/60 p-4 space-y-3"
+                    key={ch.id}
+                    className="border border-slate-700 rounded-lg p-4 bg-slate-900/60"
                   >
-                    <div className="flex items-center justify-between">
-                      <Label className="font-bold">
-                        Channel {channel.id}
-                      </Label>
-                      <span className="text-xs text-gray-400">
-                        ID: {channel.id}
+                    <div className="mb-2 flex items-center justify-between">
+                      <span className="text-xs uppercase tracking-wide text-slate-400">
+                        Channel {ch.id}
                       </span>
+                      {changed && (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300">
+                          Modified
+                        </span>
+                      )}
                     </div>
 
-                    <div className="grid gap-3 md:grid-cols-2">
-                      {/* Name */}
-                      <div className="space-y-1">
-                        <Label htmlFor={`name-${channel.id}`}>Name</Label>
+                    <div className="grid gap-3 md:grid-cols-3">
+                      <div className="flex flex-col gap-1">
+                        <Label
+                          htmlFor={`name-${ch.id}`}
+                          className="text-xs text-slate-300"
+                        >
+                          Name
+                        </Label>
                         <Input
-                          id={`name-${channel.id}`}
-                          value={edited.name || ""}
+                          id={`name-${ch.id}`}
+                          value={current.name}
                           onChange={(e) =>
-                            handleFieldChange(channel.id, "name", e.target.value)
+                            updateField(ch.id, "name", e.target.value)
                           }
                           className={
-                            edited.name !== channel.name ? "border-yellow-500" : ""
-                          }
-                        />
-                      </div>
-
-                      {/* Slug */}
-                      <div className="space-y-1">
-                        <Label htmlFor={`slug-${channel.id}`}>Slug</Label>
-                        <Input
-                          id={`slug-${channel.id}`}
-                          value={edited.slug || ""}
-                          onChange={(e) =>
-                            handleFieldChange(channel.id, "slug", e.target.value)
-                          }
-                          placeholder="music-only, resistance-tv, etc."
-                          className={
-                            (edited.slug || "") !== (channel.slug || "")
-                              ? "border-yellow-500"
+                            changed && current.name !== (ch.name ?? "")
+                              ? "border-amber-500"
                               : ""
                           }
                         />
                       </div>
 
-                      {/* Logo URL */}
-                      <div className="space-y-1">
-                        <Label htmlFor={`logo-${channel.id}`}>Logo URL (thumbnail)</Label>
+                      <div className="flex flex-col gap-1">
+                        <Label
+                          htmlFor={`slug-${ch.id}`}
+                          className="text-xs text-slate-300"
+                        >
+                          Slug (URL)
+                        </Label>
                         <Input
-                          id={`logo-${channel.id}`}
-                          value={edited.logo_url || ""}
+                          id={`slug-${ch.id}`}
+                          placeholder="e.g. ch-31-music"
+                          value={current.slug}
                           onChange={(e) =>
-                            handleFieldChange(channel.id, "logo_url", e.target.value)
+                            updateField(ch.id, "slug", e.target.value)
                           }
-                          placeholder="https://.../object/public/channel31/..."
                           className={
-                            (edited.logo_url || "") !== (channel.logo_url || "")
-                              ? "border-yellow-500"
-                              : ""
-                          }
-                        />
-                        {edited.logo_url && (
-                          <div className="mt-2 text-xs text-gray-400">
-                            Preview:
-                            <div className="mt-1 h-20 w-36 overflow-hidden rounded border border-slate-700 bg-black">
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img
-                                src={edited.logo_url}
-                                alt={edited.name || `Channel ${channel.id}`}
-                                className="h-full w-full object-cover"
-                              />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* YouTube Channel ID */}
-                      <div className="space-y-1">
-                        <Label htmlFor={`yt-${channel.id}`}>YouTube Channel ID (optional)</Label>
-                        <Input
-                          id={`yt-${channel.id}`}
-                          value={edited.youtube_channel_id || ""}
-                          onChange={(e) =>
-                            handleFieldChange(
-                              channel.id,
-                              "youtube_channel_id",
-                              e.target.value,
-                            )
-                          }
-                          placeholder="UCxxxxxxxxx…"
-                          className={
-                            (edited.youtube_channel_id || "") !==
-                            (channel.youtube_channel_id || "")
-                              ? "border-yellow-500"
+                            changed && current.slug !== (ch.slug ?? "")
+                              ? "border-amber-500"
                               : ""
                           }
                         />
                       </div>
 
-                      {/* Description */}
-                      <div className="space-y-1 md:col-span-2">
-                        <Label htmlFor={`desc-${channel.id}`}>Description</Label>
-                        <textarea
-                          id={`desc-${channel.id}`}
-                          value={edited.description || ""}
+                      <div className="flex flex-col gap-1">
+                        <Label
+                          htmlFor={`logo-${ch.id}`}
+                          className="text-xs text-slate-300"
+                        >
+                          Logo URL
+                        </Label>
+                        <Input
+                          id={`logo-${ch.id}`}
+                          placeholder="https://…"
+                          value={current.logo_url}
                           onChange={(e) =>
-                            handleFieldChange(
-                              channel.id,
-                              "description",
-                              e.target.value,
-                            )
+                            updateField(ch.id, "logo_url", e.target.value)
                           }
-                          className="w-full rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-sm"
-                          rows={2}
+                          className={
+                            changed && current.logo_url !== (ch.logo_url ?? "")
+                              ? "border-amber-500"
+                              : ""
+                          }
                         />
                       </div>
+                    </div>
 
-                      {/* Password Protected */}
-                      <div className="space-y-1">
-                        <Label>Password Protected?</Label>
-                        <div className="flex items-center gap-2 text-sm">
-                          <input
-                            id={`protected-${channel.id}`}
-                            type="checkbox"
-                            checked={!!edited.password_protected}
-                            onChange={(e) =>
-                              handleFieldChange(
-                                channel.id,
-                                "password_protected",
-                                e.target.checked,
-                              )
-                            }
+                    {current.logo_url && (
+                      <div className="mt-3 text-xs text-slate-400">
+                        Preview:
+                        <div className="mt-1 h-16 w-28 border border-slate-700 rounded bg-black/50 overflow-hidden">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={current.logo_url}
+                            alt={`Channel ${ch.id} logo preview`}
+                            className="h-full w-full object-contain"
                           />
-                          <span className="text-gray-300">
-                            Require channel-level password
-                          </span>
                         </div>
                       </div>
-                    </div>
+                    )}
                   </div>
-                )
+                );
               })}
             </div>
           )}
         </CardContent>
         <CardFooter className="flex justify-between">
-          <Button variant="outline" onClick={resetChanges} disabled={isLoading || isSaving || !hasChanges}>
+          <Button
+            variant="outline"
+            onClick={resetChanges}
+            disabled={isLoading || isSaving || !hasChanges}
+          >
             Reset Changes
           </Button>
           <Button
@@ -399,7 +413,7 @@ export default function ChannelManager() {
             {isSaving ? (
               <>
                 <RefreshCw className="h-4 w-4 animate-spin" />
-                Saving...
+                Saving…
               </>
             ) : (
               <>
@@ -412,14 +426,13 @@ export default function ChannelManager() {
       </Card>
 
       <div className="mt-8">
-        <h2 className="text-xl font-bold mb-4">Tips</h2>
-        <ul className="list-disc pl-5 space-y-2 text-gray-300">
-          <li>Changes will be applied immediately after saving</li>
-          <li>You may need to refresh the browser to see changes on other pages</li>
-          <li>Channel IDs cannot be changed, only display name, slug, logo, etc.</li>
-          <li>Use this to set channel 31’s thumbnail and any custom slugs.</li>
+        <h2 className="text-xl font-bold mb-2">Notes</h2>
+        <ul className="list-disc pl-5 space-y-1 text-gray-300 text-sm">
+          <li>Slug is the text used in URLs if you ever link by slug.</li>
+          <li>Logo URL should be a public Supabase Storage URL.</li>
+          <li>Channel IDs cannot be changed here.</li>
         </ul>
       </div>
     </div>
-  )
+  );
 }
