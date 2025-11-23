@@ -12,7 +12,6 @@ async function getChannels() {
       return []
     }
 
-    // Sort channels numerically by ID
     return (data as Channel[]).sort((a, b) => {
       const aNum = Number.parseInt(a.id, 10)
       const bNum = Number.parseInt(b.id, 10)
@@ -35,8 +34,8 @@ export default async function ChannelsPage() {
           <p className="mb-4">
             Please set up your database tables and add some channels to get started.
           </p>
-          <Link href="/" className="text-red-500 hover:underline">
-            Return to Home
+          <Link href="/app" className="text-red-500 hover:underline">
+            Return to Member Hub
           </Link>
         </div>
       </div>
@@ -46,35 +45,63 @@ export default async function ChannelsPage() {
   return (
     <div className="pt-24 px-4 md:px-10 pb-10">
 
-      {/* ===== PAGE TITLE ===== */}
+      {/* ===== PAGE TITLE + ACTION BUTTONS ===== */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-8">
         <h1 className="text-3xl font-bold">All Channels</h1>
 
-        {/* ===== ON-DEMAND BUTTON ===== */}
-        <Link href="/on-demand">
-          <button
-            className="
-              mt-4 md:mt-0
-              rounded-lg 
-              bg-red-600 
-              px-5 
-              py-2.5 
-              text-sm 
-              font-semibold 
-              text-white 
-              shadow-md 
-              hover:bg-red-700 
-              transition 
-              focus:outline-none 
-              focus:ring-2 
-              focus:ring-red-500 
-              focus:ring-offset-2 
-              focus:ring-offset-black
-            "
-          >
-            🎬 Watch On-Demand
-          </button>
-        </Link>
+        <div className="flex flex-col md:flex-row gap-3 mt-4 md:mt-0">
+
+          {/* === BACK TO MEMBER HUB (YOUR BUTTON) === */}
+          <Link href="/app">
+            <button
+              className="
+                rounded-lg 
+                bg-gray-700 
+                px-5 
+                py-2.5 
+                text-sm 
+                font-semibold 
+                text-white 
+                shadow-md 
+                hover:bg-gray-600 
+                transition 
+                focus:outline-none 
+                focus:ring-2 
+                focus:ring-gray-500 
+                focus:ring-offset-2 
+                focus:ring-offset-black
+              "
+            >
+              🔙 Back to Member Hub
+            </button>
+          </Link>
+
+          {/* === EXISTING ON-DEMAND BUTTON === */}
+          <Link href="/on-demand">
+            <button
+              className="
+                rounded-lg 
+                bg-red-600 
+                px-5 
+                py-2.5 
+                text-sm 
+                font-semibold 
+                text-white 
+                shadow-md 
+                hover:bg-red-700 
+                transition 
+                focus:outline-none 
+                focus:ring-2 
+                focus:ring-red-500 
+                focus:ring-offset-2 
+                focus:ring-offset-black
+              "
+            >
+              🎬 Watch On-Demand
+            </button>
+          </Link>
+
+        </div>
       </div>
 
       {/* ===== CHANNEL GRID ===== */}
