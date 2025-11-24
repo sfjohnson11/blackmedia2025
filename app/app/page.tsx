@@ -142,24 +142,24 @@ export default async function AppPage() {
             </div>
           </Link>
 
-          {/* News / Live Channel 21 */}
-          <Link href="/watch/21" className="group">
+          {/* 🔴 Daily News / Breaking News Hub → NOW GOES TO /breaking-news */}
+          <Link href="/breaking-news" className="group">
             <div className="h-full rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-700/40 via-slate-950 to-black p-5 shadow-lg transition group-hover:border-slate-400/80 group-hover:shadow-slate-900/40">
               <div className="flex items-center justify-between gap-3 mb-3">
                 <h2 className="text-xl font-bold flex items-center gap-2">
                   <span className="text-lg">📰</span>
-                  Daily News &amp; Live Channel 21
+                  Daily News &amp; Updates
                 </h2>
                 <span className="text-[11px] uppercase tracking-wide text-slate-300">
                   Black Truth TV Report
                 </span>
               </div>
               <p className="text-sm text-slate-200 mb-3">
-                Jump straight into Channel 21 — your live stream that mirrors the YouTube
-                news feed.
+                Go to the Breaking News Hub for Channel 21 — watch the live stream and
+                see today&apos;s top stories in one place.
               </p>
               <p className="text-xs text-slate-400">
-                Use this tile as your quick launch to the live news channel.
+                Channel 21 is your live news window. Click here to enter the news hub.
               </p>
             </div>
           </Link>
