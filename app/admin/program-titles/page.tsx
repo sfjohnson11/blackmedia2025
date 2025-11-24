@@ -1,9 +1,10 @@
+// app/admin/program-titles/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
-import { ArrowLeft, Save, Loader2 } from "lucide-react";
+import { ArrowLeft, Save, Loader2, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 type Program = {
@@ -19,17 +20,16 @@ export default function ProgramTitlesPage() {
   const supabase = createClientComponentClient();
 
   const [programs, setPrograms] = useState<Program[]>([]);
-  const [originalPrograms, setOriginalPrograms] = useState<Program[]>([]);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [savingId, setSavingId] = useState<number | null>(null);
+  const [globalError, setGlobalError] = useState<string | null>(null);
+  const [globalSuccess, setGlobalSuccess] = useState<string | null>(null);
 
   // Load all programs
   async function loadPrograms() {
     setLoading(true);
-    setErrorMsg(null);
-    setSuccessMsg(null);
+    setGlobalError(null);
+    setGlobalSuccess(null);
 
     const { data, error } = await supabase
       .from("programs")
@@ -39,15 +39,18 @@ export default function ProgramTitlesPage() {
 
     if (error) {
       console.error("Load error:", error);
-      setErrorMsg(error.message);
+      setGlobalError(error.message);
     } else {
-      const rows = (data || []) as Program[];
-      setPrograms(rows);
-      setOriginalPrograms(rows); // snapshot for change detection
+      setPrograms((data || []) as Program[]);
     }
 
     setLoading(false);
   }
+
+  useEffect(() => {
+    loadPrograms();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Update a program title locally
   function updateTitle(id: number, value: string) {
@@ -56,66 +59,47 @@ export default function ProgramTitlesPage() {
     );
   }
 
-  // Save only changed titles
-  async function saveAll() {
-    setSaving(true);
-    setErrorMsg(null);
-    setSuccessMsg(null);
+  // Save ONE program's title
+  async function saveOne(id: number) {
+    setGlobalError(null);
+    setGlobalSuccess(null);
+    setSavingId(id);
+
+    const program = programs.find((p) => p.id === id);
+    if (!program) {
+      setGlobalError("Program not found in local state.");
+      setSavingId(null);
+      return;
+    }
 
     try {
-      // Find rows where title actually changed
-      const changed = programs.filter((p) => {
-        const original = originalPrograms.find((o) => o.id === p.id);
-        if (!original) return false;
-        const origTitle = original.title ?? "";
-        const newTitle = p.title ?? "";
-        return origTitle !== newTitle;
-      });
+      const { error } = await supabase
+        .from("programs")
+        .update({ title: program.title })
+        .eq("id", program.id);
 
-      if (changed.length === 0) {
-        setSuccessMsg("No changes to save.");
-        setSaving(false);
-        return;
-      }
-
-      // IMPORTANT:
-      // We ONLY update the "title" column for the changed rows.
-      // We NEVER touch mp4_url or any storage/bucket objects here.
-      const results = await Promise.all(
-        changed.map((p) =>
-          supabase
-            .from("programs")
-            .update({ title: p.title })
-            .eq("id", p.id)
-        )
-      );
-
-      const firstError = results.find((r) => r.error)?.error;
-      if (firstError) {
-        console.error("Save error:", firstError);
-        setErrorMsg(firstError.message);
+      if (error) {
+        console.error("Save error:", error);
+        setGlobalError(error.message);
       } else {
-        setSuccessMsg(`Updated ${changed.length} title${changed.length === 1 ? "" : "s"} successfully!`);
-        // refresh snapshot so further edits compare correctly
-        setOriginalPrograms(programs);
+        setGlobalSuccess(
+          `Updated title for Channel ${program.channel_id} (${new Date(
+            program.start_time
+          ).toLocaleString()})`
+        );
       }
     } catch (e: any) {
       console.error("Unexpected save error:", e);
-      setErrorMsg(e?.message || "Unexpected error saving titles.");
+      setGlobalError(e?.message || "Unexpected error saving title.");
     }
 
-    setSaving(false);
+    setSavingId(null);
   }
-
-  useEffect(() => {
-    loadPrograms();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   return (
     <div className="min-h-screen bg-black text-white p-6">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-bold">Program Title Editor</h1>
 
         <Link href="/admin">
@@ -126,75 +110,96 @@ export default function ProgramTitlesPage() {
         </Link>
       </div>
 
-      {/* Alerts */}
-      {errorMsg && (
-        <div className="mb-4 p-3 rounded bg-red-900/50 border border-red-500 text-red-200 text-sm">
-          {errorMsg}
+      {/* Global alerts */}
+      {globalError && (
+        <div className="mb-4 rounded border border-red-500 bg-red-900/50 p-3 text-sm text-red-200">
+          {globalError}
         </div>
       )}
-
-      {successMsg && (
-        <div className="mb-4 p-3 rounded bg-green-900/40 border border-green-500 text-green-200 text-sm">
-          {successMsg}
+      {globalSuccess && (
+        <div className="mb-4 rounded border border-emerald-500 bg-emerald-900/40 p-3 text-sm text-emerald-100">
+          {globalSuccess}
         </div>
       )}
 
       {/* Loading */}
       {loading ? (
-        <div className="text-center py-10 text-gray-300">
-          <Loader2 className="h-6 w-6 animate-spin mx-auto mb-3" />
+        <div className="py-10 text-center text-gray-300">
+          <Loader2 className="mx-auto mb-3 h-6 w-6 animate-spin" />
           Loading programs…
         </div>
       ) : (
         <div className="space-y-6">
-          {programs.map((program) => (
-            <div
-              key={program.id}
-              className="border border-gray-700 bg-gray-900/60 rounded p-4"
-            >
-              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                <div>
-                  <p className="text-xs text-gray-400 mb-1">
-                    Channel {program.channel_id} •{" "}
-                    {new Date(program.start_time).toLocaleString()}
-                  </p>
-                  <p className="text-xs text-blue-300 break-all">
-                    {program.mp4_url}
-                  </p>
-                </div>
+          {programs.map((program) => {
+            const isSaving = savingId === program.id;
 
-                <input
-                  type="text"
-                  value={program.title || ""}
-                  onChange={(e) => updateTitle(program.id, e.target.value)}
-                  className="w-full md:w-80 rounded-md border border-gray-600 bg-gray-950 px-3 py-2 text-sm text-white focus:border-amber-400 focus:ring-1 focus:ring-amber-400"
-                  placeholder="Enter program title"
-                />
+            return (
+              <div
+                key={program.id}
+                className="rounded border border-gray-700 bg-gray-900/60 p-4"
+              >
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  {/* Info */}
+                  <div className="min-w-0">
+                    <p className="mb-1 text-xs text-gray-400">
+                      Channel {program.channel_id} •{" "}
+                      {new Date(program.start_time).toLocaleString()}
+                    </p>
+                    <p className="break-all text-xs text-blue-300">
+                      {program.mp4_url}
+                    </p>
+                  </div>
+
+                  {/* Title + Save */}
+                  <div className="flex flex-col items-stretch gap-2 md:w-96 md:flex-row md:items-center">
+                    <input
+                      type="text"
+                      value={program.title || ""}
+                      onChange={(e) => updateTitle(program.id, e.target.value)}
+                      className="w-full rounded-md border border-gray-600 bg-gray-950 px-3 py-2 text-sm text-white focus:border-amber-400 focus:ring-1 focus:ring-amber-400"
+                      placeholder="Enter program title"
+                    />
+
+                    <Button
+                      type="button"
+                      onClick={() => saveOne(program.id)}
+                      disabled={isSaving}
+                      className="shrink-0 bg-amber-600 hover:bg-amber-700"
+                    >
+                      {isSaving ? (
+                        <>
+                          <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                          Saving…
+                        </>
+                      ) : (
+                        <>
+                          <Save className="mr-1 h-4 w-4" />
+                          Save
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </div>
               </div>
+            );
+          })}
+
+          {programs.length === 0 && (
+            <div className="py-6 text-center text-sm text-gray-400">
+              No programs found in the database.
             </div>
-          ))}
+          )}
         </div>
       )}
 
-      {/* Save Button */}
-      <div className="mt-10 flex justify-end">
-        <Button
-          onClick={saveAll}
-          disabled={saving || loading}
-          className="bg-amber-600 hover:bg-amber-700"
-        >
-          {saving ? (
-            <>
-              <Loader2 className="h-4 w-4 animate-spin mr-2" />
-              Saving…
-            </>
-          ) : (
-            <>
-              <Save className="h-4 w-4 mr-2" />
-              Save All Changes
-            </>
-          )}
-        </Button>
+      {/* Optional footer note */}
+      <div className="mt-8 flex items-center gap-2 text-xs text-gray-500">
+        <Check className="h-3 w-3 text-emerald-400" />
+        <span>
+          Each row has its own <span className="font-semibold">Save</span>{" "}
+          button. Updating one title does not change any other titles or mp4
+          files.
+        </span>
       </div>
     </div>
   );
