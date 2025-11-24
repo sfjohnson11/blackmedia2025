@@ -1,46 +1,50 @@
+// app/login/page.tsx
 "use client";
 
 import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
-type Mode = "signin" | "signup";
+type Mode = "signIn" | "signUp";
 
 export default function LoginPage() {
   const router = useRouter();
   const supabase = createClientComponentClient();
 
-  const [mode, setMode] = useState<Mode>("signin");
+  const [mode, setMode] = useState<Mode>("signIn");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // Read ?redirect=... (e.g. /watch/21 or /admin)
   function getRedirectParam(): string | null {
     if (typeof window === "undefined") return null;
     const params = new URLSearchParams(window.location.search);
-    const redirect = params.get("redirect");
-    if (redirect && redirect.startsWith("/")) return redirect;
+    const redirectTo = params.get("redirect");
+    if (redirectTo && redirectTo.startsWith("/")) return redirectTo;
     return null;
   }
 
   async function loadRoleAndRedirect() {
     const redirectTo = getRedirectParam();
 
+    // Get fresh session
     const {
       data: { session },
+      error: sessionError,
     } = await supabase.auth.getSession();
 
-    if (!session) {
-      // No session – default to member hub
-      router.push("/app");
+    if (sessionError || !session) {
+      // If somehow no session, just send back to login
+      router.push("/login");
       return;
     }
 
     const user = session.user;
     let role: string | null = null;
 
-    // Try by email
+    // Try to load profile BY EMAIL (matches your table)
     if (user.email) {
       const { data: profileByEmail, error: emailError } = await supabase
         .from("user_profiles")
@@ -57,35 +61,20 @@ export default function LoginPage() {
       }
     }
 
-    // Fallback: by id
-    if (!role) {
-      const { data: profileById, error: idError } = await supabase
-        .from("user_profiles")
-        .select("role")
-        .eq("id", user.id)
-        .maybeSingle();
-
-      if (idError) {
-        console.error("Error loading profile by id:", idError.message);
-      }
-
-      if (profileById?.role) {
-        role = String(profileById.role);
-      }
-    }
-
+    // Default to member when no profile or no role
     const finalRole = (role || "member").toLowerCase().trim();
 
-    // 1️⃣ If ?redirect=/... exists, always honor it first
+    // 1️⃣ If a redirect was requested (e.g. /watch/21), honor it
     if (redirectTo) {
       router.push(redirectTo);
       return;
     }
 
-    // 2️⃣ Otherwise route by role
+    // 2️⃣ Otherwise, route by role
     if (finalRole === "admin") {
       router.push("/admin");
     } else {
+      // Member & brand-new users → Member Hub at /app
       router.push("/app");
     }
   }
@@ -96,10 +85,8 @@ export default function LoginPage() {
     setErrorMsg(null);
 
     try {
-      if (mode === "signin") {
-        // =======================
-        // EXISTING USER: SIGN IN
-        // =======================
+      if (mode === "signIn") {
+        // 🔐 SIGN IN EXISTING USER
         const { data, error } = await supabase.auth.signInWithPassword({
           email,
           password,
@@ -110,38 +97,38 @@ export default function LoginPage() {
           return;
         }
 
+        // Use same redirect + role logic
         await loadRoleAndRedirect();
       } else {
-        // =======================
-        // NEW USER: SIGN UP
-        // =======================
+        // ✨ SIGN UP NEW USER
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
         });
 
-        if (error || !data.user) {
-          setErrorMsg(error?.message ?? "Could not create account.");
+        if (error) {
+          setErrorMsg(error.message || "Error creating account.");
           return;
         }
 
-        // Immediately sign them in (some setups don't auto-login on signUp)
-        const { error: loginError } = await supabase.auth.signInWithPassword({
+        // Make sure they are logged in after sign-up
+        const { error: signInError } = await supabase.auth.signInWithPassword({
           email,
           password,
         });
 
-        if (loginError) {
-          console.error("Error signing in after sign-up:", loginError.message);
-          setErrorMsg(
-            "Account created, but automatic login failed. Please try signing in."
-          );
+        if (signInError) {
+          setErrorMsg(signInError.message || "Account created, but sign-in failed.");
           return;
         }
 
-        // Now they’re logged in → send them to /app or /admin / redirect
+        // 🔁 NO insert into user_profiles here.
+        // We just treat them as member by default if no profile row yet.
         await loadRoleAndRedirect();
       }
+    } catch (err) {
+      console.error("Auth error:", err);
+      setErrorMsg("Something went wrong. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -164,8 +151,8 @@ export default function LoginPage() {
       <div
         style={{
           width: "100%",
-          maxWidth: 440,
-          background: "rgba(10,20,40,0.9)",
+          maxWidth: 460,
+          background: "rgba(10,20,40,0.92)",
           borderRadius: 16,
           padding: "24px 22px 22px",
           boxShadow: "0 18px 45px rgba(0,0,0,0.65)",
@@ -174,7 +161,7 @@ export default function LoginPage() {
       >
         <h1
           style={{
-            fontSize: "1.8rem",
+            fontSize: "1.75rem",
             fontWeight: 700,
             marginBottom: 4,
             textAlign: "center",
@@ -184,70 +171,62 @@ export default function LoginPage() {
         </h1>
         <p
           style={{
-            fontSize: 14,
+            fontSize: 13,
             opacity: 0.8,
             textAlign: "center",
-            marginBottom: 18,
+            marginBottom: 16,
           }}
         >
-          {mode === "signin"
-            ? "Sign in with your email and password."
-            : "Create your member account to access the network."}
+          {mode === "signIn"
+            ? "Sign in to the Member Hub or Admin Dashboard."
+            : "Create your Black Truth TV member account."}
         </p>
 
-        {/* Mode toggle */}
+        {/* Tabs */}
         <div
           style={{
-            display: "flex",
-            marginBottom: 16,
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
             borderRadius: 999,
             background: "rgba(15,23,42,0.9)",
-            border: "1px solid rgba(148,163,184,0.5)",
-            padding: 2,
+            padding: 3,
+            marginBottom: 16,
           }}
         >
           <button
             type="button"
-            onClick={() => {
-              setMode("signin");
-              setErrorMsg(null);
-            }}
+            onClick={() => setMode("signIn")}
             style={{
-              flex: 1,
-              padding: "6px 8px",
-              borderRadius: 999,
               border: "none",
-              cursor: "pointer",
+              borderRadius: 999,
+              padding: "6px 10px",
               fontSize: 13,
               fontWeight: 600,
+              cursor: "pointer",
               background:
-                mode === "signin"
-                  ? "linear-gradient(135deg,#FFD700,#fbbf24,#f97316)"
+                mode === "signIn"
+                  ? "linear-gradient(135deg, #FFD700 0%, #fbbf24 35%, #f97316 80%)"
                   : "transparent",
-              color: mode === "signin" ? "#111827" : "#e5e7eb",
+              color: mode === "signIn" ? "#111827" : "#e5e7eb",
             }}
           >
             Sign In
           </button>
           <button
             type="button"
-            onClick={() => {
-              setMode("signup");
-              setErrorMsg(null);
-            }}
+            onClick={() => setMode("signUp")}
             style={{
-              flex: 1,
-              padding: "6px 8px",
-              borderRadius: 999,
               border: "none",
-              cursor: "pointer",
+              borderRadius: 999,
+              padding: "6px 10px",
               fontSize: 13,
               fontWeight: 600,
+              cursor: "pointer",
               background:
-                mode === "signup"
-                  ? "linear-gradient(135deg,#FFD700,#fbbf24,#f97316)"
+                mode === "signUp"
+                  ? "linear-gradient(135deg, #FFD700 0%, #fbbf24 35%, #f97316 80%)"
                   : "transparent",
-              color: mode === "signup" ? "#111827" : "#e5e7eb",
+              color: mode === "signUp" ? "#111827" : "#e5e7eb",
             }}
           >
             Sign Up
@@ -257,7 +236,7 @@ export default function LoginPage() {
         {errorMsg && (
           <div
             style={{
-              marginBottom: 16,
+              marginBottom: 14,
               padding: "10px 12px",
               borderRadius: 8,
               background: "rgba(127,29,29,0.2)",
@@ -328,10 +307,10 @@ export default function LoginPage() {
             }}
           >
             {loading
-              ? mode === "signin"
+              ? mode === "signIn"
                 ? "Signing in…"
                 : "Creating account…"
-              : mode === "signin"
+              : mode === "signIn"
               ? "Sign In"
               : "Sign Up"}
           </button>
