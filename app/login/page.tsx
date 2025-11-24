@@ -14,6 +14,9 @@ export default function LoginPage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // IMPORTANT: your admin email from user_profiles
+  const ADMIN_EMAIL = "info@sfjohnsonconsulting.com";
+
   async function handleSignIn(e: FormEvent) {
     e.preventDefault();
     setLoading(true);
@@ -40,10 +43,26 @@ export default function LoginPage() {
 
     const user = data.user;
 
-    // Look up role from user_profiles by email (matches your table)
+    // 🔍 Load profile to determine role
     let role: string | null = null;
 
-    if (user.email) {
+    // 1) Try by ID first (best with RLS: auth.uid() = id)
+    const { data: profileById, error: idError } = await supabase
+      .from("user_profiles")
+      .select("id, role, email")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (idError) {
+      console.error("Error loading profile by id:", idError.message);
+    }
+
+    if (profileById?.role) {
+      role = String(profileById.role);
+    }
+
+    // 2) Fallback: try by email if still no role
+    if (!role && user.email) {
       const { data: profileByEmail, error: emailError } = await supabase
         .from("user_profiles")
         .select("id, role, email")
@@ -51,12 +70,20 @@ export default function LoginPage() {
         .maybeSingle();
 
       if (emailError) {
-        console.error("Error loading profile by email:", emailError.message);
+        console.error(
+          "Error loading profile by email (fallback):",
+          emailError.message
+        );
       }
 
       if (profileByEmail?.role) {
         role = String(profileByEmail.role);
       }
+    }
+
+    // 3) FINAL SAFETY: hard-wire your admin email as admin
+    if (!role && user.email === ADMIN_EMAIL) {
+      role = "admin";
     }
 
     const finalRole = (role || "member").toLowerCase().trim();
