@@ -19,6 +19,7 @@ export default function ProgramTitlesPage() {
   const supabase = createClientComponentClient();
 
   const [programs, setPrograms] = useState<Program[]>([]);
+  const [originalPrograms, setOriginalPrograms] = useState<Program[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -40,7 +41,9 @@ export default function ProgramTitlesPage() {
       console.error("Load error:", error);
       setErrorMsg(error.message);
     } else {
-      setPrograms(data || []);
+      const rows = (data || []) as Program[];
+      setPrograms(rows);
+      setOriginalPrograms(rows); // snapshot for change detection
     }
 
     setLoading(false);
@@ -53,29 +56,51 @@ export default function ProgramTitlesPage() {
     );
   }
 
-  // Save all updated titles
+  // Save only changed titles
   async function saveAll() {
     setSaving(true);
     setErrorMsg(null);
     setSuccessMsg(null);
 
     try {
-      const updates = programs.map((p) => ({
-        id: p.id,
-        title: p.title,
-      }));
-
-      const { error } = await supabase.from("programs").upsert(updates, {
-        onConflict: "id",
+      // Find rows where title actually changed
+      const changed = programs.filter((p) => {
+        const original = originalPrograms.find((o) => o.id === p.id);
+        if (!original) return false;
+        const origTitle = original.title ?? "";
+        const newTitle = p.title ?? "";
+        return origTitle !== newTitle;
       });
 
-      if (error) {
-        console.error("Save error:", error);
-        setErrorMsg(error.message);
+      if (changed.length === 0) {
+        setSuccessMsg("No changes to save.");
+        setSaving(false);
+        return;
+      }
+
+      // IMPORTANT:
+      // We ONLY update the "title" column for the changed rows.
+      // We NEVER touch mp4_url or any storage/bucket objects here.
+      const results = await Promise.all(
+        changed.map((p) =>
+          supabase
+            .from("programs")
+            .update({ title: p.title })
+            .eq("id", p.id)
+        )
+      );
+
+      const firstError = results.find((r) => r.error)?.error;
+      if (firstError) {
+        console.error("Save error:", firstError);
+        setErrorMsg(firstError.message);
       } else {
-        setSuccessMsg("All titles updated successfully!");
+        setSuccessMsg(`Updated ${changed.length} title${changed.length === 1 ? "" : "s"} successfully!`);
+        // refresh snapshot so further edits compare correctly
+        setOriginalPrograms(programs);
       }
     } catch (e: any) {
+      console.error("Unexpected save error:", e);
       setErrorMsg(e?.message || "Unexpected error saving titles.");
     }
 
@@ -84,6 +109,7 @@ export default function ProgramTitlesPage() {
 
   useEffect(() => {
     loadPrograms();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
