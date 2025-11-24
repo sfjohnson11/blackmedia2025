@@ -142,27 +142,27 @@ export default async function AppPage() {
             </div>
           </Link>
 
-          {/* News / Extras */}
-          <Link href="/news" className="group">
-            <div className="h-full rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-700/40 via-slate-950 to-black p-5 shadow-lg transition group-hover:border-slate-400/80 group-hover:shadow-slate-900/40">
-              <div className="flex items-center justify-between gap-3 mb-3">
-                <h2 className="text-xl font-bold flex items-center gap-2">
-                  <span className="text-lg">📰</span>
-                  Daily News &amp; Updates
-                </h2>
-                <span className="text-[11px] uppercase tracking-wide text-slate-300">
-                  Black Truth TV Report
-                </span>
-              </div>
-              <p className="text-sm text-slate-200 mb-3">
-                Check the latest Black Truth TV updates, news segments, and featured
-                stories across the network.
-              </p>
-              <p className="text-xs text-slate-400">
-                Use this hub as your launchpad to the daily news report.
-              </p>
-            </div>
-          </Link>
+          {/* News / Extras – now goes to LIVE CHANNEL 21 */}
+<Link href="/watch?channel=21" className="group">
+  <div className="h-full rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-700/40 via-slate-950 to-black p-5 shadow-lg transition group-hover:border-slate-400/80 group-hover:shadow-slate-900/40">
+    <div className="flex items-center justify-between gap-3 mb-3">
+      <h2 className="text-xl font-bold flex items-center gap-2">
+        <span className="text-lg">📰</span>
+        Daily News &amp; Updates
+      </h2>
+      <span className="text-[11px] uppercase tracking-wide text-slate-300">
+        Black Truth TV Report · Channel 21 Live
+      </span>
+    </div>
+    <p className="text-sm text-slate-200 mb-3">
+      Check the latest Black Truth TV updates, news segments, and featured
+      stories streaming live on Channel 21.
+    </p>
+    <p className="text-xs text-slate-400">
+      Click to jump straight to the live YouTube simulcast on Channel 21.
+    </p>
+  </div>
+</Link>
         </section>
       </main>
     </div>
