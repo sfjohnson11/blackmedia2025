@@ -5,50 +5,52 @@ import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
-type Mode = "signIn" | "signUp";
+type Mode = "signin" | "signup";
 
 export default function LoginPage() {
   const router = useRouter();
   const supabase = createClientComponentClient();
 
-  const [mode, setMode] = useState<Mode>("signIn");
+  const [mode, setMode] = useState<Mode>("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // Read ?redirect=... (e.g. /watch/21 or /admin)
-  function getRedirectParam(): string | null {
-    if (typeof window === "undefined") return null;
-    const params = new URLSearchParams(window.location.search);
-    const redirectTo = params.get("redirect");
-    if (redirectTo && redirectTo.startsWith("/")) return redirectTo;
-    return null;
-  }
+  // 🔐 SIGN IN (EXISTING USERS: ADMIN + MEMBERS)
+  async function handleSignIn(e: FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setErrorMsg(null);
 
-  async function loadRoleAndRedirect() {
-    const redirectTo = getRedirectParam();
+    // Read ?redirect=/something (e.g. /admin)
+    let redirectTo: string | null = null;
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      redirectTo = params.get("redirect");
+    }
 
-    // Get fresh session
-    const {
-      data: { session },
-      error: sessionError,
-    } = await supabase.auth.getSession();
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
 
-    if (sessionError || !session) {
-      // If somehow no session, just send back to login
-      router.push("/login");
+    if (error || !data.user) {
+      setErrorMsg(error?.message ?? "Invalid email or password.");
+      setLoading(false);
       return;
     }
 
-    const user = session.user;
+    const user = data.user;
+
+    // 🔧 Load profile BY EMAIL (matches your table)
     let role: string | null = null;
 
-    // Try to load profile BY EMAIL (matches your table)
     if (user.email) {
       const { data: profileByEmail, error: emailError } = await supabase
         .from("user_profiles")
-        .select("role")
+        .select("id, role, email")
         .eq("email", user.email)
         .maybeSingle();
 
@@ -61,78 +63,81 @@ export default function LoginPage() {
       }
     }
 
-    // Default to member when no profile or no role
     const finalRole = (role || "member").toLowerCase().trim();
 
-    // 1️⃣ If a redirect was requested (e.g. /watch/21), honor it
-    if (redirectTo) {
+    // If URL requested a specific redirect (like /admin), honor it
+    if (redirectTo && redirectTo.startsWith("/")) {
       router.push(redirectTo);
+      setLoading(false);
       return;
     }
 
-    // 2️⃣ Otherwise, route by role
+    // ✅ ROUTING YOU ASKED FOR:
+    // Admin → /admin
+    // Member → /app (member hub)
     if (finalRole === "admin") {
       router.push("/admin");
     } else {
-      // Member & brand-new users → Member Hub at /app
       router.push("/app");
     }
+
+    setLoading(false);
   }
 
-  async function handleSubmit(e: FormEvent) {
+  // 🆕 SIGN UP NEW MEMBER (NO ADMIN HERE)
+  async function handleSignUp(e: FormEvent) {
     e.preventDefault();
-    setLoading(true);
     setErrorMsg(null);
 
-    try {
-      if (mode === "signIn") {
-        // 🔐 SIGN IN EXISTING USER
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
-
-        if (error || !data.user) {
-          setErrorMsg(error?.message ?? "Invalid email or password.");
-          return;
-        }
-
-        // Use same redirect + role logic
-        await loadRoleAndRedirect();
-      } else {
-        // ✨ SIGN UP NEW USER
-        const { data, error } = await supabase.auth.signUp({
-          email,
-          password,
-        });
-
-        if (error) {
-          setErrorMsg(error.message || "Error creating account.");
-          return;
-        }
-
-        // Make sure they are logged in after sign-up
-        const { error: signInError } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
-
-        if (signInError) {
-          setErrorMsg(signInError.message || "Account created, but sign-in failed.");
-          return;
-        }
-
-        // 🔁 NO insert into user_profiles here.
-        // We just treat them as member by default if no profile row yet.
-        await loadRoleAndRedirect();
-      }
-    } catch (err) {
-      console.error("Auth error:", err);
-      setErrorMsg("Something went wrong. Please try again.");
-    } finally {
-      setLoading(false);
+    if (password !== confirmPassword) {
+      setErrorMsg("Passwords do not match.");
+      return;
     }
+
+    setLoading(true);
+
+    // 1️⃣ Create Supabase auth user
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+    });
+
+    if (error || !data.user) {
+      console.error("Supabase signUp error:", error);
+      setErrorMsg(error?.message ?? "Error creating account.");
+      setLoading(false);
+      return;
+    }
+
+    const user = data.user;
+
+    // 2️⃣ Create or update user_profiles row (member by default)
+    const { error: profileError } = await supabase
+      .from("user_profiles")
+      .upsert(
+        {
+          id: user.id,        // auth user id
+          email: user.email,  // email
+          role: "member",     // all self-signups are members
+        },
+        {
+          onConflict: "id",   // if row already exists → update instead of error
+        }
+      );
+
+    if (profileError) {
+      console.error("Profile upsert error:", profileError);
+      setErrorMsg("Database error saving new user.");
+      setLoading(false);
+      return;
+    }
+
+    // 3️⃣ After signup, send them to login to sign in
+    router.push("/login");
+    setLoading(false);
   }
+
+  const onSubmit = mode === "signin" ? handleSignIn : handleSignUp;
 
   return (
     <div
@@ -152,9 +157,9 @@ export default function LoginPage() {
         style={{
           width: "100%",
           maxWidth: 460,
-          background: "rgba(10,20,40,0.92)",
+          background: "rgba(10,20,40,0.9)",
           borderRadius: 16,
-          padding: "24px 22px 22px",
+          padding: "28px 24px 24px",
           boxShadow: "0 18px 45px rgba(0,0,0,0.65)",
           border: "1px solid rgba(255,255,255,0.08)",
         }}
@@ -163,7 +168,7 @@ export default function LoginPage() {
           style={{
             fontSize: "1.75rem",
             fontWeight: 700,
-            marginBottom: 4,
+            marginBottom: 6,
             textAlign: "center",
           }}
         >
@@ -171,62 +176,62 @@ export default function LoginPage() {
         </h1>
         <p
           style={{
-            fontSize: 13,
+            fontSize: 14,
             opacity: 0.8,
             textAlign: "center",
-            marginBottom: 16,
+            marginBottom: 18,
           }}
         >
-          {mode === "signIn"
-            ? "Sign in to the Member Hub or Admin Dashboard."
-            : "Create your Black Truth TV member account."}
+          Sign in if you already have an account, or create a new member login.
         </p>
 
-        {/* Tabs */}
+        {/* Toggle Sign In / Sign Up */}
         <div
           style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr",
-            borderRadius: 999,
-            background: "rgba(15,23,42,0.9)",
-            padding: 3,
+            display: "flex",
+            justifyContent: "center",
+            gap: 8,
             marginBottom: 16,
           }}
         >
           <button
             type="button"
-            onClick={() => setMode("signIn")}
+            onClick={() => {
+              setMode("signin");
+              setErrorMsg(null);
+            }}
             style={{
-              border: "none",
+              flex: 1,
+              padding: "8px 0",
               borderRadius: 999,
-              padding: "6px 10px",
+              border: "1px solid rgba(248,250,252,0.2)",
+              background:
+                mode === "signin" ? "rgba(248,250,252,0.15)" : "transparent",
+              color: "#f9fafb",
               fontSize: 13,
               fontWeight: 600,
               cursor: "pointer",
-              background:
-                mode === "signIn"
-                  ? "linear-gradient(135deg, #FFD700 0%, #fbbf24 35%, #f97316 80%)"
-                  : "transparent",
-              color: mode === "signIn" ? "#111827" : "#e5e7eb",
             }}
           >
             Sign In
           </button>
           <button
             type="button"
-            onClick={() => setMode("signUp")}
+            onClick={() => {
+              setMode("signup");
+              setErrorMsg(null);
+            }}
             style={{
-              border: "none",
+              flex: 1,
+              padding: "8px 0",
               borderRadius: 999,
-              padding: "6px 10px",
+              border: "1px solid rgba(248,250,252,0.2)",
+              background:
+                mode === "signup" ? "rgba(248,250,252,0.15)" : "transparent",
+              color: "#f9fafb",
               fontSize: 13,
               fontWeight: 600,
               cursor: "pointer",
-              background:
-                mode === "signUp"
-                  ? "linear-gradient(135deg, #FFD700 0%, #fbbf24 35%, #f97316 80%)"
-                  : "transparent",
-              color: mode === "signUp" ? "#111827" : "#e5e7eb",
             }}
           >
             Sign Up
@@ -236,7 +241,7 @@ export default function LoginPage() {
         {errorMsg && (
           <div
             style={{
-              marginBottom: 14,
+              marginBottom: 16,
               padding: "10px 12px",
               borderRadius: 8,
               background: "rgba(127,29,29,0.2)",
@@ -248,7 +253,8 @@ export default function LoginPage() {
           </div>
         )}
 
-        <form onSubmit={handleSubmit} style={{ display: "grid", gap: 12 }}>
+        <form onSubmit={onSubmit} style={{ display: "grid", gap: 12 }}>
+          {/* Email */}
           <label style={{ fontSize: 13 }}>
             <span style={{ display: "block", marginBottom: 4 }}>Email</span>
             <input
@@ -268,6 +274,7 @@ export default function LoginPage() {
             />
           </label>
 
+          {/* Password */}
           <label style={{ fontSize: 13 }}>
             <span style={{ display: "block", marginBottom: 4 }}>Password</span>
             <input
@@ -286,6 +293,30 @@ export default function LoginPage() {
               }}
             />
           </label>
+
+          {/* Confirm Password for Sign Up only */}
+          {mode === "signup" && (
+            <label style={{ fontSize: 13 }}>
+              <span style={{ display: "block", marginBottom: 4 }}>
+                Confirm Password
+              </span>
+              <input
+                type="password"
+                required
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "9px 10px",
+                  borderRadius: 8,
+                  border: "1px solid rgba(148,163,184,0.7)",
+                  background: "rgba(15,23,42,0.9)",
+                  color: "#fff",
+                  fontSize: 14,
+                }}
+              />
+            </label>
+          )}
 
           <button
             type="submit"
@@ -307,10 +338,10 @@ export default function LoginPage() {
             }}
           >
             {loading
-              ? mode === "signIn"
+              ? mode === "signin"
                 ? "Signing in…"
                 : "Creating account…"
-              : mode === "signIn"
+              : mode === "signin"
               ? "Sign In"
               : "Sign Up"}
           </button>
