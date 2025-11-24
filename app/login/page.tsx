@@ -1,52 +1,53 @@
-// app/login/page.tsx
 "use client";
 
 import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
+type Mode = "signin" | "signup";
+
 export default function LoginPage() {
   const router = useRouter();
   const supabase = createClientComponentClient();
 
+  const [mode, setMode] = useState<Mode>("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [name, setName] = useState("");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    setLoading(true);
-    setErrorMsg(null);
+  function getRedirectParam(): string | null {
+    if (typeof window === "undefined") return null;
+    const params = new URLSearchParams(window.location.search);
+    const redirect = params.get("redirect");
+    if (redirect && redirect.startsWith("/")) return redirect;
+    return null;
+  }
 
-    // Read ?redirect=... (e.g. /admin or /watch/21) if present
-    let redirectTo: string | null = null;
-    if (typeof window !== "undefined") {
-      const params = new URLSearchParams(window.location.search);
-      redirectTo = params.get("redirect");
-    }
+  async function loadRoleAndRedirect() {
+    // Read ?redirect=... if present
+    const redirectTo = getRedirectParam();
 
-    // 1️⃣ Login with Supabase
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    // Get current session
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
 
-    if (error || !data.user) {
-      setErrorMsg(error?.message ?? "Invalid email or password.");
-      setLoading(false);
+    if (!session) {
+      // No session – just go to member hub as fallback
+      router.push("/app");
       return;
     }
 
-    const user = data.user;
-
-    // 2️⃣ Load profile BY EMAIL (matches your table)
+    const user = session.user;
     let role: string | null = null;
 
+    // Preferred: look up by email (your profiles table stores email + role)
     if (user.email) {
       const { data: profileByEmail, error: emailError } = await supabase
         .from("user_profiles")
-        .select("id, role, email")
+        .select("role")
         .eq("email", user.email)
         .maybeSingle();
 
@@ -59,28 +60,116 @@ export default function LoginPage() {
       }
     }
 
-    // Default to member if somehow missing
+    // Fallback: by id
+    if (!role) {
+      const { data: profileById, error: idError } = await supabase
+        .from("user_profiles")
+        .select("role")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      if (idError) {
+        console.error("Error loading profile by id:", idError.message);
+      }
+
+      if (profileById?.role) {
+        role = String(profileById.role);
+      }
+    }
+
     const finalRole = (role || "member").toLowerCase().trim();
 
-    // 3️⃣ Redirect logic
-
-    // If ?redirect=/something was on the URL, honor it first
-    if (redirectTo && redirectTo.startsWith("/")) {
+    // 1️⃣ If a redirect= was provided (e.g. /admin or /watch/21), always honor that first
+    if (redirectTo) {
       router.push(redirectTo);
-      setLoading(false);
       return;
     }
 
-    // Otherwise, route by role:
-    //   admin  → /admin
-    //   member → /app   ✅ THIS IS THE CHANGE
+    // 2️⃣ Otherwise route by role
     if (finalRole === "admin") {
       router.push("/admin");
     } else {
+      // Default member hub
       router.push("/app");
     }
+  }
 
-    setLoading(false);
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setErrorMsg(null);
+
+    try {
+      if (mode === "signin") {
+        // =======================
+        // EXISTING USER: SIGN IN
+        // =======================
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+
+        if (error || !data.user) {
+          setErrorMsg(error?.message ?? "Invalid email or password.");
+          return;
+        }
+
+        // After successful sign-in, figure out role + redirect
+        await loadRoleAndRedirect();
+      } else {
+        // =======================
+        // NEW USER: SIGN UP
+        // =======================
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+        });
+
+        if (error || !data.user) {
+          setErrorMsg(error?.message ?? "Could not create account.");
+          return;
+        }
+
+        const user = data.user;
+
+        // Create / upsert user_profiles row with role = member
+        try {
+          await supabase.from("user_profiles").upsert(
+            {
+              id: user.id,
+              email: user.email,
+              role: "member",
+              // Optional name if your table has it
+              name: name || null,
+            },
+            { onConflict: "id" }
+          );
+        } catch (profileError) {
+          console.error("Error upserting user profile:", profileError);
+          // We don't block login on this – worst case they are still a member with no profile row
+        }
+
+        // Some Supabase setups don’t return a session on signUp,
+        // so we sign them in immediately after.
+        const { error: loginError } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+
+        if (loginError) {
+          console.error("Error signing in after sign-up:", loginError.message);
+          setErrorMsg(
+            "Account created, but automatic login failed. Please try signing in."
+          );
+          return;
+        }
+
+        // Now that they’re signed in, redirect based on role (member → /app)
+        await loadRoleAndRedirect();
+      }
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -100,23 +189,23 @@ export default function LoginPage() {
       <div
         style={{
           width: "100%",
-          maxWidth: 420,
+          maxWidth: 440,
           background: "rgba(10,20,40,0.9)",
           borderRadius: 16,
-          padding: "28px 24px 24px",
+          padding: "24px 22px 22px",
           boxShadow: "0 18px 45px rgba(0,0,0,0.65)",
           border: "1px solid rgba(255,255,255,0.08)",
         }}
       >
         <h1
           style={{
-            fontSize: "1.75rem",
+            fontSize: "1.8rem",
             fontWeight: 700,
-            marginBottom: 6,
+            marginBottom: 4,
             textAlign: "center",
           }}
         >
-          Black Truth TV Login
+          Black Truth TV Access
         </h1>
         <p
           style={{
@@ -126,8 +215,69 @@ export default function LoginPage() {
             marginBottom: 18,
           }}
         >
-          Sign in with your email and password.
+          {mode === "signin"
+            ? "Sign in with your email and password."
+            : "Create your member account to access the network."}
         </p>
+
+        {/* Mode toggle */}
+        <div
+          style={{
+            display: "flex",
+            marginBottom: 16,
+            borderRadius: 999,
+            background: "rgba(15,23,42,0.9)",
+            border: "1px solid rgba(148,163,184,0.5)",
+            padding: 2,
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              setMode("signin");
+              setErrorMsg(null);
+            }}
+            style={{
+              flex: 1,
+              padding: "6px 8px",
+              borderRadius: 999,
+              border: "none",
+              cursor: "pointer",
+              fontSize: 13,
+              fontWeight: 600,
+              background:
+                mode === "signin"
+                  ? "linear-gradient(135deg,#FFD700,#fbbf24,#f97316)"
+                  : "transparent",
+              color: mode === "signin" ? "#111827" : "#e5e7eb",
+            }}
+          >
+            Sign In
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setMode("signup");
+              setErrorMsg(null);
+            }}
+            style={{
+              flex: 1,
+              padding: "6px 8px",
+              borderRadius: 999,
+              border: "none",
+              cursor: "pointer",
+              fontSize: 13,
+              fontWeight: 600,
+              background:
+                mode === "signup"
+                  ? "linear-gradient(135deg,#FFD700,#fbbf24,#f97316)"
+                  : "transparent",
+              color: mode === "signup" ? "#111827" : "#e5e7eb",
+            }}
+          >
+            Sign Up
+          </button>
+        </div>
 
         {errorMsg && (
           <div
@@ -145,6 +295,27 @@ export default function LoginPage() {
         )}
 
         <form onSubmit={handleSubmit} style={{ display: "grid", gap: 12 }}>
+          {mode === "signup" && (
+            <label style={{ fontSize: 13 }}>
+              <span style={{ display: "block", marginBottom: 4 }}>Name</span>
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Optional"
+                style={{
+                  width: "100%",
+                  padding: "9px 10px",
+                  borderRadius: 8,
+                  border: "1px solid rgba(148,163,184,0.7)",
+                  background: "rgba(15,23,42,0.9)",
+                  color: "#fff",
+                  fontSize: 14,
+                }}
+              />
+            </label>
+          )}
+
           <label style={{ fontSize: 13 }}>
             <span style={{ display: "block", marginBottom: 4 }}>Email</span>
             <input
@@ -202,7 +373,13 @@ export default function LoginPage() {
               boxShadow: "0 10px 25px rgba(180,83,9,0.5)",
             }}
           >
-            {loading ? "Signing in…" : "Sign In"}
+            {loading
+              ? mode === "signin"
+                ? "Signing in…"
+                : "Creating account…"
+              : mode === "signin"
+              ? "Sign In"
+              : "Sign Up"}
           </button>
         </form>
       </div>
