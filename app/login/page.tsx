@@ -229,6 +229,24 @@ export default function LoginPage() {
             {loading ? "Signing in…" : "Sign In"}
           </button>
         </form>
+
+        {/* 🔹 New: Request access link */}
+        <p
+          style={{
+            marginTop: 12,
+            fontSize: 12,
+            textAlign: "center",
+            opacity: 0.8,
+          }}
+        >
+          Need an account?{" "}
+          <a
+            href="/request-access"
+            style={{ color: "#facc15", textDecoration: "underline" }}
+          >
+            Request access here.
+          </a>
+        </p>
       </div>
     </div>
   );
