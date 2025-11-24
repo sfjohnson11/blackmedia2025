@@ -44,7 +44,7 @@ export default function LoginPage() {
 
     const user = data.user;
 
-    // 🔧 Load profile BY EMAIL (matches your table)
+    // 🔧 Load profile BY EMAIL (matches your user_profiles table)
     let role: string | null = null;
 
     if (user.email) {
@@ -72,7 +72,7 @@ export default function LoginPage() {
       return;
     }
 
-    // ✅ ROUTING YOU ASKED FOR:
+    // ✅ ROUTING YOU SPECIFIED:
     // Admin → /admin
     // Member → /app (member hub)
     if (finalRole === "admin") {
@@ -84,7 +84,7 @@ export default function LoginPage() {
     setLoading(false);
   }
 
-  // 🆕 SIGN UP NEW MEMBER (NO ADMIN HERE)
+  // 🆕 SIGN UP NEW MEMBER (THIS IS WHERE THE DB ERROR COMES FROM)
   async function handleSignUp(e: FormEvent) {
     e.preventDefault();
     setErrorMsg(null);
@@ -96,7 +96,7 @@ export default function LoginPage() {
 
     setLoading(true);
 
-    // 1️⃣ Create Supabase auth user
+    // 1️⃣ Create Supabase auth user (auth.users row → id is created here)
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
@@ -111,17 +111,20 @@ export default function LoginPage() {
 
     const user = data.user;
 
-    // 2️⃣ Create or update user_profiles row (member by default)
+    // 2️⃣ Create or update user_profiles row
+    // Your table columns: id, full_name, role, created_at, email,...
+    // We fill full_name with "" so it never breaks a NOT NULL constraint.
     const { error: profileError } = await supabase
       .from("user_profiles")
       .upsert(
         {
-          id: user.id,        // auth user id
-          email: user.email,  // email
-          role: "member",     // all self-signups are members
+          id: user.id,                     // auth user id (matches auth.uid())
+          email: user.email ?? email,      // email column
+          full_name: "",                   // safe default
+          role: "member",                  // all self-signups are members
         },
         {
-          onConflict: "id",   // if row already exists → update instead of error
+          onConflict: "id",                // if row exists → update instead of error
         }
       );
 
@@ -132,7 +135,7 @@ export default function LoginPage() {
       return;
     }
 
-    // 3️⃣ After signup, send them to login to sign in
+    // 3️⃣ After signup, send them to login to sign in as a normal member
     router.push("/login");
     setLoading(false);
   }
