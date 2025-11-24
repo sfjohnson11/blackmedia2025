@@ -169,9 +169,7 @@ export default function GuidePage() {
     }
 
     // Channels sorted 1..30
-    const chans = channels
-      .slice()
-      .sort((a, b) => toId(a.id) - toId(b.id));
+    const chans = channels.slice().sort((a, b) => toId(a.id) - toId(b.id));
 
     const list: Row[] = [];
     for (const ch of chans) {
@@ -254,9 +252,19 @@ export default function GuidePage() {
               Next 24 hours · Tap a row to jump to that channel
             </p>
           </div>
-          <span className="rounded-full bg-red-700 px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-white">
-            Live Lineup
-          </span>
+
+          {/* RIGHT SIDE: Back to Hub + Live Badge */}
+          <div className="flex items-center gap-2">
+            <Link
+              href="/app"
+              className="rounded-full border border-gray-700 bg-gray-900/90 px-3 py-1 text-[11px] font-semibold text-gray-100 hover:border-amber-400 hover:bg-gray-950 hover:text-amber-200 transition"
+            >
+              ← Member Hub
+            </Link>
+            <span className="rounded-full bg-red-700 px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-white">
+              Live Lineup
+            </span>
+          </div>
         </div>
       </div>
 
@@ -283,7 +291,9 @@ export default function GuidePage() {
                     ? "bg-slate-800/60 border-slate-500/60 text-slate-100"
                     : "bg-slate-900/80 border-slate-600/60 text-slate-200";
 
-            const nowStart = row.now ? parseUtcishMs(row.now.start_time) : NaN;
+            const nowStart = row.now
+              ? parseUtcishMs(row.now.start_time)
+              : NaN;
             const nowEnd =
               row.now && Number.isFinite(nowStart)
                 ? nowStart + asSeconds(row.now.duration) * 1000
@@ -370,7 +380,8 @@ export default function GuidePage() {
                           {row.next.title}
                         </span>{" "}
                         <span className="text-gray-400">
-                          · {fmtTimeLocal(parseUtcishMs(row.next.start_time))}
+                          ·{" "}
+                          {fmtTimeLocal(parseUtcishMs(row.next.start_time))}
                         </span>
                       </div>
                     )}
@@ -380,7 +391,9 @@ export default function GuidePage() {
                       <div className="text-[11px] text-gray-400">
                         <span className="text-gray-600">Later:</span>{" "}
                         {row.later.map((p, i) => {
-                          const t = fmtTimeLocal(parseUtcishMs(p.start_time));
+                          const t = fmtTimeLocal(
+                            parseUtcishMs(p.start_time),
+                          );
                           return (
                             <span
                               key={`${p.start_time}-${i}`}
