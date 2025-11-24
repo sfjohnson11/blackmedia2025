@@ -1,156 +1,236 @@
+// File: app/admin/signup-requests/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { ArrowLeft, Loader2, Mail } from "lucide-react";
+
+/*  
+   This matches your table:
+   signup_request
+   --------------------------------------------
+   id (uuid)
+   name (text)
+   email (text)
+   reason (text)
+   favorite_channel (text)
+   volunteer_interest (text)
+   donate_interest (text)
+   status (text)
+   created_at (timestamptz)
+*/
 
 type SignupRequest = {
   id: string;
-  email: string;
   name: string | null;
+  email: string | null;
   reason: string | null;
   favorite_channel: string | null;
   volunteer_interest: string | null;
   donate_interest: string | null;
-  note: string | null;
-  created_at: string;
+  status: string | null;
+  created_at: string | null;
 };
+
+const STATUS_OPTIONS = ["pending", "approved", "denied"] as const;
 
 export default function SignupRequestsPage() {
   const supabase = createClientComponentClient();
+
   const [requests, setRequests] = useState<SignupRequest[]>([]);
   const [loading, setLoading] = useState(true);
+  const [savingId, setSavingId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [infoMsg, setInfoMsg] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
+  async function loadRequests() {
+    setLoading(true);
+    setErrorMsg(null);
+    setInfoMsg(null);
 
-    async function loadRequests() {
-      setLoading(true);
-      setErrorMsg(null);
+    const { data, error } = await supabase
+      .from("signup_request")
+      .select("*")
+      .order("created_at", { ascending: false });
 
-      const { data, error } = await supabase
-        .from("signup_requests")
-        .select(
-          "id, email, name, reason, favorite_channel, volunteer_interest, donate_interest, note, created_at"
-        )
-        .order("created_at", { ascending: false });
-
-      if (cancelled) return;
-
-      if (error) {
-        console.error("Error loading signup requests:", error);
-        setErrorMsg("Could not load signup requests.");
-        setLoading(false);
-        return;
-      }
-
-      setRequests(data || []);
-      setLoading(false);
+    if (error) {
+      console.error("Error loading signup_request:", error);
+      setErrorMsg(error.message);
+    } else {
+      setRequests((data || []) as SignupRequest[]);
     }
 
+    setLoading(false);
+  }
+
+  useEffect(() => {
     loadRequests();
-    return () => {
-      cancelled = true;
-    };
-  }, [supabase]);
+  }, []);
+
+  async function updateStatus(id: string, newStatus: string) {
+    setSavingId(id);
+    setErrorMsg(null);
+    setInfoMsg(null);
+
+    const { error } = await supabase
+      .from("signup_request")
+      .update({ status: newStatus })
+      .eq("id", id);
+
+    if (error) {
+      console.error("Error updating status:", error);
+      setErrorMsg(error.message);
+    } else {
+      setRequests((prev) =>
+        prev.map((r) =>
+          r.id === id ? { ...r, status: newStatus } : r
+        )
+      );
+      setInfoMsg("Status updated.");
+    }
+
+    setSavingId(null);
+  }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-[#040814] via-[#050b1a] to-black text-white pb-10">
-      <div className="mx-auto max-w-5xl px-4 pt-8">
-        <header className="mb-6">
-          <h1 className="text-2xl font-bold tracking-tight">
-            Signup Requests
-          </h1>
-          <p className="mt-1 text-sm text-slate-300">
-            People who requested access through the Request Access form.
+    <div className="min-h-screen bg-black text-white p-6">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold">Signup Requests</h1>
+          <p className="text-sm text-slate-300">
+            Review new user signup requests for Black Truth TV.
           </p>
-        </header>
+        </div>
 
-        {loading && (
-          <p className="text-sm text-slate-300">Loading signup requests…</p>
-        )}
-
-        {errorMsg && (
-          <div className="mb-4 rounded border border-red-500/60 bg-red-950/40 p-3 text-sm text-red-100">
-            {errorMsg}
-          </div>
-        )}
-
-        {!loading && !errorMsg && requests.length === 0 && (
-          <p className="text-sm text-slate-300">No signup requests yet.</p>
-        )}
-
-        {!loading && !errorMsg && requests.length > 0 && (
-          <div className="space-y-3">
-            {requests.map((req) => (
-              <div
-                key={req.id}
-                className="rounded-lg border border-slate-700 bg-slate-900/70 p-4 text-sm"
-              >
-                <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <div>
-                    <div className="font-semibold">
-                      {req.name || "No name provided"}
-                    </div>
-                    <div className="text-xs text-slate-300">
-                      {req.email}
-                    </div>
-                  </div>
-                  <div className="text-xs text-slate-400">
-                    {new Date(req.created_at).toLocaleString()}
-                  </div>
-                </div>
-
-                {req.reason && (
-                  <div className="mt-2">
-                    <div className="text-[11px] uppercase tracking-wide text-slate-400">
-                      Why they want to join
-                    </div>
-                    <div className="text-slate-100">{req.reason}</div>
-                  </div>
-                )}
-
-                {req.favorite_channel && (
-                  <div className="mt-2">
-                    <div className="text-[11px] uppercase tracking-wide text-slate-400">
-                      Most interested in
-                    </div>
-                    <div className="text-slate-100">
-                      {req.favorite_channel}
-                    </div>
-                  </div>
-                )}
-
-                <div className="mt-2 grid gap-3 text-xs text-slate-200 md:grid-cols-2">
-                  <div>
-                    <div className="text-[11px] uppercase tracking-wide text-slate-400">
-                      Volunteer?
-                    </div>
-                    <div>{req.volunteer_interest || "—"}</div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] uppercase tracking-wide text-slate-400">
-                      Donate?
-                    </div>
-                    <div>{req.donate_interest || "—"}</div>
-                  </div>
-                </div>
-
-                {req.note && (
-                  <div className="mt-2">
-                    <div className="text-[11px] uppercase tracking-wide text-slate-400">
-                      Extra notes
-                    </div>
-                    <div className="text-slate-100 whitespace-pre-wrap">
-                      {req.note}
-                    </div>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
+        <Link href="/admin">
+          <button className="inline-flex items-center rounded-full border border-slate-600 bg-slate-900 px-4 py-2 text-xs font-semibold text-slate-100 hover:bg-slate-800 hover:border-amber-400 transition">
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back to Admin
+          </button>
+        </Link>
       </div>
+
+      {/* Alerts */}
+      {errorMsg && (
+        <div className="mb-4 rounded border border-red-500 bg-red-900/40 px-3 py-2 text-sm text-red-100">
+          {errorMsg}
+        </div>
+      )}
+      {infoMsg && (
+        <div className="mb-4 rounded border border-emerald-500 bg-emerald-900/30 px-3 py-2 text-sm text-emerald-100">
+          {infoMsg}
+        </div>
+      )}
+
+      {/* Loading */}
+      {loading ? (
+        <div className="flex flex-col items-center justify-center py-10 text-slate-300">
+          <Loader2 className="h-6 w-6 animate-spin mb-3" />
+          <span className="text-sm">Loading signup requests…</span>
+        </div>
+      ) : requests.length === 0 ? (
+        <div className="rounded-xl border border-slate-700 bg-slate-900/70 px-4 py-6 text-sm text-slate-300">
+          No signup requests yet.
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {requests.map((req) => (
+            <div
+              key={req.id}
+              className="rounded-xl border border-slate-700 bg-slate-900/70 p-4"
+            >
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                {/* Left */}
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold">
+                      {req.name || "(No name provided)"}
+                    </span>
+
+                    {req.email && (
+                      <a
+                        href={`mailto:${req.email}`}
+                        className="inline-flex items-center text-xs text-amber-300 hover:text-amber-200"
+                      >
+                        <Mail className="mr-1 h-3 w-3" />
+                        {req.email}
+                      </a>
+                    )}
+                  </div>
+
+                  <div className="text-[11px] text-slate-400">
+                    Requested:{" "}
+                    {req.created_at
+                      ? new Date(req.created_at).toLocaleString()
+                      : "—"}
+                  </div>
+
+                  <div className="mt-2 text-xs text-slate-300">
+                    <div className="font-semibold text-slate-100">
+                      Why they want to join:
+                    </div>
+                    <div className="whitespace-pre-line">
+                      {req.reason || "—"}
+                    </div>
+                  </div>
+
+                  <div className="mt-2 grid grid-cols-1 gap-2 text-xs text-slate-300 md:grid-cols-3">
+                    <div>
+                      <div className="font-semibold text-slate-100">
+                        Favorite channel:
+                      </div>
+                      <div>{req.favorite_channel || "—"}</div>
+                    </div>
+
+                    <div>
+                      <div className="font-semibold text-slate-100">
+                        Volunteer interest:
+                      </div>
+                      <div>{req.volunteer_interest || "—"}</div>
+                    </div>
+
+                    <div>
+                      <div className="font-semibold text-slate-100">
+                        Donate interest:
+                      </div>
+                      <div>{req.donate_interest || "—"}</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Right */}
+                <div className="flex flex-col items-start gap-2 md:items-end">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                    Status
+                  </div>
+
+                  <select
+                    value={(req.status || "pending").toLowerCase()}
+                    onChange={(e) => updateStatus(req.id, e.target.value)}
+                    disabled={savingId === req.id}
+                    className="rounded-md border border-slate-600 bg-slate-950 px-2 py-1 text-xs text-slate-100 focus:border-amber-400 focus:ring-1 focus:ring-amber-400"
+                  >
+                    {STATUS_OPTIONS.map((opt) => (
+                      <option key={opt} value={opt}>
+                        {opt.charAt(0).toUpperCase() + opt.slice(1)}
+                      </option>
+                    ))}
+                  </select>
+
+                  {savingId === req.id && (
+                    <span className="flex items-center gap-1 text-[11px] text-slate-300">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Saving…
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
