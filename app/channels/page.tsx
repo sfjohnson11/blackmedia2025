@@ -1,7 +1,12 @@
+// app/channels/page.tsx
 import { supabase } from "@/lib/supabase"
 import type { Channel } from "@/types"
 import { ChannelGrid } from "@/components/channel-grid"
 import Link from "next/link"
+
+// 🔥 Force this page to always be dynamic (no stale cache)
+export const dynamic = "force-dynamic"
+export const revalidate = 0
 
 async function getChannels() {
   try {
@@ -12,6 +17,7 @@ async function getChannels() {
       return []
     }
 
+    // Sort channels numerically by ID
     return (data as Channel[]).sort((a, b) => {
       const aNum = Number.parseInt(a.id, 10)
       const bNum = Number.parseInt(b.id, 10)
@@ -44,39 +50,37 @@ export default async function ChannelsPage() {
 
   return (
     <div className="pt-24 px-4 md:px-10 pb-10">
-
-      {/* ===== PAGE TITLE + ACTION BUTTONS ===== */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-8">
+      {/* ===== PAGE TITLE + BUTTONS ===== */}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-8 gap-3">
         <h1 className="text-3xl font-bold">All Channels</h1>
 
-        <div className="flex flex-col md:flex-row gap-3 mt-4 md:mt-0">
-
-          {/* === BACK TO MEMBER HUB (YOUR BUTTON) === */}
+        <div className="flex flex-col sm:flex-row gap-3">
+          {/* Back to Member Hub */}
           <Link href="/app">
             <button
               className="
-                rounded-lg 
-                bg-gray-700 
-                px-5 
-                py-2.5 
-                text-sm 
-                font-semibold 
-                text-white 
-                shadow-md 
-                hover:bg-gray-600 
-                transition 
-                focus:outline-none 
-                focus:ring-2 
-                focus:ring-gray-500 
-                focus:ring-offset-2 
+                rounded-lg
+                bg-slate-700
+                px-5
+                py-2.5
+                text-sm
+                font-semibold
+                text-white
+                shadow-md
+                hover:bg-slate-600
+                transition
+                focus:outline-none
+                focus:ring-2
+                focus:ring-slate-400
+                focus:ring-offset-2
                 focus:ring-offset-black
               "
             >
-              🔙 Back to Member Hub
+              ⬅ Back to Member Hub
             </button>
           </Link>
 
-          {/* === EXISTING ON-DEMAND BUTTON === */}
+          {/* On-Demand button */}
           <Link href="/on-demand">
             <button
               className="
@@ -100,7 +104,6 @@ export default async function ChannelsPage() {
               🎬 Watch On-Demand
             </button>
           </Link>
-
         </div>
       </div>
 
