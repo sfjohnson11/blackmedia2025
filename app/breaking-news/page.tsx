@@ -1,6 +1,7 @@
 // app/breaking-news/page.tsx
+"use client";
 
-export const dynamic = "force-dynamic";
+import Link from "next/link";
 
 export default function BreakingNewsPage() {
   return (
@@ -17,8 +18,8 @@ export default function BreakingNewsPage() {
           </h1>
           <p className="text-sm md:text-base text-slate-300 max-w-2xl">
             Live coverage on Channel 21 plus a quick snapshot of today&apos;s top
-            stories, topics, and segments. Use this hub as your control room for the
-            Black Truth TV news stream.
+            stories, topics, and segments. Use this hub as your control room for
+            the Black Truth TV news stream.
           </p>
         </section>
 
@@ -39,7 +40,7 @@ export default function BreakingNewsPage() {
                 </span>
               </div>
 
-              {/* RESPONSIVE EMBED OF /watch/21 */}
+              {/* EMBED WATCH/21 IN AN IFRAME */}
               <div className="relative w-full overflow-hidden rounded-xl border border-slate-800 bg-black shadow-md">
                 <div className="relative w-full" style={{ paddingTop: "56.25%" }}>
                   <iframe
@@ -52,45 +53,42 @@ export default function BreakingNewsPage() {
               </div>
 
               <p className="mt-3 text-xs text-slate-300">
-                This is the same live feed you see at <span className="font-mono text-amber-300">/watch/21</span>,
-                but wrapped in a news dashboard so you can send viewers here during
-                special coverage.
+                This is the same live feed as{" "}
+                <span className="font-mono text-amber-300">/watch/21</span>, wrapped
+                inside a news dashboard so you can send viewers here during special
+                coverage.
               </p>
             </div>
 
-            {/* QUICK NOTE AREA – you can customize this text */}
+            {/* NOTE AREA */}
             <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4 text-sm text-slate-200 space-y-2">
               <p className="font-semibold text-slate-100">
-                How to use this page in your show:
+                How to tell viewers to find this:
               </p>
               <ul className="list-disc pl-4 space-y-1 text-xs md:text-sm">
                 <li>
-                  Tell viewers:{" "}
-                  <span className="font-mono text-amber-300">
-                    &quot;Go to the Member Hub and click the Daily News &amp; Updates
-                    card to watch along.&quot;
-                  </span>
+                  &quot;Log into the Member Hub and click the{' '}
+                  <span className="font-semibold">Daily News &amp; Updates</span> card.&quot;
                 </li>
-                <li>Use the right-hand cards to track your A-block, B-block, and final commentary.</li>
-                <li>Update this page text as your series evolves through the election cycle.</li>
+                <li>Use this page as your control room while Channel 21 runs live.</li>
               </ul>
             </div>
           </div>
 
-          {/* RIGHT: STORY / SEGMENT CARDS (YOU FILL THESE IN) */}
+          {/* RIGHT: STORY / SEGMENT CARDS (EDIT TEXT AS YOU LIKE) */}
           <div className="space-y-4">
-            {/* Today’s Lead Story */}
+            {/* Lead Story */}
             <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4 shadow">
               <h2 className="text-lg font-bold mb-1">Today&apos;s Lead Story</h2>
               <p className="text-xs uppercase tracking-wide text-slate-400 mb-2">
                 A-Block • Open of the Show
               </p>
               <p className="text-sm text-slate-200">
-                {/* ✏️ EDIT THIS TEXT IN CODE */}
-                Use this block for your main headline. Example:{" "}
+                Edit this text in the code for tonight&apos;s main headline. Example:
                 <span className="italic">
-                  &quot;Democracy on Trial: How the courts, Congress, and the White House
-                  are reshaping 2025.&quot;
+                  {" "}
+                  &quot;Democracy on Trial: The criminal cases, the courts, and the
+                  consequences for our communities.&quot;
                 </span>
               </p>
             </div>
@@ -102,38 +100,29 @@ export default function BreakingNewsPage() {
                 B-Block • Historical Context
               </p>
               <p className="text-sm text-slate-200">
-                {/* ✏️ EDIT THIS TEXT IN CODE */}
-                Tie today&apos;s headline back to history for Black people. Example:
-                connecting current voter suppression and surveillance debates to COINTELPRO,
-                civil rights, and past court decisions.
+                Use this for your history segment. Tie today&apos;s news back to COINTELPRO,
+                civil rights struggles, voting rights, or past administrations.
               </p>
             </div>
 
-            {/* Third Story / Call to Action */}
+            {/* Call to Action */}
             <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4 shadow">
               <h2 className="text-lg font-bold mb-1">Closing Notes &amp; Call to Action</h2>
               <p className="text-xs uppercase tracking-wide text-slate-400 mb-2">
                 C-Block • What Viewers Can Do
               </p>
               <p className="text-sm text-slate-200">
-                {/* ✏️ EDIT THIS TEXT IN CODE */}
-                Use this for action items: registering to vote, supporting legal defense
-                funds, sharing Black Truth TV, or joining your newsletter for political
-                updates.
+                Drop your action steps here: register, follow the Black Political
+                Podcast, support legal defense funds, share the stream, etc.
               </p>
             </div>
 
             {/* Back button */}
-            <button
-              onClick={() => {
-                if (typeof window !== "undefined") {
-                  window.location.href = "/app";
-                }
-              }}
-              className="w-full mt-2 rounded-full border border-slate-600 bg-slate-900/80 px-4 py-2 text-xs font-semibold text-slate-100 hover:bg-slate-800 hover:border-slate-400 transition"
-            >
-              ⬅ Back to Member Hub
-            </button>
+            <Link href="/app" className="block">
+              <button className="w-full mt-2 rounded-full border border-slate-600 bg-slate-900/80 px-4 py-2 text-xs font-semibold text-slate-100 hover:bg-slate-800 hover:border-slate-400 transition">
+                ⬅ Back to Member Hub
+              </button>
+            </Link>
           </div>
         </section>
       </main>
