@@ -13,7 +13,6 @@ export default function LoginPage() {
   const [mode, setMode] = useState<Mode>("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [name, setName] = useState("");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -26,16 +25,14 @@ export default function LoginPage() {
   }
 
   async function loadRoleAndRedirect() {
-    // Read ?redirect=... if present
     const redirectTo = getRedirectParam();
 
-    // Get current session
     const {
       data: { session },
     } = await supabase.auth.getSession();
 
     if (!session) {
-      // No session – just go to member hub as fallback
+      // No session – default to member hub
       router.push("/app");
       return;
     }
@@ -43,7 +40,7 @@ export default function LoginPage() {
     const user = session.user;
     let role: string | null = null;
 
-    // Preferred: look up by email (your profiles table stores email + role)
+    // Try by email
     if (user.email) {
       const { data: profileByEmail, error: emailError } = await supabase
         .from("user_profiles")
@@ -79,7 +76,7 @@ export default function LoginPage() {
 
     const finalRole = (role || "member").toLowerCase().trim();
 
-    // 1️⃣ If a redirect= was provided (e.g. /admin or /watch/21), always honor that first
+    // 1️⃣ If ?redirect=/... exists, always honor it first
     if (redirectTo) {
       router.push(redirectTo);
       return;
@@ -89,7 +86,6 @@ export default function LoginPage() {
     if (finalRole === "admin") {
       router.push("/admin");
     } else {
-      // Default member hub
       router.push("/app");
     }
   }
@@ -114,7 +110,6 @@ export default function LoginPage() {
           return;
         }
 
-        // After successful sign-in, figure out role + redirect
         await loadRoleAndRedirect();
       } else {
         // =======================
@@ -130,27 +125,7 @@ export default function LoginPage() {
           return;
         }
 
-        const user = data.user;
-
-        // Create / upsert user_profiles row with role = member
-        try {
-          await supabase.from("user_profiles").upsert(
-            {
-              id: user.id,
-              email: user.email,
-              role: "member",
-              // Optional name if your table has it
-              name: name || null,
-            },
-            { onConflict: "id" }
-          );
-        } catch (profileError) {
-          console.error("Error upserting user profile:", profileError);
-          // We don't block login on this – worst case they are still a member with no profile row
-        }
-
-        // Some Supabase setups don’t return a session on signUp,
-        // so we sign them in immediately after.
+        // Immediately sign them in (some setups don't auto-login on signUp)
         const { error: loginError } = await supabase.auth.signInWithPassword({
           email,
           password,
@@ -164,7 +139,7 @@ export default function LoginPage() {
           return;
         }
 
-        // Now that they’re signed in, redirect based on role (member → /app)
+        // Now they’re logged in → send them to /app or /admin / redirect
         await loadRoleAndRedirect();
       }
     } finally {
@@ -295,27 +270,6 @@ export default function LoginPage() {
         )}
 
         <form onSubmit={handleSubmit} style={{ display: "grid", gap: 12 }}>
-          {mode === "signup" && (
-            <label style={{ fontSize: 13 }}>
-              <span style={{ display: "block", marginBottom: 4 }}>Name</span>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Optional"
-                style={{
-                  width: "100%",
-                  padding: "9px 10px",
-                  borderRadius: 8,
-                  border: "1px solid rgba(148,163,184,0.7)",
-                  background: "rgba(15,23,42,0.9)",
-                  color: "#fff",
-                  fontSize: 14,
-                }}
-              />
-            </label>
-          )}
-
           <label style={{ fontSize: 13 }}>
             <span style={{ display: "block", marginBottom: 4 }}>Email</span>
             <input
