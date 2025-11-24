@@ -142,7 +142,7 @@ export default async function AppPage() {
             </div>
           </Link>
 
-          {/* 🔴 Daily News / Breaking News Hub → NOW GOES TO /breaking-news */}
+          {/* 🔴 Daily News / Breaking News Hub */}
           <Link href="/breaking-news" className="group">
             <div className="h-full rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-700/40 via-slate-950 to-black p-5 shadow-lg transition group-hover:border-slate-400/80 group-hover:shadow-slate-900/40">
               <div className="flex items-center justify-between gap-3 mb-3">
@@ -160,6 +160,29 @@ export default async function AppPage() {
               </p>
               <p className="text-xs text-slate-400">
                 Channel 21 is your live news window. Click here to enter the news hub.
+              </p>
+            </div>
+          </Link>
+
+          {/* 📅 Full 24-Hour Guide (new card, goes to /guide) */}
+          <Link href="/guide" className="group">
+            <div className="h-full rounded-2xl border border-slate-800 bg-gradient-to-br from-purple-700/30 via-slate-950 to-black p-5 shadow-lg transition group-hover:border-purple-400/80 group-hover:shadow-purple-900/40">
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <h2 className="text-xl font-bold flex items-center gap-2">
+                  <span className="text-lg">📅</span>
+                  Full 24-Hour Guide
+                </h2>
+                <span className="text-[11px] uppercase tracking-wide text-slate-300">
+                  All Channels • Today
+                </span>
+              </div>
+              <p className="text-sm text-slate-200 mb-3">
+                See the complete 24-hour schedule for every channel in one TV-guide
+                style view.
+              </p>
+              <p className="text-xs text-slate-400">
+                Use this to quickly check what&apos;s on now and what&apos;s coming up
+                next across the network.
               </p>
             </div>
           </Link>
