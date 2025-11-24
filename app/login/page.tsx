@@ -1,11 +1,9 @@
 // app/login/page.tsx
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
-
-type Role = "admin" | "member";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -13,196 +11,198 @@ export default function LoginPage() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    setError(null);
-    setSubmitting(true);
+    setLoading(true);
+    setErrorMsg(null);
 
-    // 1️⃣ Supabase email/password login
-    const { data, error: authError } = await supabase.auth.signInWithPassword({
+    // Read ?redirect=... (e.g. /admin or /watch/21) if present
+    let redirectTo: string | null = null;
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      redirectTo = params.get("redirect");
+    }
+
+    // 1️⃣ Login with Supabase
+    const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
 
-    if (authError || !data?.user) {
-      console.error("Supabase login error:", authError);
-      setError(authError?.message || "Login failed. Check your email and password.");
-      setSubmitting(false);
+    if (error || !data.user) {
+      setErrorMsg(error?.message ?? "Invalid email or password.");
+      setLoading(false);
       return;
     }
 
     const user = data.user;
 
-    if (!user.email) {
-      setError("This account has no email address. Contact the site admin.");
-      setSubmitting(false);
-      return;
-    }
+    // 2️⃣ Load profile BY EMAIL (matches your table)
+    let role: string | null = null;
 
-    // 2️⃣ Look up role in user_profiles (id first, then email)
-    let role: Role = "member";
-
-    try {
-      // Try by id (UUID = auth UID)
-      const { data: profileById, error: profileByIdError } = await supabase
+    if (user.email) {
+      const { data: profileByEmail, error: emailError } = await supabase
         .from("user_profiles")
         .select("id, role, email")
-        .eq("id", user.id)
+        .eq("email", user.email)
         .maybeSingle();
 
-      if (profileByIdError) {
-        console.error("Error loading profile by id:", profileByIdError.message);
+      if (emailError) {
+        console.error("Error loading profile by email:", emailError.message);
       }
 
-      let finalRole: string | null = profileById?.role as string | null;
-
-      // Fallback: by email
-      if (!finalRole) {
-        const { data: profileByEmail, error: profileByEmailError } = await supabase
-          .from("user_profiles")
-          .select("id, role, email")
-          .eq("email", user.email)
-          .maybeSingle();
-
-        if (profileByEmailError) {
-          console.error("Error loading profile by email:", profileByEmailError.message);
-        }
-
-        if (profileByEmail?.role) {
-          finalRole = profileByEmail.role as string;
-        }
+      if (profileByEmail?.role) {
+        role = String(profileByEmail.role);
       }
+    }
 
-      // Normalize role
-      if (finalRole) {
-        const normalized = finalRole.toLowerCase().trim();
-        role = normalized === "admin" ? "admin" : "member";
-      } else {
-        // No profile row found at all
-        setError(
-          "Your login is valid, but your profile is not set up yet. " +
-            "Ask the site admin to add you to the user_profiles table with a role."
-        );
-        setSubmitting(false);
-        return;
-      }
-    } catch (err: any) {
-      console.error("Unexpected profile lookup error:", err);
-      setError(
-        "We logged you in, but there was an error reading your profile. " +
-          "Please contact the site admin."
-      );
-      setSubmitting(false);
+    // Default to member if somehow missing
+    const finalRole = (role || "member").toLowerCase().trim();
+
+    // 3️⃣ Redirect logic
+
+    // If ?redirect=/something was on the URL, honor it first
+    if (redirectTo && redirectTo.startsWith("/")) {
+      router.push(redirectTo);
+      setLoading(false);
       return;
     }
 
-    // 3️⃣ Route based on role
-    if (role === "admin") {
-      router.replace("/admin");
+    // Otherwise, route by role:
+    //   admin  → /admin
+    //   member → /app   ✅ THIS IS THE CHANGE
+    if (finalRole === "admin") {
+      router.push("/admin");
     } else {
-      router.replace("/app");
+      router.push("/app");
     }
 
-    setSubmitting(false);
+    setLoading(false);
   }
 
   return (
     <div
       style={{
         minHeight: "100vh",
+        background:
+          "radial-gradient(circle at top, #1f3b73 0, #050816 55%, #000 100%)",
         display: "flex",
-        justifyContent: "center",
         alignItems: "center",
-        background: "#020617",
+        justifyContent: "center",
         padding: "24px",
+        color: "#fff",
+        fontFamily: "system-ui, -apple-system, Segoe UI, sans-serif",
       }}
     >
       <div
         style={{
           width: "100%",
-          maxWidth: "400px",
-          background: "#0f172a",
-          padding: "32px",
-          borderRadius: "12px",
-          border: "1px solid #475569",
+          maxWidth: 420,
+          background: "rgba(10,20,40,0.9)",
+          borderRadius: 16,
+          padding: "28px 24px 24px",
+          boxShadow: "0 18px 45px rgba(0,0,0,0.65)",
+          border: "1px solid rgba(255,255,255,0.08)",
         }}
       >
         <h1
           style={{
-            color: "#fff",
+            fontSize: "1.75rem",
+            fontWeight: 700,
+            marginBottom: 6,
             textAlign: "center",
-            marginBottom: "16px",
           }}
         >
           Black Truth TV Login
         </h1>
+        <p
+          style={{
+            fontSize: 14,
+            opacity: 0.8,
+            textAlign: "center",
+            marginBottom: 18,
+          }}
+        >
+          Sign in with your email and password.
+        </p>
 
-        {error && (
+        {errorMsg && (
           <div
             style={{
-              background: "#7f1d1d",
-              color: "#fecaca",
-              padding: "10px",
-              borderRadius: "8px",
-              marginBottom: "16px",
-              fontSize: "13px",
+              marginBottom: 16,
+              padding: "10px 12px",
+              borderRadius: 8,
+              background: "rgba(127,29,29,0.2)",
+              border: "1px solid rgba(248,113,113,0.5)",
+              fontSize: 13,
             }}
           >
-            {error}
+            {errorMsg}
           </div>
         )}
 
-        <form onSubmit={handleSubmit} style={{ display: "grid", gap: "16px" }}>
-          <input
-            type="email"
-            placeholder="Email"
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            style={{
-              padding: "12px",
-              borderRadius: "8px",
-              border: "1px solid #475569",
-              background: "#020617",
-              color: "#fff",
-              fontSize: "14px",
-            }}
-          />
+        <form onSubmit={handleSubmit} style={{ display: "grid", gap: 12 }}>
+          <label style={{ fontSize: 13 }}>
+            <span style={{ display: "block", marginBottom: 4 }}>Email</span>
+            <input
+              type="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              style={{
+                width: "100%",
+                padding: "9px 10px",
+                borderRadius: 8,
+                border: "1px solid rgba(148,163,184,0.7)",
+                background: "rgba(15,23,42,0.9)",
+                color: "#fff",
+                fontSize: 14,
+              }}
+            />
+          </label>
 
-          <input
-            type="password"
-            placeholder="Password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            style={{
-              padding: "12px",
-              borderRadius: "8px",
-              border: "1px solid #475569",
-              background: "#020617",
-              color: "#fff",
-              fontSize: "14px",
-            }}
-          />
+          <label style={{ fontSize: 13 }}>
+            <span style={{ display: "block", marginBottom: 4 }}>Password</span>
+            <input
+              type="password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              style={{
+                width: "100%",
+                padding: "9px 10px",
+                borderRadius: 8,
+                border: "1px solid rgba(148,163,184,0.7)",
+                background: "rgba(15,23,42,0.9)",
+                color: "#fff",
+                fontSize: 14,
+              }}
+            />
+          </label>
 
           <button
-            disabled={submitting}
             type="submit"
+            disabled={loading}
             style={{
-              padding: "12px",
-              borderRadius: "8px",
-              background: "#fbbf24",
-              color: "#000",
-              fontWeight: "bold",
-              fontSize: "14px",
-              cursor: submitting ? "wait" : "pointer",
-              opacity: submitting ? 0.7 : 1,
+              marginTop: 8,
+              padding: "10px 12px",
+              borderRadius: 999,
+              border: "none",
+              cursor: loading ? "default" : "pointer",
+              background:
+                "linear-gradient(135deg, #FFD700 0%, #fbbf24 35%, #f97316 80%)",
+              color: "#111827",
+              fontWeight: 700,
+              fontSize: 14,
+              textTransform: "uppercase",
+              letterSpacing: 0.06,
+              boxShadow: "0 10px 25px rgba(180,83,9,0.5)",
             }}
           >
-            {submitting ? "Signing in..." : "Sign In"}
+            {loading ? "Signing in…" : "Sign In"}
           </button>
         </form>
       </div>
