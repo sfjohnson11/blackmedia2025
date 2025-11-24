@@ -5,20 +5,15 @@ import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
-type Mode = "signin" | "signup";
-
 export default function LoginPage() {
   const router = useRouter();
   const supabase = createClientComponentClient();
 
-  const [mode, setMode] = useState<Mode>("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // 🔐 SIGN IN (EXISTING USERS: ADMIN + MEMBERS)
   async function handleSignIn(e: FormEvent) {
     e.preventDefault();
     setLoading(true);
@@ -37,6 +32,7 @@ export default function LoginPage() {
     });
 
     if (error || !data.user) {
+      console.error("Supabase signIn error:", error);
       setErrorMsg(error?.message ?? "Invalid email or password.");
       setLoading(false);
       return;
@@ -44,7 +40,7 @@ export default function LoginPage() {
 
     const user = data.user;
 
-    // 🔧 Load profile BY EMAIL (matches your user_profiles table)
+    // Look up role from user_profiles by email (matches your table)
     let role: string | null = null;
 
     if (user.email) {
@@ -72,9 +68,9 @@ export default function LoginPage() {
       return;
     }
 
-    // ✅ ROUTING YOU SPECIFIED:
+    // ✅ YOUR RULE:
     // Admin → /admin
-    // Member → /app (member hub)
+    // Member → /app
     if (finalRole === "admin") {
       router.push("/admin");
     } else {
@@ -83,64 +79,6 @@ export default function LoginPage() {
 
     setLoading(false);
   }
-
-  // 🆕 SIGN UP NEW MEMBER (THIS IS WHERE THE DB ERROR COMES FROM)
-  async function handleSignUp(e: FormEvent) {
-    e.preventDefault();
-    setErrorMsg(null);
-
-    if (password !== confirmPassword) {
-      setErrorMsg("Passwords do not match.");
-      return;
-    }
-
-    setLoading(true);
-
-    // 1️⃣ Create Supabase auth user (auth.users row → id is created here)
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-    });
-
-    if (error || !data.user) {
-      console.error("Supabase signUp error:", error);
-      setErrorMsg(error?.message ?? "Error creating account.");
-      setLoading(false);
-      return;
-    }
-
-    const user = data.user;
-
-    // 2️⃣ Create or update user_profiles row
-    // Your table columns: id, full_name, role, created_at, email,...
-    // We fill full_name with "" so it never breaks a NOT NULL constraint.
-    const { error: profileError } = await supabase
-      .from("user_profiles")
-      .upsert(
-        {
-          id: user.id,                     // auth user id (matches auth.uid())
-          email: user.email ?? email,      // email column
-          full_name: "",                   // safe default
-          role: "member",                  // all self-signups are members
-        },
-        {
-          onConflict: "id",                // if row exists → update instead of error
-        }
-      );
-
-    if (profileError) {
-      console.error("Profile upsert error:", profileError);
-      setErrorMsg("Database error saving new user.");
-      setLoading(false);
-      return;
-    }
-
-    // 3️⃣ After signup, send them to login to sign in as a normal member
-    router.push("/login");
-    setLoading(false);
-  }
-
-  const onSubmit = mode === "signin" ? handleSignIn : handleSignUp;
 
   return (
     <div
@@ -159,7 +97,7 @@ export default function LoginPage() {
       <div
         style={{
           width: "100%",
-          maxWidth: 460,
+          maxWidth: 420,
           background: "rgba(10,20,40,0.9)",
           borderRadius: 16,
           padding: "28px 24px 24px",
@@ -175,7 +113,7 @@ export default function LoginPage() {
             textAlign: "center",
           }}
         >
-          Black Truth TV Access
+          Black Truth TV Login
         </h1>
         <p
           style={{
@@ -185,61 +123,8 @@ export default function LoginPage() {
             marginBottom: 18,
           }}
         >
-          Sign in if you already have an account, or create a new member login.
+          Sign in with your email and password.
         </p>
-
-        {/* Toggle Sign In / Sign Up */}
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "center",
-            gap: 8,
-            marginBottom: 16,
-          }}
-        >
-          <button
-            type="button"
-            onClick={() => {
-              setMode("signin");
-              setErrorMsg(null);
-            }}
-            style={{
-              flex: 1,
-              padding: "8px 0",
-              borderRadius: 999,
-              border: "1px solid rgba(248,250,252,0.2)",
-              background:
-                mode === "signin" ? "rgba(248,250,252,0.15)" : "transparent",
-              color: "#f9fafb",
-              fontSize: 13,
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
-          >
-            Sign In
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setMode("signup");
-              setErrorMsg(null);
-            }}
-            style={{
-              flex: 1,
-              padding: "8px 0",
-              borderRadius: 999,
-              border: "1px solid rgba(248,250,252,0.2)",
-              background:
-                mode === "signup" ? "rgba(248,250,252,0.15)" : "transparent",
-              color: "#f9fafb",
-              fontSize: 13,
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
-          >
-            Sign Up
-          </button>
-        </div>
 
         {errorMsg && (
           <div
@@ -256,8 +141,7 @@ export default function LoginPage() {
           </div>
         )}
 
-        <form onSubmit={onSubmit} style={{ display: "grid", gap: 12 }}>
-          {/* Email */}
+        <form onSubmit={handleSignIn} style={{ display: "grid", gap: 12 }}>
           <label style={{ fontSize: 13 }}>
             <span style={{ display: "block", marginBottom: 4 }}>Email</span>
             <input
@@ -277,7 +161,6 @@ export default function LoginPage() {
             />
           </label>
 
-          {/* Password */}
           <label style={{ fontSize: 13 }}>
             <span style={{ display: "block", marginBottom: 4 }}>Password</span>
             <input
@@ -296,30 +179,6 @@ export default function LoginPage() {
               }}
             />
           </label>
-
-          {/* Confirm Password for Sign Up only */}
-          {mode === "signup" && (
-            <label style={{ fontSize: 13 }}>
-              <span style={{ display: "block", marginBottom: 4 }}>
-                Confirm Password
-              </span>
-              <input
-                type="password"
-                required
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                style={{
-                  width: "100%",
-                  padding: "9px 10px",
-                  borderRadius: 8,
-                  border: "1px solid rgba(148,163,184,0.7)",
-                  background: "rgba(15,23,42,0.9)",
-                  color: "#fff",
-                  fontSize: 14,
-                }}
-              />
-            </label>
-          )}
 
           <button
             type="submit"
@@ -340,13 +199,7 @@ export default function LoginPage() {
               boxShadow: "0 10px 25px rgba(180,83,9,0.5)",
             }}
           >
-            {loading
-              ? mode === "signin"
-                ? "Signing in…"
-                : "Creating account…"
-              : mode === "signin"
-              ? "Sign In"
-              : "Sign Up"}
+            {loading ? "Signing in…" : "Sign In"}
           </button>
         </form>
       </div>
