@@ -83,6 +83,12 @@ const programmingTools: Tool[] = [
     description: "Control Black Truth TV news content and ticker.",
   },
   {
+    name: "Breaking News Editor",
+    path: "/admin/breaking-news",
+    description:
+      "Edit the three Breaking News segment cards shown on /breaking-news.",
+  },
+  {
     name: "Continue Watching",
     path: "/admin/continue",
     description: "Manage the continuing content flows.",
@@ -117,6 +123,11 @@ const systemTools: Tool[] = [
     name: "Invite Codes",
     path: "/admin/invite-codes",
     description: "Create and manage invite codes for access.",
+  },
+  {
+    name: "Membership Requests",
+    path: "/admin/membership-requests",
+    description: "Review and approve new member access requests.",
   },
 ];
 
@@ -558,6 +569,16 @@ export default function AdminDashboard() {
                   path="/admin/freedom-school-library"
                   detail="Curate and upload study content."
                 />
+                <QuickLink
+                  label="Breaking News Editor"
+                  path="/admin/breaking-news"
+                  detail="Update tonight’s lead story and segment cards."
+                />
+                <QuickLink
+                  label="Membership Requests"
+                  path="/admin/membership-requests"
+                  detail="Review and approve new member access."
+                />
               </div>
             </div>
           </div>
@@ -583,7 +604,7 @@ export default function AdminDashboard() {
 
         <Section
           title="System & Utilities"
-          subtitle="Back-end utilities for invites, database inspection, and troubleshooting."
+          subtitle="Back-end utilities for invites, database inspection, and member access."
           tools={systemTools}
         />
       </main>
