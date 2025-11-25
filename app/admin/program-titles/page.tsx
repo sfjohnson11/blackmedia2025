@@ -52,14 +52,17 @@ export default function ProgramTitlesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Update a program title locally
-  function updateTitle(id: number, value: string) {
+  /**
+   * Update title in LOCAL state by row index so each row is independent
+   * even if there are any weird/duplicate ids coming from the database.
+   */
+  function updateTitleAtIndex(index: number, value: string) {
     setPrograms((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, title: value } : p))
+      prev.map((p, i) => (i === index ? { ...p, title: value } : p))
     );
   }
 
-  // Save ONE program's title
+  // Save ONE program's title (by id)
   async function saveOne(id: number) {
     setGlobalError(null);
     setGlobalSuccess(null);
@@ -130,12 +133,12 @@ export default function ProgramTitlesPage() {
         </div>
       ) : (
         <div className="space-y-6">
-          {programs.map((program) => {
+          {programs.map((program, index) => {
             const isSaving = savingId === program.id;
 
             return (
               <div
-                key={program.id}
+                key={`${program.id}-${program.start_time}-${index}`}
                 className="rounded border border-gray-700 bg-gray-900/60 p-4"
               >
                 <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -155,7 +158,7 @@ export default function ProgramTitlesPage() {
                     <input
                       type="text"
                       value={program.title || ""}
-                      onChange={(e) => updateTitle(program.id, e.target.value)}
+                      onChange={(e) => updateTitleAtIndex(index, e.target.value)}
                       className="w-full rounded-md border border-gray-600 bg-gray-950 px-3 py-2 text-sm text-white focus:border-amber-400 focus:ring-1 focus:ring-amber-400"
                       placeholder="Enter program title"
                     />
@@ -192,13 +195,13 @@ export default function ProgramTitlesPage() {
         </div>
       )}
 
-      {/* Optional footer note */}
+      {/* Footer note */}
       <div className="mt-8 flex items-center gap-2 text-xs text-gray-500">
         <Check className="h-3 w-3 text-emerald-400" />
         <span>
           Each row has its own <span className="font-semibold">Save</span>{" "}
-          button. Updating one title does not change any other titles or mp4
-          files.
+          button. Changing one input only updates that row&apos;s title, and only
+          that row is written to the database.
         </span>
       </div>
     </div>
