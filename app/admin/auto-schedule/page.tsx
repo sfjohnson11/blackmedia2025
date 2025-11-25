@@ -55,16 +55,38 @@ const CHANNEL_BUCKETS = [
   "freedom-school",
 ];
 
-// Full-day hourly presets just for the TIME dropdown
+// ✅ Full-day hourly presets: 00:00:00 → 23:00:00
 const TIME_PRESETS: string[] = Array.from({ length: 24 }, (_, h) =>
-  `${String(h).padStart(2, "0")}:00`
+  `${String(h).padStart(2, "0")}:00:00`
 );
 
-// Helper: title from filename
+// ✅ Helper: turn a filename into a nicer title
 function makeTitleFromFilename(name: string): string {
   let base = name.replace(/\.[^/.]+$/, "");
   base = base.replace(/_+/g, " ").trim();
   return base || name;
+}
+
+// ✅ Parse "YYYY-MM-DDTHH:MM:SS" as *UTC*, not local time
+function parseUtcBaseStart(value: string): Date | null {
+  if (!value) return null;
+  const m = value.match(
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})$/
+  );
+  if (!m) return null;
+  const [, y, mo, d, h, mi, s] = m;
+  const year = Number(y);
+  const month = Number(mo) - 1;
+  const day = Number(d);
+  const hour = Number(h);
+  const minute = Number(mi);
+  const second = Number(s);
+  if (
+    [year, month, day, hour, minute, second].some((n) => Number.isNaN(n))
+  ) {
+    return null;
+  }
+  return new Date(Date.UTC(year, month, day, hour, minute, second));
 }
 
 export default function AutoSchedulePage() {
@@ -72,11 +94,7 @@ export default function AutoSchedulePage() {
 
   const [channelId, setChannelId] = useState<string>("");
   const [bucketName, setBucketName] = useState<string>("channel1");
-
-  // NEW: separate date + time instead of raw ISO string
-  const [baseDate, setBaseDate] = useState<string>(""); // YYYY-MM-DD
-  const [baseTime, setBaseTime] = useState<string>(""); // HH:MM
-
+  const [baseStart, setBaseStart] = useState<string>(""); // "YYYY-MM-DDTHH:MM:SS"
   const [files, setFiles] = useState<BucketFile[]>([]);
   const [loadingFiles, setLoadingFiles] = useState(false);
   const [savingSchedule, setSavingSchedule] = useState(false);
@@ -260,25 +278,16 @@ export default function AutoSchedulePage() {
       return;
     }
 
-    if (!baseDate) {
-      setErr("Pick a broadcast date.");
-      return;
-    }
-    if (!baseTime) {
-      setErr("Pick or type a broadcast time.");
+    if (!baseStart) {
+      setErr("Select a base start date/time. It cannot be empty.");
       return;
     }
 
-    // Normalize HH:MM -> HH:MM:SS
-    const normalizedTime =
-      baseTime.length === 5 ? `${baseTime}:00` : baseTime;
-
-    const baseStartString = `${baseDate}T${normalizedTime}`;
-    const base = new Date(baseStartString);
-
-    if (Number.isNaN(base.getTime())) {
+    // ✅ Treat baseStart as UTC "YYYY-MM-DDTHH:MM:SS"
+    const base = parseUtcBaseStart(baseStart);
+    if (!base) {
       setErr(
-        "Date/time is invalid. Use the date picker and time box, or the presets."
+        "Base start time is invalid. It must look like 2025-11-16T10:00:00 (YYYY-MM-DDTHH:MM:SS)."
       );
       return;
     }
@@ -309,7 +318,7 @@ export default function AutoSchedulePage() {
       duration: number;
     }[] = [];
 
-    let currentStart = new Date(base);
+    let currentStart = new Date(base.getTime()); // already UTC
 
     for (const file of ordered) {
       const durationSec = file.duration ? Math.round(file.duration) : 0;
@@ -328,7 +337,7 @@ export default function AutoSchedulePage() {
 
       rows.push({
         channel_id: chId,
-        start_time: currentStart.toISOString(),
+        start_time: currentStart.toISOString(), // ✅ stored as UTC ISO
         title: niceTitle,
         mp4_url: publicUrl,
         duration: durationSec,
@@ -380,7 +389,8 @@ export default function AutoSchedulePage() {
             <p className="mt-1 text-sm text-slate-300">
               Pull MP4 files from a channel bucket, detect durations, and
               create a sequential schedule in your{" "}
-              <code className="text-amber-300">programs</code> table.
+              <code className="text-amber-300">programs</code> table
+              using <span className="font-semibold">UTC</span> start times.
             </p>
           </div>
           <div className="flex gap-2">
@@ -412,8 +422,8 @@ export default function AutoSchedulePage() {
                 placeholder="e.g. 1"
               />
               <p className="mt-1 text-[10px] text-slate-400">
-                Use the numeric channel ID your viewer uses (1–29, 30 for Freedom
-                School, etc.).
+                Use the numeric channel ID your viewer uses (1–29, 30 for
+                Freedom School, etc.).
               </p>
             </div>
 
@@ -438,72 +448,78 @@ export default function AutoSchedulePage() {
               </p>
             </div>
 
-            {/* BASE DATE + TIME WITH PRESETS */}
+            {/* BASE START WITH PRESETS */}
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-1">
-                Base Start (Date & Time)
+                Base Start (UTC, YYYY-MM-DDTHH:MM:SS)
               </label>
 
-              <div className="flex flex-col gap-2">
-                {/* Date + Time row */}
-                <div className="flex gap-2">
-                  <input
-                    type="date"
-                    value={baseDate}
-                    onChange={(e) => setBaseDate(e.target.value)}
-                    className="flex-1 rounded-md border border-slate-600 bg-slate-950 px-3 py-1.5 text-sm text-white focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
-                  />
-                  <input
-                    type="time"
-                    value={baseTime}
-                    onChange={(e) => setBaseTime(e.target.value)}
-                    className="w-28 rounded-md border border-slate-600 bg-slate-950 px-2 py-1.5 text-sm text-white focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
-                  />
-                </div>
+              <div className="flex gap-2">
+                {/* Manual input (you can type exact UTC) */}
+                <input
+                  type="text"
+                  value={baseStart}
+                  onChange={(e) => setBaseStart(e.target.value)}
+                  placeholder="2025-11-16T10:00:00"
+                  className="flex-1 rounded-md border border-slate-600 bg-slate-950 px-3 py-1.5 
+                             text-sm text-white focus:border-amber-400 focus:outline-none focus:ring-1 
+                             focus:ring-amber-400"
+                />
 
-                {/* Presets + Now */}
-                <div className="flex gap-2">
-                  <select
-                    className="flex-1 rounded-md border border-slate-600 bg-slate-900 text-sm px-2 py-1.5 text-white focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
-                    onChange={(e) => {
-                      const preset = e.target.value;
-                      if (!preset) return;
-                      setBaseTime(preset);
-                    }}
-                  >
-                    <option value="">Time presets (today)</option>
-                    {TIME_PRESETS.map((t) => (
-                      <option key={t} value={t}>
-                        {t}
-                      </option>
-                    ))}
-                  </select>
+                {/* FULL-DAY PRESET TIMES DROPDOWN */}
+                <select
+                  className="rounded-md border border-slate-600 bg-slate-900 text-sm px-2"
+                  onChange={(e) => {
+                    const preset = e.target.value;
+                    if (preset === "") return;
+                    const today = new Date();
+                    const date = today.toISOString().split("T")[0]; // YYYY-MM-DD
+                    setBaseStart(`${date}T${preset}`);
+                  }}
+                >
+                  <option value="">Presets</option>
+                  {TIME_PRESETS.map((t) => (
+                    <option key={t} value={t}>
+                      {t} (today)
+                    </option>
+                  ))}
+                </select>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const now = new Date();
-                      const pad = (n: number) => String(n).padStart(2, "0");
+                {/* NOW BUTTON (uses your current date/time, treated as UTC string) */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const now = new Date();
+                    const pad = (n: number) => String(n).padStart(2, "0");
 
-                      const year = now.getFullYear();
-                      const month = pad(now.getMonth() + 1);
-                      const day = pad(now.getDate());
-                      const hr = pad(now.getHours());
-                      const min = pad(now.getMinutes());
+                    const year = now.getUTCFullYear();
+                    const month = pad(now.getUTCMonth() + 1);
+                    const day = pad(now.getUTCDate());
+                    const hr = pad(now.getUTCHours());
+                    const min = pad(now.getUTCMinutes());
+                    const sec = pad(now.getUTCSeconds());
 
-                      setBaseDate(`${year}-${month}-${day}`);
-                      setBaseTime(`${hr}:${min}`);
-                    }}
-                    className="rounded-md bg-amber-600 px-3 py-1.5 text-xs hover:bg-amber-700"
-                  >
-                    Now
-                  </button>
-                </div>
+                    // ✅ "now" in real UTC
+                    setBaseStart(
+                      `${year}-${month}-${day}T${hr}:${min}:${sec}`
+                    );
+                  }}
+                  className="rounded-md bg-amber-600 px-3 py-1.5 text-xs hover:bg-amber-700"
+                >
+                  Now (UTC)
+                </button>
               </div>
 
               <p className="mt-1 text-[10px] text-slate-400">
-                You can either pick from the presets or type the exact time you
-                want in the box.
+                Must look EXACTLY like{" "}
+                <span className="font-mono text-amber-300">
+                  2025-11-16T10:00:00
+                </span>{" "}
+                (no spaces). This is interpreted as{" "}
+                <span className="font-semibold">UTC</span>.
+              </p>
+              <p className="text-xs text-amber-400 mt-1">
+                Current Value: {baseStart || "(none)"}
               </p>
             </div>
           </div>
@@ -698,16 +714,6 @@ export default function AutoSchedulePage() {
               </>
             )}
           </Button>
-        </section>
-
-        {/* Safety note */}
-        <section className="mt-4 text-[11px] text-slate-500">
-          <p>
-            This tool only inserts rows into the{" "}
-            <code className="text-amber-300">programs</code> table. Your actual{" "}
-            <code className="text-amber-300">.mp4</code> files remain in their
-            Supabase storage buckets.
-          </p>
         </section>
       </div>
     </div>
