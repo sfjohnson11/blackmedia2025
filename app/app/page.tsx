@@ -1,26 +1,54 @@
 // app/app/page.tsx
+"use client";
+
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { supabase } from "@/lib/supabase";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
-async function getSummary() {
-  try {
-    const [{ count: channelCount }, { count: programCount }] = await Promise.all([
-      supabase.from("channels").select("id", { count: "exact", head: true }),
-      supabase.from("programs").select("id", { count: "exact", head: true }),
-    ]);
+type Summary = {
+  channels: number;
+  programs: number;
+};
 
-    return {
-      channels: channelCount ?? 0,
-      programs: programCount ?? 0,
-    };
-  } catch (e) {
-    console.error("Summary load error:", e);
-    return { channels: 0, programs: 0 };
-  }
-}
+export default function AppPage() {
+  const supabase = createClientComponentClient();
+  const [summary, setSummary] = useState<Summary | null>(null);
+  const [loadingSummary, setLoadingSummary] = useState(true);
 
-export default async function AppPage() {
-  const summary = await getSummary();
+  useEffect(() => {
+    async function loadSummary() {
+      try {
+        const [{ count: channelCount, error: chErr }, { count: programCount, error: prErr }] =
+          await Promise.all([
+            supabase
+              .from("channels")
+              .select("id", { count: "exact", head: true }),
+            supabase
+              .from("programs")
+              .select("id", { count: "exact", head: true }),
+          ]);
+
+        if (chErr) {
+          console.error("Channel count error:", chErr);
+        }
+        if (prErr) {
+          console.error("Program count error:", prErr);
+        }
+
+        setSummary({
+          channels: channelCount ?? 0,
+          programs: programCount ?? 0,
+        });
+      } catch (e) {
+        console.error("Summary load error:", e);
+        setSummary({ channels: 0, programs: 0 });
+      } finally {
+        setLoadingSummary(false);
+      }
+    }
+
+    loadSummary();
+  }, [supabase]);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-black via-slate-950 to-black text-white">
@@ -43,7 +71,9 @@ export default async function AppPage() {
               Today on Black Truth TV
             </p>
             <p className="text-sm text-slate-200">
-              {summary.channels > 0 || summary.programs > 0 ? (
+              {loadingSummary ? (
+                "Channel and schedule summary is loading…"
+              ) : summary ? (
                 <>
                   <span className="font-semibold text-amber-300">
                     {summary.channels}
@@ -55,7 +85,7 @@ export default async function AppPage() {
                   scheduled programs
                 </>
               ) : (
-                "Channel and schedule summary is loading…"
+                "Channel and schedule summary is currently unavailable."
               )}
             </p>
           </div>
@@ -69,6 +99,11 @@ export default async function AppPage() {
             <Link href="/freedom-school">
               <button className="rounded-full border border-amber-500/70 bg-amber-500/90 px-4 py-1.5 text-xs font-semibold text-black shadow hover:bg-amber-400 transition">
                 📚 Freedom School
+              </button>
+            </Link>
+            <Link href="/guide">
+              <button className="rounded-full border border-slate-500/70 bg-slate-800/90 px-4 py-1.5 text-xs font-semibold text-slate-100 shadow hover:bg-slate-700 transition">
+                📺 24-Hour Guide
               </button>
             </Link>
           </div>
@@ -142,7 +177,7 @@ export default async function AppPage() {
             </div>
           </Link>
 
-          {/* 🔴 Daily News / Breaking News Hub */}
+          {/* Daily News / Breaking News Hub */}
           <Link href="/breaking-news" className="group">
             <div className="h-full rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-700/40 via-slate-950 to-black p-5 shadow-lg transition group-hover:border-slate-400/80 group-hover:shadow-slate-900/40">
               <div className="flex items-center justify-between gap-3 mb-3">
@@ -160,29 +195,6 @@ export default async function AppPage() {
               </p>
               <p className="text-xs text-slate-400">
                 Channel 21 is your live news window. Click here to enter the news hub.
-              </p>
-            </div>
-          </Link>
-
-          {/* 📅 Full 24-Hour Guide (new card, goes to /guide) */}
-          <Link href="/guide" className="group">
-            <div className="h-full rounded-2xl border border-slate-800 bg-gradient-to-br from-purple-700/30 via-slate-950 to-black p-5 shadow-lg transition group-hover:border-purple-400/80 group-hover:shadow-purple-900/40">
-              <div className="flex items-center justify-between gap-3 mb-3">
-                <h2 className="text-xl font-bold flex items-center gap-2">
-                  <span className="text-lg">📅</span>
-                  Full 24-Hour Guide
-                </h2>
-                <span className="text-[11px] uppercase tracking-wide text-slate-300">
-                  All Channels • Today
-                </span>
-              </div>
-              <p className="text-sm text-slate-200 mb-3">
-                See the complete 24-hour schedule for every channel in one TV-guide
-                style view.
-              </p>
-              <p className="text-xs text-slate-400">
-                Use this to quickly check what&apos;s on now and what&apos;s coming up
-                next across the network.
               </p>
             </div>
           </Link>
