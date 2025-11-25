@@ -16,7 +16,7 @@ import {
 import { Button } from "@/components/ui/button";
 
 type ProgramRow = {
-  id: string | number;
+  // NOTE: no "id" column here because your programs table does not have it
   channel_id: number;
   title: string | null;
   mp4_url: string | null;
@@ -27,13 +27,16 @@ type ProgramRow = {
 export default function CleanupProgramsPage() {
   const supabase = createClientComponentClient();
 
-  const [channelId, setChannelId] = useState<string>("");
-  const [fromDate, setFromDate] = useState<string>(""); // YYYY-MM-DD
-  const [toDate, setToDate] = useState<string>("");     // YYYY-MM-DD
-  const [search, setSearch] = useState<string>("");     // part of MP4 or title
+  const [channelId, setChannelId] = useState<string>(""); // filter
+  const [fromDate, setFromDate] = useState<string>("");   // YYYY-MM-DD
+  const [toDate, setToDate] = useState<string>("");       // YYYY-MM-DD
+  const [search, setSearch] = useState<string>("");       // part of MP4 or title
 
   const [programs, setPrograms] = useState<ProgramRow[]>([]);
-  const [selectedIds, setSelectedIds] = useState<Set<string | number>>(new Set());
+  // we now select by ROW INDEX, not DB id
+  const [selectedIndexes, setSelectedIndexes] = useState<Set<number>>(
+    new Set()
+  );
 
   const [loading, setLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -54,25 +57,25 @@ export default function CleanupProgramsPage() {
   }
 
   const anySelected = useMemo(
-    () => selectedIds.size > 0,
-    [selectedIds]
+    () => selectedIndexes.size > 0,
+    [selectedIndexes]
   );
 
-  function toggleSelected(id: string | number) {
-    setSelectedIds((prev) => {
+  function toggleSelected(index: number) {
+    setSelectedIndexes((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
       return next;
     });
   }
 
   function selectAllVisible() {
-    setSelectedIds(new Set(programs.map((p) => p.id)));
+    setSelectedIndexes(new Set(programs.map((_, idx) => idx)));
   }
 
   function clearSelection() {
-    setSelectedIds(new Set());
+    setSelectedIndexes(new Set());
   }
 
   async function loadPrograms() {
@@ -80,12 +83,12 @@ export default function CleanupProgramsPage() {
     setErr(null);
     setSuccessMsg(null);
     setPrograms([]);
-    setSelectedIds(new Set());
+    setSelectedIndexes(new Set());
 
     try {
       let query = supabase
         .from("programs")
-        .select("id, channel_id, title, mp4_url, start_time, duration")
+        .select("channel_id, title, mp4_url, start_time, duration")
         .order("start_time", { ascending: true });
 
       // Channel filter (strongly recommended)
@@ -101,12 +104,10 @@ export default function CleanupProgramsPage() {
 
       // Date range filters (optional)
       if (fromDate) {
-        // fromDate is local YYYY-MM-DD; convert to ISO start of day
         const from = new Date(fromDate + "T00:00:00");
         query = query.gte("start_time", from.toISOString());
       }
       if (toDate) {
-        // toDate → end of day
         const to = new Date(toDate + "T23:59:59");
         query = query.lte("start_time", to.toISOString());
       }
@@ -138,11 +139,10 @@ export default function CleanupProgramsPage() {
 
   async function deleteSelected() {
     if (!anySelected) return;
-    const ids = Array.from(selectedIds);
+    const indexes = Array.from(selectedIndexes);
 
-    // Final "are you sure?" at browser level
     const ok = window.confirm(
-      `Delete ${ids.length} program(s) from the schedule? This will NOT delete the MP4 file from storage, only unschedule it.`
+      `Delete ${indexes.length} program(s) from the schedule? This will NOT delete the MP4 file from storage, only unschedule it.`
     );
     if (!ok) return;
 
@@ -151,17 +151,28 @@ export default function CleanupProgramsPage() {
     setSuccessMsg(null);
 
     try {
-      const { error } = await supabase
-        .from("programs")
-        .delete()
-        .in("id", ids);
+      // delete row-by-row using the composite key
+      for (const idx of indexes) {
+        const row = programs[idx];
+        if (!row) continue;
 
-      if (error) throw error;
+        const query = supabase
+          .from("programs")
+          .delete()
+          .eq("channel_id", row.channel_id)
+          .eq("start_time", row.start_time)
+          .eq("mp4_url", row.mp4_url);
+
+        const { error } = await query;
+        if (error) throw error;
+      }
 
       // Remove deleted rows from local state
-      setPrograms((prev) => prev.filter((p) => !selectedIds.has(p.id)));
-      setSelectedIds(new Set());
-      setSuccessMsg(`Deleted ${ids.length} program(s) from the schedule.`);
+      setPrograms((prev) =>
+        prev.filter((_, idx) => !selectedIndexes.has(idx))
+      );
+      setSelectedIndexes(new Set());
+      setSuccessMsg(`Deleted ${indexes.length} program(s) from the schedule.`);
     } catch (e: any) {
       console.error("Error deleting programs", e);
       setErr(e?.message || "Failed to delete selected programs.");
@@ -170,10 +181,9 @@ export default function CleanupProgramsPage() {
     }
   }
 
-  // Optional: load something on mount (e.g., nothing; wait for user filters)
   useEffect(() => {
-    // You can auto-load by channel if you want:
-    // loadPrograms();
+    // Leave empty so you only load when you click "Load Programs"
+    // or uncomment loadPrograms() to auto-load.
   }, []);
 
   return (
@@ -187,9 +197,11 @@ export default function CleanupProgramsPage() {
               Cleanup / Remove Scheduled MP4s
             </h1>
             <p className="mt-1 text-sm text-slate-300 max-w-xl">
-              Unschedule MP4s from the <code className="text-amber-300">programs</code> table.
+              Unschedule MP4s from the{" "}
+              <code className="text-amber-300">programs</code> table.
               <span className="text-amber-300 font-semibold">
-                {" "}This does NOT delete the files from your Supabase buckets.
+                {" "}
+                This does NOT delete the files from your Supabase buckets.
               </span>
             </p>
           </div>
@@ -222,7 +234,8 @@ export default function CleanupProgramsPage() {
                 className="w-full rounded-md border border-slate-600 bg-slate-950 px-3 py-1.5 text-sm text-white focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
               />
               <p className="mt-1 text-[10px] text-slate-400">
-                Strongly recommended so you don&apos;t see every channel at once.
+                Strongly recommended so you don&apos;t see every channel at
+                once.
               </p>
             </div>
 
@@ -305,7 +318,7 @@ export default function CleanupProgramsPage() {
 
             <div className="ml-auto flex items-center gap-2 text-xs text-slate-400">
               <span>Total loaded: {programs.length}</span>
-              <span>• Selected: {selectedIds.size}</span>
+              <span>• Selected: {selectedIndexes.size}</span>
             </div>
           </div>
 
@@ -371,16 +384,16 @@ export default function CleanupProgramsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {programs.map((p) => (
+                  {programs.map((p, index) => (
                     <tr
-                      key={p.id}
+                      key={index}
                       className="border-t border-slate-800/80 hover:bg-slate-800/60"
                     >
                       <td className="px-3 py-2 align-top">
                         <input
                           type="checkbox"
-                          checked={selectedIds.has(p.id)}
-                          onChange={() => toggleSelected(p.id)}
+                          checked={selectedIndexes.has(index)}
+                          onChange={() => toggleSelected(index)}
                         />
                       </td>
                       <td className="px-3 py-2 align-top text-slate-100">
@@ -390,7 +403,11 @@ export default function CleanupProgramsPage() {
                         {fmtLocal(p.start_time)}
                       </td>
                       <td className="px-3 py-2 align-top text-slate-100 max-w-[220px] truncate">
-                        {p.title || <span className="text-slate-500 italic">(no title)</span>}
+                        {p.title || (
+                          <span className="text-slate-500 italic">
+                            (no title)
+                          </span>
+                        )}
                       </td>
                       <td className="px-3 py-2 align-top text-slate-300 max-w-[260px] truncate">
                         {p.mp4_url ?? ""}
