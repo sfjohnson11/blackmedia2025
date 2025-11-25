@@ -1,198 +1,235 @@
-// app/breaking-news/page.tsx
+// app/admin/breaking-news/page.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, FormEvent } from "react";
 import Link from "next/link";
-import { supabase } from "@/lib/supabase";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { Loader2, Save, ArrowLeft } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 type BreakingNewsRow = {
   id: number;
+  title: string | null;
   content: string | null;
   is_active: boolean | null;
   sort_order: number | null;
   updated_at: string | null;
 };
 
-type SlotKey = "lead" | "second" | "cta";
+export default function AdminBreakingNewsPage() {
+  const supabase = createClientComponentClient();
 
-type SlotCard = {
-  slot: SlotKey;
-  label: string;
-  tag: string;
-  fallback: string;
-  row?: BreakingNewsRow;
-};
-
-export default function BreakingNewsPage() {
   const [rows, setRows] = useState<BreakingNewsRow[]>([]);
+  const [originalRows, setOriginalRows] = useState<BreakingNewsRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
-
-    (async () => {
+    const load = async () => {
       setLoading(true);
-      setErr(null);
-      try {
-        const { data, error } = await supabase
-          .from("breaking_news")
-          .select("id, content, is_active, sort_order, updated_at")
-          .eq("is_active", true)
-          .order("sort_order", { ascending: true })
-          .order("id", { ascending: true });
+      setErrorMsg(null);
 
-        if (error) throw error;
-        if (!cancelled) {
-          setRows((data || []) as BreakingNewsRow[]);
-        }
-      } catch (e: any) {
-        if (!cancelled) {
-          console.error("Error loading breaking_news for hub:", e);
-          setErr(e?.message || "Failed to load breaking news.");
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
+      const { data, error } = await supabase
+        .from("breaking_news")
+        .select("id, title, content, is_active, sort_order, updated_at")
+        .order("sort_order", { ascending: true })
+        .order("id", { ascending: true });
+
+      if (error) {
+        console.error(error);
+        setErrorMsg("Error loading breaking news.");
+      } else {
+        const rows = data ?? [];
+        setRows(rows);
+        setOriginalRows(rows);
       }
-    })();
 
-    return () => {
-      cancelled = true;
+      setLoading(false);
     };
-  }, []);
 
-  // Take top 3 active rows and map to A/B/C blocks
-  const activeTop3 = rows.slice(0, 3);
+    load();
+  }, [supabase]);
 
-  const slots: SlotCard[] = [
-    {
-      slot: "lead",
-      label: "Today’s Lead Story",
-      tag: "A-Block • Open of the Show",
-      fallback:
-        'Edit this text in Admin → Breaking News. Example: "Democracy on Trial: The criminal cases, the courts, and the consequences for our communities."',
-      row: activeTop3[0],
-    },
-    {
-      slot: "second",
-      label: "Second Story / Deep Dive",
-      tag: "B-Block • Historical Context",
-      fallback:
-        "Use this block for your history segment: COINTELPRO, civil rights, voting rights, or other context that connects past to present.",
-      row: activeTop3[1],
-    },
-    {
-      slot: "cta",
-      label: "Closing Notes & Call to Action",
-      tag: "C-Block • What Viewers Can Do",
-      fallback:
-        "Drop your calls to action here: register to vote, support legal defense funds, follow the Black Political Podcast, share the stream, etc.",
-      row: activeTop3[2],
-    },
-  ];
+  const handleFieldChange = (
+    id: number,
+    field: keyof BreakingNewsRow,
+    value: any
+  ) => {
+    setRows(prev =>
+      prev.map(row =>
+        row.id === id ? { ...row, [field]: value } : row
+      )
+    );
+  };
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    setErrorMsg(null);
+    setSuccessMsg(null);
+
+    try {
+      // Only update rows that actually changed
+      const changed = rows.filter(row => {
+        const original = originalRows.find(o => o.id === row.id);
+        return JSON.stringify(original) !== JSON.stringify(row);
+      });
+
+      if (changed.length === 0) {
+        setSuccessMsg("No changes to save.");
+        setSaving(false);
+        return;
+      }
+
+      const { error } = await supabase.from("breaking_news").upsert(
+        changed.map(r => ({
+          id: r.id,
+          title: r.title?.trim() || null,
+          content: r.content?.trim() || null,
+          is_active: r.is_active ?? false,
+          sort_order: r.sort_order,
+        })),
+        { onConflict: "id" }
+      );
+
+      if (error) {
+        console.error(error);
+        setErrorMsg("Error saving changes.");
+      } else {
+        setSuccessMsg("Breaking news updated.");
+        setOriginalRows(rows);
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="p-6 flex items-center gap-2">
+        <Loader2 className="h-5 w-5 animate-spin" />
+        <span>Loading breaking news…</span>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-black via-slate-950 to-black text-white">
-      <main className="max-w-6xl mx-auto px-4 pt-20 pb-16 space-y-10">
-        {/* HEADER */}
-        <section className="space-y-3">
-          <p className="text-xs font-semibold tracking-[0.25em] uppercase text-red-400">
-            Channel 21 • Black Truth TV Report
-          </p>
-          <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight flex items-center gap-2">
-            <span className="inline-flex h-3 w-3 rounded-full bg-red-500 animate-pulse" />
-            Breaking News Hub
-          </h1>
-          <p className="text-sm md:text-base text-slate-300 max-w-2xl">
-            Live coverage on Channel 21 plus a quick snapshot of today&apos;s
-            top stories and calls to action. This hub reads from your{" "}
-            <span className="font-mono text-amber-300">breaking_news</span>{" "}
-            table.
-          </p>
-        </section>
+    <div className="max-w-5xl mx-auto p-6 space-y-6">
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <Link
+            href="/admin"
+            className="inline-flex items-center text-sm text-blue-200 hover:text-white"
+          >
+            <ArrowLeft className="h-4 w-4 mr-1" />
+            Back to Admin
+          </Link>
+          <h1 className="text-2xl font-semibold">Breaking News Boxes</h1>
+        </div>
+      </div>
 
-        {/* LAYOUT: LIVE PLAYER + STORY CARDS */}
-        <section className="grid gap-8 lg:grid-cols-[minmax(0,2fr)_minmax(0,1.4fr)] items-start">
-          {/* LEFT: LIVE PLAYER */}
-          <div className="space-y-4">
-            <div className="rounded-2xl border border-red-600/60 bg-gradient-to-br from-red-900/40 via-slate-950 to-black p-4 shadow-lg">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <span className="inline-flex h-2.5 w-2.5 rounded-full bg-red-500 animate-pulse" />
-                  <span className="text-xs font-semibold uppercase tracking-wide text-red-200">
-                    Live Now • Channel 21
-                  </span>
-                </div>
-                <span className="text-[11px] uppercase tracking-wide text-slate-300">
-                  Democracy • Justice • Culture
+      {errorMsg && (
+        <div className="rounded-md border border-red-600 bg-red-950/40 px-4 py-2 text-sm text-red-100">
+          {errorMsg}
+        </div>
+      )}
+      {successMsg && (
+        <div className="rounded-md border border-emerald-600 bg-emerald-950/40 px-4 py-2 text-sm text-emerald-100">
+          {successMsg}
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit} className="space-y-6">
+        <p className="text-sm text-slate-300">
+          You have three boxes on the public{" "}
+          <strong>Breaking News</strong> page. Use the fields below to
+          set the <strong>title</strong> and <strong>content</strong> for
+          each box. Only the text you enter here will show to users.
+        </p>
+
+        <div className="grid gap-6 md:grid-cols-3">
+          {rows.slice(0, 3).map((row, index) => (
+            <div
+              key={row.id}
+              className="rounded-xl border border-slate-700 bg-slate-900/60 p-4 flex flex-col gap-3"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs uppercase tracking-wide text-slate-400">
+                  Box {index + 1}
                 </span>
-              </div>
-
-              {/* EMBED WATCH/21 IN AN IFRAME */}
-              <div className="relative w-full overflow-hidden rounded-xl border border-slate-800 bg-black shadow-md">
-                <div className="relative w-full" style={{ paddingTop: "56.25%" }}>
-                  <iframe
-                    src="/watch/21"
-                    title="Channel 21 Live"
-                    className="absolute inset-0 h-full w-full border-0"
-                    allow="autoplay; fullscreen; picture-in-picture"
+                <label className="flex items-center gap-2 text-xs text-slate-300">
+                  <input
+                    type="checkbox"
+                    className="h-3 w-3"
+                    checked={!!row.is_active}
+                    onChange={e =>
+                      handleFieldChange(row.id, "is_active", e.target.checked)
+                    }
                   />
-                </div>
+                  Active
+                </label>
               </div>
 
-              <p className="mt-3 text-xs text-slate-300">
-                This is the same live feed as{" "}
-                <span className="font-mono text-amber-300">/watch/21</span>,
-                wrapped in a news dashboard you can send viewers to during
-                special coverage.
-              </p>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-slate-200">
+                  Title
+                </label>
+                <input
+                  type="text"
+                  value={row.title ?? ""}
+                  onChange={e =>
+                    handleFieldChange(row.id, "title", e.target.value)
+                  }
+                  className="w-full rounded-md border border-slate-600 bg-slate-950/60 px-2 py-1.5 text-sm text-slate-50"
+                  placeholder={`Box ${index + 1} title`}
+                />
+              </div>
+
+              <div className="space-y-1 flex-1">
+                <label className="text-xs font-medium text-slate-200">
+                  Content
+                </label>
+                <textarea
+                  value={row.content ?? ""}
+                  onChange={e =>
+                    handleFieldChange(row.id, "content", e.target.value)
+                  }
+                  className="w-full min-h-[140px] rounded-md border border-slate-600 bg-slate-950/60 px-2 py-1.5 text-sm text-slate-50"
+                  placeholder={`Write the message you want visitors to see in Box ${index + 1}`}
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-slate-200">
+                  Sort Order (1–3)
+                </label>
+                <input
+                  type="number"
+                  value={row.sort_order ?? index + 1}
+                  onChange={e =>
+                    handleFieldChange(
+                      row.id,
+                      "sort_order",
+                      e.target.value ? Number(e.target.value) : null
+                    )
+                  }
+                  className="w-20 rounded-md border border-slate-600 bg-slate-950/60 px-2 py-1.5 text-xs text-slate-50"
+                />
+              </div>
             </div>
-          </div>
+          ))}
+        </div>
 
-          {/* RIGHT: STORY / SEGMENT CARDS DRIVEN BY breaking_news */}
-          <div className="space-y-4">
-            {err && (
-              <div className="rounded-xl border border-red-600 bg-red-950/70 p-3 text-xs text-red-100">
-                Error: {err}
-              </div>
-            )}
-
-            {loading && (
-              <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-4 text-sm text-slate-200">
-                Loading breaking news cards…
-              </div>
-            )}
-
-            {!loading &&
-              slots.map((slot) => {
-                const text = (slot.row?.content || "").trim();
-                const body = text.length > 0 ? text : slot.fallback;
-
-                return (
-                  <div
-                    key={slot.slot}
-                    className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4 shadow"
-                  >
-                    <h2 className="text-lg font-bold mb-1">{slot.label}</h2>
-                    <p className="text-xs uppercase tracking-wide text-slate-400 mb-2">
-                      {slot.tag}
-                    </p>
-                    <p className="text-sm text-slate-200 whitespace-pre-line">
-                      {body}
-                    </p>
-                  </div>
-                );
-              })}
-
-            {/* Back button */}
-            <Link href="/app" className="block">
-              <button className="w-full mt-2 rounded-full border border-slate-600 bg-slate-900/80 px-4 py-2 text-xs font-semibold text-slate-100 hover:bg-slate-800 hover:border-slate-400 transition">
-                ⬅ Back to Member Hub
-              </button>
-            </Link>
-          </div>
-        </section>
-      </main>
+        <div className="flex justify-end">
+          <Button type="submit" disabled={saving}>
+            {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            <Save className="mr-2 h-4 w-4" />
+            Save Changes
+          </Button>
+        </div>
+      </form>
     </div>
   );
 }
