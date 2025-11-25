@@ -1,14 +1,15 @@
 // app/admin/breaking-news/page.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, FormEvent } from "react";
 import Link from "next/link";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
-import { ArrowLeft, Loader2, Save } from "lucide-react";
+import { Loader2, Save, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 type BreakingNewsRow = {
   id: number;
+  title: string | null;
   content: string | null;
   is_active: boolean | null;
   sort_order: number | null;
@@ -25,122 +26,55 @@ export default function AdminBreakingNewsPage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
-  // Load breaking_news rows
-  async function loadRows() {
-    setLoading(true);
-    setErrorMsg(null);
-    setSuccessMsg(null);
-
-    const { data, error } = await supabase
-      .from("breaking_news")
-      .select("id, content, is_active, sort_order, updated_at")
-      .order("sort_order", { ascending: true })
-      .order("id", { ascending: true });
-
-    if (error) {
-      console.error("Load breaking_news error:", error);
-      setErrorMsg(error.message);
-      setLoading(false);
-      return;
-    }
-
-    const rows = (data || []) as BreakingNewsRow[];
-    setRows(rows);
-    setOriginalRows(rows);
-    setLoading(false);
-  }
-
   useEffect(() => {
-    loadRows();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Generic field updater
-  function updateField<K extends keyof BreakingNewsRow>(
-    id: number,
-    field: K,
-    value: BreakingNewsRow[K]
-  ) {
-    setRows((prev) =>
-      prev.map((row) =>
-        row.id === id ? { ...row, [field]: value } : row
-      )
-    );
-  }
-
-  // Add a new empty row
-  async function addRow() {
-    setSaving(true);
-    setErrorMsg(null);
-    setSuccessMsg(null);
-
-    try {
-      const maxSort =
-        rows.reduce(
-          (max, r) =>
-            r.sort_order != null && r.sort_order > max
-              ? r.sort_order
-              : max,
-          0
-        ) || 0;
+    const load = async () => {
+      setLoading(true);
+      setErrorMsg(null);
 
       const { data, error } = await supabase
         .from("breaking_news")
-        .insert({
-          content: "",
-          is_active: true,
-          sort_order: maxSort + 1,
-        })
-        .select("id, content, is_active, sort_order, updated_at")
-        .single();
+        .select("id, title, content, is_active, sort_order, updated_at")
+        .order("sort_order", { ascending: true })
+        .order("id", { ascending: true });
 
       if (error) {
-        console.error("Add row error:", error);
-        setErrorMsg(error.message);
-      } else if (data) {
-        const newRow = data as BreakingNewsRow;
-        const next = [...rows, newRow].sort((a, b) => {
-          const sa = a.sort_order ?? 0;
-          const sb = b.sort_order ?? 0;
-          if (sa === sb) return a.id - b.id;
-          return sa - sb;
-        });
-
-        setRows(next);
-        setOriginalRows(next);
-        setSuccessMsg("New breaking news item created.");
+        console.error(error);
+        setErrorMsg("Error loading breaking news.");
+      } else {
+        const rows = data ?? [];
+        setRows(rows);
+        setOriginalRows(rows);
       }
-    } catch (e: any) {
-      console.error("Unexpected addRow error:", e);
-      setErrorMsg(e?.message || "Unexpected error creating row.");
-    }
 
-    setSaving(false);
-  }
+      setLoading(false);
+    };
 
-  // Save only changed rows
-  async function saveAll() {
+    load();
+  }, [supabase]);
+
+  const handleFieldChange = (
+    id: number,
+    field: keyof BreakingNewsRow,
+    value: any
+  ) => {
+    setRows(prev =>
+      prev.map(row =>
+        row.id === id ? { ...row, [field]: value } : row
+      )
+    );
+  };
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
     setSaving(true);
     setErrorMsg(null);
     setSuccessMsg(null);
 
     try {
-      const changed = rows.filter((row) => {
-        const original = originalRows.find((o) => o.id === row.id);
-        if (!original) return true;
-
-        const origContent = original.content ?? "";
-        const newContent = row.content ?? "";
-        const origActive = Boolean(original.is_active);
-        const newActive = Boolean(row.is_active);
-        const origSort = original.sort_order ?? 0;
-        const newSort = row.sort_order ?? 0;
-
-        return (
-          origContent !== newContent ||
-          origActive !== newActive ||
-          origSort !== newSort
-        );
+      // Only update rows that actually changed
+      const changed = rows.filter(row => {
+        const original = originalRows.find(o => o.id === row.id);
+        return JSON.stringify(original) !== JSON.stringify(row);
       });
 
       if (changed.length === 0) {
@@ -149,180 +83,153 @@ export default function AdminBreakingNewsPage() {
         return;
       }
 
-      const results = await Promise.all(
-        changed.map((row) =>
-          supabase
-            .from("breaking_news")
-            .update({
-              content: row.content,
-              is_active: row.is_active ?? false,
-              sort_order: row.sort_order,
-            })
-            .eq("id", row.id)
-        )
+      const { error } = await supabase.from("breaking_news").upsert(
+        changed.map(r => ({
+          id: r.id,
+          title: r.title?.trim() || null,
+          content: r.content?.trim() || null,
+          is_active: r.is_active ?? false,
+          sort_order: r.sort_order,
+        })),
+        { onConflict: "id" }
       );
 
-      const firstError = results.find((r) => r.error)?.error;
-      if (firstError) {
-        console.error("Save error:", firstError);
-        setErrorMsg(firstError.message);
+      if (error) {
+        console.error(error);
+        setErrorMsg("Error saving changes.");
       } else {
-        setSuccessMsg(
-          `Updated ${changed.length} item${
-            changed.length === 1 ? "" : "s"
-          } successfully!`
-        );
+        setSuccessMsg("Breaking news updated.");
         setOriginalRows(rows);
       }
-    } catch (e: any) {
-      console.error("Unexpected save error:", e);
-      setErrorMsg(e?.message || "Unexpected error saving changes.");
+    } finally {
+      setSaving(false);
     }
+  };
 
-    setSaving(false);
+  if (loading) {
+    return (
+      <div className="p-6 flex items-center gap-2">
+        <Loader2 className="h-5 w-5 animate-spin" />
+        <span>Loading breaking news…</span>
+      </div>
+    );
   }
 
   return (
-    <div className="min-h-screen bg-black text-white p-6">
-      {/* Header */}
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">
-            Breaking News Admin
-          </h1>
-          <p className="text-sm text-gray-300">
-            Edit the items stored in the <code>breaking_news</code> table.
-            These can feed your Breaking News Hub or ticker.
-          </p>
-        </div>
-
-        <div className="flex gap-2">
-          <Link href="/admin">
-            <Button
-              variant="outline"
-              className="border-gray-600 bg-gray-900"
-            >
-              <ArrowLeft className="mr-2 h-4 w-4" />
-              Back to Admin
-            </Button>
+    <div className="max-w-5xl mx-auto p-6 space-y-6">
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <Link
+            href="/admin"
+            className="inline-flex items-center text-sm text-blue-200 hover:text-white"
+          >
+            <ArrowLeft className="h-4 w-4 mr-1" />
+            Back to Admin
           </Link>
+          <h1 className="text-2xl font-semibold">Breaking News Boxes</h1>
         </div>
       </div>
 
-      {/* Alerts */}
       {errorMsg && (
-        <div className="mb-4 rounded border border-red-500 bg-red-900/50 p-3 text-sm text-red-100">
+        <div className="rounded-md border border-red-600 bg-red-950/40 px-4 py-2 text-sm text-red-100">
           {errorMsg}
         </div>
       )}
       {successMsg && (
-        <div className="mb-4 rounded border border-green-500 bg-green-900/40 p-3 text-sm text-green-100">
+        <div className="rounded-md border border-emerald-600 bg-emerald-950/40 px-4 py-2 text-sm text-emerald-100">
           {successMsg}
         </div>
       )}
 
-      {/* Add button */}
-      <div className="mb-4 flex justify-between">
-        <button
-          onClick={addRow}
-          disabled={saving}
-          className="rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold hover:bg-emerald-700 disabled:opacity-60"
-        >
-          + Add Breaking News Item
-        </button>
+      <form onSubmit={handleSubmit} className="space-y-6">
+        <p className="text-sm text-slate-300">
+          You have three boxes on the public{" "}
+          <strong>Breaking News</strong> page. Use the fields below to
+          set the <strong>title</strong> and <strong>content</strong> for
+          each box. Only the text you enter here will show to users.
+        </p>
 
-        <Button
-          onClick={saveAll}
-          disabled={saving || loading}
-          className="bg-amber-600 hover:bg-amber-700"
-        >
-          {saving ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Saving…
-            </>
-          ) : (
-            <>
-              <Save className="mr-2 h-4 w-4" />
-              Save All Changes
-            </>
-          )}
-        </Button>
-      </div>
-
-      {/* Content */}
-      {loading ? (
-        <div className="py-10 text-center text-gray-300">
-          <Loader2 className="mx-auto mb-3 h-6 w-6 animate-spin" />
-          Loading breaking news…
-        </div>
-      ) : rows.length === 0 ? (
-        <div className="rounded border border-gray-700 bg-gray-900/60 p-4 text-sm text-gray-300">
-          No breaking news items yet. Click{" "}
-          <span className="font-semibold">“Add Breaking News Item”</span> to
-          create your first row.
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {rows.map((row) => (
+        <div className="grid gap-6 md:grid-cols-3">
+          {rows.slice(0, 3).map((row, index) => (
             <div
               key={row.id}
-              className="rounded border border-gray-700 bg-gray-900/70 p-4"
+              className="rounded-xl border border-slate-700 bg-slate-900/60 p-4 flex flex-col gap-3"
             >
-              <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-gray-400">
-                <span>
-                  ID: <span className="font-mono">{row.id}</span>
+              <div className="flex items-center justify-between">
+                <span className="text-xs uppercase tracking-wide text-slate-400">
+                  Box {index + 1}
                 </span>
-                <span>
-                  Sort order:{" "}
-                  <input
-                    type="number"
-                    value={row.sort_order ?? 0}
-                    onChange={(e) =>
-                      updateField(
-                        row.id,
-                        "sort_order",
-                        Number(e.target.value)
-                      )
-                    }
-                    className="w-16 rounded border border-gray-600 bg-gray-950 px-2 py-1 text-xs text-white"
-                  />
-                </span>
-                <label className="flex items-center gap-2">
+                <label className="flex items-center gap-2 text-xs text-slate-300">
                   <input
                     type="checkbox"
-                    checked={Boolean(row.is_active)}
-                    onChange={(e) =>
-                      updateField(
-                        row.id,
-                        "is_active",
-                        e.target.checked
-                      )
+                    className="h-3 w-3"
+                    checked={!!row.is_active}
+                    onChange={e =>
+                      handleFieldChange(row.id, "is_active", e.target.checked)
                     }
                   />
-                  <span className="text-gray-200">Active</span>
+                  Active
                 </label>
-                {row.updated_at && (
-                  <span className="text-[11px] text-gray-500">
-                    Updated:{" "}
-                    {new Date(row.updated_at).toLocaleString()}
-                  </span>
-                )}
               </div>
 
-              <textarea
-                value={row.content ?? ""}
-                onChange={(e) =>
-                  updateField(row.id, "content", e.target.value)
-                }
-                rows={4}
-                className="w-full rounded-md border border-gray-600 bg-gray-950 px-3 py-2 text-sm text-white focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
-                placeholder="Enter the full text of this breaking news item..."
-              />
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-slate-200">
+                  Title
+                </label>
+                <input
+                  type="text"
+                  value={row.title ?? ""}
+                  onChange={e =>
+                    handleFieldChange(row.id, "title", e.target.value)
+                  }
+                  className="w-full rounded-md border border-slate-600 bg-slate-950/60 px-2 py-1.5 text-sm text-slate-50"
+                  placeholder={`Box ${index + 1} title`}
+                />
+              </div>
+
+              <div className="space-y-1 flex-1">
+                <label className="text-xs font-medium text-slate-200">
+                  Content
+                </label>
+                <textarea
+                  value={row.content ?? ""}
+                  onChange={e =>
+                    handleFieldChange(row.id, "content", e.target.value)
+                  }
+                  className="w-full min-h-[140px] rounded-md border border-slate-600 bg-slate-950/60 px-2 py-1.5 text-sm text-slate-50"
+                  placeholder={`Write the message you want visitors to see in Box ${index + 1}`}
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-slate-200">
+                  Sort Order (1–3)
+                </label>
+                <input
+                  type="number"
+                  value={row.sort_order ?? index + 1}
+                  onChange={e =>
+                    handleFieldChange(
+                      row.id,
+                      "sort_order",
+                      e.target.value ? Number(e.target.value) : null
+                    )
+                  }
+                  className="w-20 rounded-md border border-slate-600 bg-slate-950/60 px-2 py-1.5 text-xs text-slate-50"
+                />
+              </div>
             </div>
           ))}
         </div>
-      )}
+
+        <div className="flex justify-end">
+          <Button type="submit" disabled={saving}>
+            {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            <Save className="mr-2 h-4 w-4" />
+            Save Changes
+          </Button>
+        </div>
+      </form>
     </div>
   );
 }
