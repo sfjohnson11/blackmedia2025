@@ -16,7 +16,7 @@ import {
 import { Button } from "@/components/ui/button";
 
 type ProgramRow = {
-  id: number;
+  // NOTE: no "id" here because your table does NOT have programs.id
   channel_id: number;
   title: string | null;
   mp4_url: string | null;
@@ -40,8 +40,10 @@ export default function RefreshProgramsPage() {
 
   // 🔹 New: daily reset state (all channels)
   const [dailyRunning, setDailyRunning] = useState(false);
-  const [dailyTouchedPrograms, setDailyTouchedPrograms] = useState<number | null>(null);
-  const [dailyTouchedChannels, setDailyTouchedChannels] = useState<number | null>(null);
+  const [dailyTouchedPrograms, setDailyTouchedPrograms] =
+    useState<number | null>(null);
+  const [dailyTouchedChannels, setDailyTouchedChannels] =
+    useState<number | null>(null);
 
   function parseBaseStart(value: string): Date | null {
     if (!value) return null;
@@ -70,7 +72,8 @@ export default function RefreshProgramsPage() {
     try {
       const { data, error } = await supabase
         .from("programs")
-        .select("id, channel_id, title, mp4_url, duration, start_time")
+        // ⬇️ NO id here
+        .select("channel_id, title, mp4_url, duration, start_time")
         .eq("channel_id", chId)
         .order("start_time", { ascending: true });
 
@@ -131,7 +134,8 @@ export default function RefreshProgramsPage() {
       // Load existing programs for this channel, ordered by current start_time
       const { data, error } = await supabase
         .from("programs")
-        .select("id, channel_id, title, mp4_url, duration, start_time")
+        // ⬇️ NO id here
+        .select("channel_id, title, mp4_url, duration, start_time")
         .eq("channel_id", chId)
         .order("start_time", { ascending: true });
 
@@ -147,27 +151,39 @@ export default function RefreshProgramsPage() {
         return;
       }
 
-      // Build new start_times using existing durations, keeping titles/mp4_url the same
+      // Build mapping: each row gets a new start_time
       let cursor = new Date(base);
-      const updates: { id: number; start_time: string }[] = [];
+      const schedule: { oldStart: string | null; newStart: string }[] = [];
 
       for (const row of rows) {
-        const startIso = cursor.toISOString();
-        updates.push({ id: row.id, start_time: startIso });
+        const oldStart = row.start_time;
+        const newStart = cursor.toISOString();
 
-        const dur = row.duration && row.duration > 0 ? row.duration : 300; // default 5 min if missing
+        schedule.push({ oldStart, newStart });
+
+        const dur = row.duration && row.duration > 0 ? row.duration : 300; // default 5 min
         cursor = new Date(cursor.getTime() + dur * 1000);
       }
 
-      // Upsert only id + start_time so we don't touch titles, mp4_url, or duration
-      const { error: upsertError } = await supabase
-        .from("programs")
-        .upsert(updates, { onConflict: "id" });
+      // 🔁 Update EACH row using channel_id + old start_time (no id needed)
+      for (const item of schedule) {
+        if (!item.oldStart) {
+          // If there's no start_time, skip (can't match it safely)
+          continue;
+        }
 
-      if (upsertError) {
-        console.error("Error updating schedules", upsertError);
-        setErr(upsertError.message);
-        return;
+        const { error: updateError } = await supabase
+          .from("programs")
+          .update({ start_time: item.newStart })
+          .eq("channel_id", chId)
+          .eq("start_time", item.oldStart);
+
+        if (updateError) {
+          console.error("Error updating one program row", updateError);
+          setErr(updateError.message);
+          setSaving(false);
+          return;
+        }
       }
 
       setProgramCount(rows.length);
@@ -198,7 +214,8 @@ export default function RefreshProgramsPage() {
     try {
       const { data, error } = await supabase
         .from("programs")
-        .select("id, channel_id, duration, start_time")
+        // ⬇️ NO id here
+        .select("channel_id, duration, start_time")
         .order("channel_id", { ascending: true })
         .order("start_time", { ascending: true });
 
@@ -227,10 +244,9 @@ export default function RefreshProgramsPage() {
       const baseUtc = new Date();
       baseUtc.setUTCHours(0, 0, 0, 0);
 
-      const updates: { id: number; start_time: string }[] = [];
-
+      // For each channel, compute new start_times and update rows
       for (const [cid, channelRows] of byChannel.entries()) {
-        // Ensure they are in order by existing start_time
+        // Ensure ordered
         channelRows.sort((a, b) => {
           const ta = a.start_time ? Date.parse(a.start_time) : 0;
           const tb = b.start_time ? Date.parse(b.start_time) : 0;
@@ -240,30 +256,31 @@ export default function RefreshProgramsPage() {
         let cursor = new Date(baseUtc);
 
         for (const row of channelRows) {
-          updates.push({
-            id: row.id,
-            start_time: cursor.toISOString(),
-          });
+          const oldStart = row.start_time;
+          const newStart = cursor.toISOString();
+
+          if (oldStart) {
+            const { error: updateError } = await supabase
+              .from("programs")
+              .update({ start_time: newStart })
+              .eq("channel_id", cid)
+              .eq("start_time", oldStart);
+
+            if (updateError) {
+              console.error(
+                "Daily reset update error for one row",
+                updateError
+              );
+              setErr(updateError.message);
+              setDailyRunning(false);
+              return;
+            }
+          }
 
           const dur =
             row.duration && row.duration > 0 ? row.duration : 300;
           cursor = new Date(cursor.getTime() + dur * 1000);
         }
-      }
-
-      if (updates.length === 0) {
-        setErr("No updates could be generated for daily reset.");
-        return;
-      }
-
-      const { error: upsertError } = await supabase
-        .from("programs")
-        .upsert(updates, { onConflict: "id" });
-
-      if (upsertError) {
-        console.error("Daily reset upsert error", upsertError);
-        setErr(upsertError.message);
-        return;
       }
 
       setDailyTouchedPrograms(rows.length);
@@ -406,7 +423,9 @@ export default function RefreshProgramsPage() {
                     const hr = pad(now.getHours());
                     const min = pad(now.getMinutes());
                     const sec = pad(now.getSeconds());
-                    setBaseStart(`${year}-${month}-${day}T${hr}:${min}:${sec}`);
+                    setBaseStart(
+                      `${year}-${month}-${day}T${hr}:${min}:${sec}`
+                    );
                   }}
                   className="rounded-md bg-amber-600 px-3 py-1.5 text-xs hover:bg-amber-700"
                 >
