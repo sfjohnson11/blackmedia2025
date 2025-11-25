@@ -8,12 +8,14 @@ import { ArrowLeft, Save, Loader2, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 type Program = {
-  id: number;
+  // NOTE: no "id" here because your table doesn't have programs.id
   channel_id: number;
   start_time: string;
   title: string | null;
   mp4_url: string;
   duration: number;
+  // if you have description or other fields, they can live here too:
+  // description?: string | null;
 };
 
 export default function ProgramTitlesPage() {
@@ -21,7 +23,7 @@ export default function ProgramTitlesPage() {
 
   const [programs, setPrograms] = useState<Program[]>([]);
   const [loading, setLoading] = useState(true);
-  const [savingId, setSavingId] = useState<number | null>(null);
+  const [savingIndex, setSavingIndex] = useState<number | null>(null);
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [globalSuccess, setGlobalSuccess] = useState<string | null>(null);
 
@@ -33,7 +35,7 @@ export default function ProgramTitlesPage() {
 
     const { data, error } = await supabase
       .from("programs")
-      .select("*")
+      .select("channel_id, start_time, title, mp4_url, duration")
       .order("channel_id", { ascending: true })
       .order("start_time", { ascending: true });
 
@@ -53,8 +55,9 @@ export default function ProgramTitlesPage() {
   }, []);
 
   /**
-   * Update title in LOCAL state by row index so each row is independent
-   * even if there are any weird/duplicate ids coming from the database.
+   * Update title in LOCAL state by row index
+   * This guarantees that only that one row’s input changes,
+   * even if multiple rows share the same column values.
    */
   function updateTitleAtIndex(index: number, value: string) {
     setPrograms((prev) =>
@@ -62,16 +65,20 @@ export default function ProgramTitlesPage() {
     );
   }
 
-  // Save ONE program's title (by id)
-  async function saveOne(id: number) {
+  /**
+   * Save ONE program's title to Supabase.
+   * We identify the row by channel_id + start_time + mp4_url
+   * because your table does NOT have programs.id.
+   */
+  async function saveOne(index: number) {
     setGlobalError(null);
     setGlobalSuccess(null);
-    setSavingId(id);
+    setSavingIndex(index);
 
-    const program = programs.find((p) => p.id === id);
+    const program = programs[index];
     if (!program) {
       setGlobalError("Program not found in local state.");
-      setSavingId(null);
+      setSavingIndex(null);
       return;
     }
 
@@ -79,7 +86,9 @@ export default function ProgramTitlesPage() {
       const { error } = await supabase
         .from("programs")
         .update({ title: program.title })
-        .eq("id", program.id);
+        .eq("channel_id", program.channel_id)
+        .eq("start_time", program.start_time)
+        .eq("mp4_url", program.mp4_url);
 
       if (error) {
         console.error("Save error:", error);
@@ -96,7 +105,7 @@ export default function ProgramTitlesPage() {
       setGlobalError(e?.message || "Unexpected error saving title.");
     }
 
-    setSavingId(null);
+    setSavingIndex(null);
   }
 
   return (
@@ -134,11 +143,11 @@ export default function ProgramTitlesPage() {
       ) : (
         <div className="space-y-6">
           {programs.map((program, index) => {
-            const isSaving = savingId === program.id;
+            const isSaving = savingIndex === index;
 
             return (
               <div
-                key={`${program.id}-${program.start_time}-${index}`}
+                key={`${program.channel_id}-${program.start_time}-${index}`}
                 className="rounded border border-gray-700 bg-gray-900/60 p-4"
               >
                 <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -165,7 +174,7 @@ export default function ProgramTitlesPage() {
 
                     <Button
                       type="button"
-                      onClick={() => saveOne(program.id)}
+                      onClick={() => saveOne(index)}
                       disabled={isSaving}
                       className="shrink-0 bg-amber-600 hover:bg-amber-700"
                     >
@@ -200,8 +209,8 @@ export default function ProgramTitlesPage() {
         <Check className="h-3 w-3 text-emerald-400" />
         <span>
           Each row has its own <span className="font-semibold">Save</span>{" "}
-          button. Changing one input only updates that row&apos;s title, and only
-          that row is written to the database.
+          button. Changing one input only updates that row’s title, and we no
+          longer reference <code>programs.id</code> anywhere.
         </span>
       </div>
     </div>
