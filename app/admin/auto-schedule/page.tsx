@@ -74,18 +74,20 @@ function parseUtcBaseStart(value: string): Date | null {
     /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})$/
   );
   if (!m) return null;
+
   const [, y, mo, d, h, mi, s] = m;
   const year = Number(y);
-  const month = Number(mo) - 1;
+  const month = Number(mo) - 1; // JS months are 0–11
   const day = Number(d);
   const hour = Number(h);
   const minute = Number(mi);
   const second = Number(s);
-  if (
-    [year, month, day, hour, minute, second].some((n) => Number.isNaN(n))
-  ) {
+
+  if ([year, month, day, hour, minute, second].some((n) => Number.isNaN(n))) {
     return null;
   }
+
+  // Treat this as UTC
   return new Date(Date.UTC(year, month, day, hour, minute, second));
 }
 
@@ -94,7 +96,7 @@ export default function AutoSchedulePage() {
 
   const [channelId, setChannelId] = useState<string>("");
   const [bucketName, setBucketName] = useState<string>("channel1");
-  const [baseStart, setBaseStart] = useState<string>(""); // "YYYY-MM-DDTHH:MM:SS"
+  const [baseStart, setBaseStart] = useState<string>(""); // "YYYY-MM-DDTHH:MM:SS" (UTC)
   const [files, setFiles] = useState<BucketFile[]>([]);
   const [loadingFiles, setLoadingFiles] = useState(false);
   const [savingSchedule, setSavingSchedule] = useState(false);
@@ -283,7 +285,7 @@ export default function AutoSchedulePage() {
       return;
     }
 
-    // ✅ Treat baseStart as UTC "YYYY-MM-DDTHH:MM:SS"
+    // ✅ Parse as UTC "YYYY-MM-DDTHH:MM:SS"
     const base = parseUtcBaseStart(baseStart);
     if (!base) {
       setErr(
@@ -318,7 +320,7 @@ export default function AutoSchedulePage() {
       duration: number;
     }[] = [];
 
-    let currentStart = new Date(base.getTime()); // already UTC
+    let currentStart = new Date(base.getTime()); // keep UTC anchor
 
     for (const file of ordered) {
       const durationSec = file.duration ? Math.round(file.duration) : 0;
@@ -337,7 +339,7 @@ export default function AutoSchedulePage() {
 
       rows.push({
         channel_id: chId,
-        start_time: currentStart.toISOString(), // ✅ stored as UTC ISO
+        start_time: currentStart.toISOString(), // UTC ISO
         title: niceTitle,
         mp4_url: publicUrl,
         duration: durationSec,
@@ -389,8 +391,7 @@ export default function AutoSchedulePage() {
             <p className="mt-1 text-sm text-slate-300">
               Pull MP4 files from a channel bucket, detect durations, and
               create a sequential schedule in your{" "}
-              <code className="text-amber-300">programs</code> table
-              using <span className="font-semibold">UTC</span> start times.
+              <code className="text-amber-300">programs</code> table.
             </p>
           </div>
           <div className="flex gap-2">
@@ -448,14 +449,14 @@ export default function AutoSchedulePage() {
               </p>
             </div>
 
-            {/* BASE START WITH PRESETS */}
+            {/* BASE START WITH PRESETS + NOW (UTC) */}
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-1">
                 Base Start (UTC, YYYY-MM-DDTHH:MM:SS)
               </label>
 
               <div className="flex gap-2">
-                {/* Manual input (you can type exact UTC) */}
+                {/* Plain editable text input */}
                 <input
                   type="text"
                   value={baseStart}
@@ -466,7 +467,7 @@ export default function AutoSchedulePage() {
                              focus:ring-amber-400"
                 />
 
-                {/* FULL-DAY PRESET TIMES DROPDOWN */}
+                {/* Presets dropdown (kept) */}
                 <select
                   className="rounded-md border border-slate-600 bg-slate-900 text-sm px-2"
                   onChange={(e) => {
@@ -485,7 +486,7 @@ export default function AutoSchedulePage() {
                   ))}
                 </select>
 
-                {/* NOW BUTTON (uses your current date/time, treated as UTC string) */}
+                {/* Now (UTC) */}
                 <button
                   type="button"
                   onClick={() => {
@@ -499,7 +500,6 @@ export default function AutoSchedulePage() {
                     const min = pad(now.getUTCMinutes());
                     const sec = pad(now.getUTCSeconds());
 
-                    // ✅ "now" in real UTC
                     setBaseStart(
                       `${year}-${month}-${day}T${hr}:${min}:${sec}`
                     );
@@ -515,11 +515,10 @@ export default function AutoSchedulePage() {
                 <span className="font-mono text-amber-300">
                   2025-11-16T10:00:00
                 </span>{" "}
-                (no spaces). This is interpreted as{" "}
-                <span className="font-semibold">UTC</span>.
-              </p>
-              <p className="text-xs text-amber-400 mt-1">
-                Current Value: {baseStart || "(none)"}
+                (no spaces). Current value:{" "}
+                <span className="font-mono text-amber-200">
+                  {baseStart || "(none)"}
+                </span>
               </p>
             </div>
           </div>
@@ -549,11 +548,7 @@ export default function AutoSchedulePage() {
               type="button"
               variant="outline"
               onClick={handleDetectAll}
-              disabled={
-                files.length === 0 ||
-                savingSchedule ||
-                loadingFiles
-              }
+              disabled={files.length === 0 || savingSchedule || loadingFiles}
               className="border-slate-600 bg-slate-950 text-sm"
             >
               <Clock className="mr-2 h-4 w-4" />
@@ -577,7 +572,7 @@ export default function AutoSchedulePage() {
 
           {successMsg && (
             <div className="flex items-start gap-2 rounded-md border border-emerald-500/60 bg-emerald-950/40 px-3 py-2 text-xs text-emerald-200">
-              <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0" />
+            <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0" />
               <p>{successMsg}</p>
             </div>
           )}
@@ -696,9 +691,7 @@ export default function AutoSchedulePage() {
             type="button"
             onClick={handleCreateSchedule}
             disabled={
-              savingSchedule ||
-              files.length === 0 ||
-              selectedCount === 0
+              savingSchedule || files.length === 0 || selectedCount === 0
             }
             className="bg-emerald-600 hover:bg-emerald-700 text-sm"
           >
