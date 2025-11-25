@@ -62,6 +62,7 @@ export default function OnDemandChannelsPage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#040814] via-[#050b1a] to-black text-white pb-10">
       <div className="mx-auto max-w-6xl px-4 pt-8 space-y-6">
+
         {/* Header */}
         <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -73,7 +74,20 @@ export default function OnDemandChannelsPage() {
               Browse channels and watch programs on-demand, outside of the live schedule.
             </p>
           </div>
+
           <div className="flex gap-2">
+            {/* Back to Member Hub */}
+            <Link href="/app">
+              <Button
+                variant="outline"
+                className="border-slate-600 bg-slate-900 text-sm"
+              >
+                <ArrowLeft className="mr-2 h-4 w-4" />
+                Back to Member Hub
+              </Button>
+            </Link>
+
+            {/* Back to Channels */}
             <Link href="/channels">
               <Button
                 variant="outline"
@@ -98,7 +112,7 @@ export default function OnDemandChannelsPage() {
           </div>
         )}
 
-        {/* Channels grid */}
+        {/* Channels Grid */}
         {!loading && !err && (
           <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {sortedChannels.map((ch) => {
