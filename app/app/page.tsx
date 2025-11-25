@@ -7,7 +7,6 @@ import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
 type Summary = {
   channels: number;
-  programs: number;
 };
 
 export default function AppPage() {
@@ -18,30 +17,19 @@ export default function AppPage() {
   useEffect(() => {
     async function loadSummary() {
       try {
-        const [{ count: channelCount, error: chErr }, { count: programCount, error: prErr }] =
-          await Promise.all([
-            supabase
-              .from("channels")
-              .select("id", { count: "exact", head: true }),
-            supabase
-              .from("programs")
-              .select("id", { count: "exact", head: true }),
-          ]);
+        const { count, error } = await supabase
+          .from("channels")
+          .select("id", { count: "exact", head: true });
 
-        if (chErr) {
-          console.error("Channel count error:", chErr);
+        if (error) {
+          console.error("Channel count error:", error);
+          setSummary({ channels: 0 });
+        } else {
+          setSummary({ channels: count ?? 0 });
         }
-        if (prErr) {
-          console.error("Program count error:", prErr);
-        }
-
-        setSummary({
-          channels: channelCount ?? 0,
-          programs: programCount ?? 0,
-        });
       } catch (e) {
         console.error("Summary load error:", e);
-        setSummary({ channels: 0, programs: 0 });
+        setSummary({ channels: 0 });
       } finally {
         setLoadingSummary(false);
       }
@@ -59,8 +47,8 @@ export default function AppPage() {
             Black Truth TV — Member Hub
           </h1>
           <p className="text-sm md:text-base text-slate-300 max-w-2xl">
-            Welcome inside the network. From here you can jump to live channels, Freedom
-            School lessons, and on-demand specials.
+            Welcome inside the network. From here you can jump to live channels,
+            Freedom School lessons, and on-demand specials.
           </p>
         </section>
 
@@ -72,20 +60,16 @@ export default function AppPage() {
             </p>
             <p className="text-sm text-slate-200">
               {loadingSummary ? (
-                "Channel and schedule summary is loading…"
+                "Channel summary is loading…"
               ) : summary ? (
                 <>
                   <span className="font-semibold text-amber-300">
                     {summary.channels}
                   </span>{" "}
-                  channels ·{" "}
-                  <span className="font-semibold text-amber-300">
-                    {summary.programs}
-                  </span>{" "}
-                  scheduled programs
+                  channels · live schedule running now
                 </>
               ) : (
-                "Channel and schedule summary is currently unavailable."
+                "Live schedule running now."
               )}
             </p>
           </div>
