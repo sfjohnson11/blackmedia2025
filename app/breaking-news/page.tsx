@@ -39,10 +39,10 @@ export default function BreakingNewsPage() {
   }, [supabase]);
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-8">
+    <div className="max-w-6xl mx-auto px-4 py-4">
 
       {/* BACK TO HUB */}
-      <div className="mb-6">
+      <div className="mb-4">
         <a
           href="/app"
           className="text-xs font-semibold text-yellow-300 hover:text-yellow-400 transition"
@@ -52,7 +52,7 @@ export default function BreakingNewsPage() {
       </div>
 
       {/* HEADER STRIP */}
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-3 flex items-center justify-between">
         <div>
           <div className="inline-flex items-center gap-2 rounded-full bg-red-700/80 px-3 py-1">
             <span className="h-2 w-2 rounded-full bg-white animate-pulse" />
@@ -61,7 +61,7 @@ export default function BreakingNewsPage() {
             </span>
           </div>
 
-          <h1 className="mt-3 text-3xl font-semibold text-slate-50">
+          <h1 className="mt-2 text-3xl font-semibold text-slate-50">
             Live Coverage & Headlines
           </h1>
 
@@ -74,12 +74,11 @@ export default function BreakingNewsPage() {
       </div>
 
       {/* MAIN GRID */}
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1.3fr)]">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1.3fr)] items-start min-h-[70vh]">
 
-        {/* LEFT: PLAYER CARD */}
+        {/* LEFT: BIG PLAYER CARD */}
         <section className="space-y-3">
-          <div className="rounded-2xl border border-slate-700/80 bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 p-4 shadow-[0_18px_40px_rgba(0,0,0,0.7)]">
-
+          <div className="rounded-2xl border border-slate-700/80 bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 p-4 shadow-[0_18px_40px_rgba(0,0,0,0.7)] h-full flex flex-col">
             <div className="flex items-center justify-between mb-3">
               <div>
                 <h2 className="text-xl font-semibold text-slate-50">
@@ -95,11 +94,11 @@ export default function BreakingNewsPage() {
               </span>
             </div>
 
-            {/* 16:9 PLAYER */}
-            <div className="w-full overflow-hidden rounded-xl border border-slate-700 bg-black/90">
-              <div className="relative w-full" style={{ paddingTop: "56.25%" }}>
+            {/* BIG VIEWPORT-BASED PLAYER */}
+            <div className="w-full overflow-hidden rounded-xl border border-slate-700 bg-black/90 flex-1">
+              <div className="relative w-full h-[60vh] md:h-[65vh]">
                 <iframe
-                  src="/watch/21"   // CORRECT URL FOR CHANNEL 21
+                  src="/watch/21"   // Channel 21 player route
                   className="absolute inset-0 h-full w-full"
                   allow="autoplay; encrypted-media; fullscreen"
                   allowFullScreen
@@ -123,7 +122,7 @@ export default function BreakingNewsPage() {
               No breaking news posted yet.
             </p>
           ) : (
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-3">
               {rows.map((row, index) => (
                 <article
                   key={row.id}
