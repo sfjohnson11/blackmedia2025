@@ -64,6 +64,8 @@ const TIME_PRESETS: string[] = Array.from({ length: 24 }, (_, h) =>
 function makeTitleFromFilename(name: string): string {
   let base = name.replace(/\.[^/.]+$/, "");
   base = base.replace(/_+/g, " ").trim();
+  // Capitalize the first letter of each word a bit nicer
+  base = base.replace(/\b\w/g, (ch) => ch.toUpperCase());
   return base || name;
 }
 
@@ -270,6 +272,7 @@ export default function AutoSchedulePage() {
     );
   }
 
+  // ✅ NEW: create schedule but reuse existing titles when possible
   async function handleCreateSchedule() {
     setErr(null);
     setSuccessMsg(null);
@@ -308,10 +311,61 @@ export default function AutoSchedulePage() {
       return;
     }
 
+    // Sort by filename so schedule is stable
     const ordered = [...selectedFiles].sort((a, b) =>
       a.name.localeCompare(b.name)
     );
 
+    // STEP 1: build list of public URLs for each file
+    type Prepared = {
+      file: BucketFile;
+      publicUrl: string;
+    };
+
+    let prepared: Prepared[] = [];
+    try {
+      prepared = ordered.map((file) => {
+        const { data } = supabase.storage
+          .from(bucketName)
+          .getPublicUrl(file.name);
+
+        const publicUrl = data?.publicUrl;
+        if (!publicUrl) {
+          throw new Error(`Could not get public URL for ${file.name}.`);
+        }
+
+        return { file, publicUrl };
+      });
+    } catch (e: any) {
+      console.error("Error getting public URLs", e);
+      setErr(e?.message || "Could not get public URLs for one or more files.");
+      return;
+    }
+
+    // STEP 2: Look up any existing programs for this channel + these URLs
+    const urlList = prepared.map((p) => p.publicUrl);
+
+    const { data: existingPrograms, error: existingErr } = await supabase
+      .from("programs")
+      .select("id, title, mp4_url")
+      .eq("channel_id", chId)
+      .in("mp4_url", urlList);
+
+    if (existingErr) {
+      console.error("Error fetching existing programs", existingErr);
+      setErr(existingErr.message);
+      return;
+    }
+
+    // Build a lookup: mp4_url -> existing title
+    const titleByUrl = new Map<string, string>();
+    (existingPrograms || []).forEach((p: any) => {
+      if (p.mp4_url && p.title) {
+        titleByUrl.set(p.mp4_url, p.title);
+      }
+    });
+
+    // STEP 3: Build new rows, reusing any existing titles
     const rows: {
       channel_id: number;
       start_time: string;
@@ -322,20 +376,16 @@ export default function AutoSchedulePage() {
 
     let currentStart = new Date(base.getTime()); // keep UTC anchor
 
-    for (const file of ordered) {
+    for (const { file, publicUrl } of prepared) {
       const durationSec = file.duration ? Math.round(file.duration) : 0;
 
-      const { data } = supabase.storage
-        .from(bucketName)
-        .getPublicUrl(file.name);
-
-      const publicUrl = data?.publicUrl;
-      if (!publicUrl) {
-        setErr(`Could not get public URL for ${file.name}.`);
-        return;
-      }
-
-      const niceTitle = makeTitleFromFilename(file.name);
+      // If we've already scheduled this mp4 before for this channel,
+      // reuse the title the admin already fixed.
+      const existingTitle = titleByUrl.get(publicUrl);
+      const niceTitle =
+        existingTitle && existingTitle.trim().length > 0
+          ? existingTitle
+          : makeTitleFromFilename(file.name);
 
       rows.push({
         channel_id: chId,
@@ -350,6 +400,7 @@ export default function AutoSchedulePage() {
       );
     }
 
+    // STEP 4: Insert new schedule rows
     setSavingSchedule(true);
     try {
       const { error } = await supabase.from("programs").insert(rows);
@@ -391,7 +442,9 @@ export default function AutoSchedulePage() {
             <p className="mt-1 text-sm text-slate-300">
               Pull MP4 files from a channel bucket, detect durations, and
               create a sequential schedule in your{" "}
-              <code className="text-amber-300">programs</code> table.
+              <code className="text-amber-300">programs</code> table. Existing
+              titles for the same MP4 + channel are reused so you don&apos;t
+              have to rename shows every week.
             </p>
           </div>
           <div className="flex gap-2">
@@ -467,7 +520,7 @@ export default function AutoSchedulePage() {
                              focus:ring-amber-400"
                 />
 
-                {/* Presets dropdown (kept) */}
+                {/* Presets dropdown */}
                 <select
                   className="rounded-md border border-slate-600 bg-slate-900 text-sm px-2"
                   onChange={(e) => {
@@ -572,7 +625,7 @@ export default function AutoSchedulePage() {
 
           {successMsg && (
             <div className="flex items-start gap-2 rounded-md border border-emerald-500/60 bg-emerald-950/40 px-3 py-2 text-xs text-emerald-200">
-            <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0" />
+              <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0" />
               <p>{successMsg}</p>
             </div>
           )}
@@ -616,7 +669,9 @@ export default function AutoSchedulePage() {
                   <tr className="bg-slate-900/90 text-[11px] uppercase tracking-wide text-slate-300">
                     <th className="px-3 py-2 text-left">Use</th>
                     <th className="px-3 py-2 text-left">File</th>
-                    <th className="px-3 py-2 text-left">Duration (seconds)</th>
+                    <th className="px-3 py-2 text-left">
+                      Duration (seconds)
+                    </th>
                     <th className="px-3 py-2 text-left">Actions</th>
                   </tr>
                 </thead>
