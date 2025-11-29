@@ -22,6 +22,11 @@ type BucketFile = {
   selected: boolean;
 };
 
+type ExistingProgram = {
+  title: string | null;
+  mp4_url: string | null;
+};
+
 const CHANNEL_BUCKETS = [
   "channel1",
   "channel2",
@@ -62,9 +67,11 @@ const TIME_PRESETS: string[] = Array.from({ length: 24 }, (_, h) =>
 
 // ✅ Helper: turn a filename into a nicer title
 function makeTitleFromFilename(name: string): string {
-  let base = name.replace(/\.[^/.]+$/, "");
-  base = base.replace(/_+/g, " ").trim();
-  // Capitalize the first letter of each word a bit nicer
+  let base = name.replace(/\.[^/.]+$/, ""); // remove extension
+  base = base.replace(/_+/g, " ").trim();   // underscores → spaces
+  base = base.replace(/\s+/g, " ");         // clean double spaces
+
+  // Capitalize each word
   base = base.replace(/\b\w/g, (ch) => ch.toUpperCase());
   return base || name;
 }
@@ -272,7 +279,7 @@ export default function AutoSchedulePage() {
     );
   }
 
-  // ✅ NEW: create schedule but reuse existing titles when possible
+  // ✅ Create schedule, reusing existing titles when possible
   async function handleCreateSchedule() {
     setErr(null);
     setSuccessMsg(null);
@@ -288,7 +295,7 @@ export default function AutoSchedulePage() {
       return;
     }
 
-    // ✅ Parse as UTC "YYYY-MM-DDTHH:MM:SS"
+    // Parse as UTC "YYYY-MM-DDTHH:MM:SS"
     const base = parseUtcBaseStart(baseStart);
     if (!base) {
       setErr(
@@ -316,7 +323,7 @@ export default function AutoSchedulePage() {
       a.name.localeCompare(b.name)
     );
 
-    // STEP 1: build list of public URLs for each file
+    // STEP 1: Build list of public URLs for each file
     type Prepared = {
       file: BucketFile;
       publicUrl: string;
@@ -347,7 +354,7 @@ export default function AutoSchedulePage() {
 
     const { data: existingPrograms, error: existingErr } = await supabase
       .from("programs")
-      .select("id, title, mp4_url")
+      .select("title, mp4_url")
       .eq("channel_id", chId)
       .in("mp4_url", urlList);
 
@@ -359,7 +366,7 @@ export default function AutoSchedulePage() {
 
     // Build a lookup: mp4_url -> existing title
     const titleByUrl = new Map<string, string>();
-    (existingPrograms || []).forEach((p: any) => {
+    (existingPrograms || []).forEach((p: ExistingProgram) => {
       if (p.mp4_url && p.title) {
         titleByUrl.set(p.mp4_url, p.title);
       }
@@ -444,7 +451,7 @@ export default function AutoSchedulePage() {
               create a sequential schedule in your{" "}
               <code className="text-amber-300">programs</code> table. Existing
               titles for the same MP4 + channel are reused so you don&apos;t
-              have to rename shows every week.
+              have to rename shows every time.
             </p>
           </div>
           <div className="flex gap-2">
