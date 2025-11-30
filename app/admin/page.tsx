@@ -43,6 +43,11 @@ const programmingTools: Tool[] = [
     description: "Clean up and standardize program names.",
   },
   {
+    name: "Program Order",
+    path: "/admin/program-order",
+    description: "Reorder programs for a channel and reflow start times.",
+  },
+  {
     name: "Schedule",
     path: "/admin/schedule",
     description: "Daily / weekly schedule overview.",
