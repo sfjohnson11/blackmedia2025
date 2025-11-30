@@ -8,15 +8,19 @@ import { ArrowLeft, Save, Loader2, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 type Program = {
-  // NOTE: no "id" here because your table doesn't have programs.id
   channel_id: number;
   start_time: string;
   title: string | null;
   mp4_url: string;
   duration: number;
-  // if you have description or other fields, they can live here too:
-  // description?: string | null;
 };
+
+const CHANNEL_OPTIONS: number[] = [
+  1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+  11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+  21, 22, 23, 24, 25, 26, 27, 28, 29,
+  30 // if you use 30 for Freedom School, etc.
+];
 
 export default function ProgramTitlesPage() {
   const supabase = createClientComponentClient();
@@ -27,21 +31,38 @@ export default function ProgramTitlesPage() {
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [globalSuccess, setGlobalSuccess] = useState<string | null>(null);
 
-  // Load all programs
-  async function loadPrograms() {
+  // New: channel filter (string so it works nicely with <select>)
+  const [channelFilter, setChannelFilter] = useState<string>(""); // "" = all channels
+
+  // Load programs (optionally filtered by channel)
+  async function loadPrograms(forChannel: string) {
     setLoading(true);
     setGlobalError(null);
     setGlobalSuccess(null);
 
-    const { data, error } = await supabase
+    let query = supabase
       .from("programs")
-      .select("channel_id, start_time, title, mp4_url, duration")
+      .select("channel_id, start_time, title, mp4_url, duration");
+
+    // If a specific channel is selected, filter by that channel_id
+    if (forChannel !== "") {
+      const chId = Number(forChannel);
+      if (!Number.isNaN(chId)) {
+        query = query.eq("channel_id", chId);
+      }
+    }
+
+    // Always order within the result
+    query = query
       .order("channel_id", { ascending: true })
       .order("start_time", { ascending: true });
+
+    const { data, error } = await query;
 
     if (error) {
       console.error("Load error:", error);
       setGlobalError(error.message);
+      setPrograms([]);
     } else {
       setPrograms((data || []) as Program[]);
     }
@@ -49,27 +70,20 @@ export default function ProgramTitlesPage() {
     setLoading(false);
   }
 
+  // Load once on mount (all or default), then reload whenever the channel filter changes
   useEffect(() => {
-    loadPrograms();
+    loadPrograms(channelFilter);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [channelFilter]);
 
-  /**
-   * Update title in LOCAL state by row index
-   * This guarantees that only that one row’s input changes,
-   * even if multiple rows share the same column values.
-   */
+  // Update title in local state by row index
   function updateTitleAtIndex(index: number, value: string) {
     setPrograms((prev) =>
       prev.map((p, i) => (i === index ? { ...p, title: value } : p))
     );
   }
 
-  /**
-   * Save ONE program's title to Supabase.
-   * We identify the row by channel_id + start_time + mp4_url
-   * because your table does NOT have programs.id.
-   */
+  // Save ONE program's title to Supabase (identified by channel_id + start_time + mp4_url)
   async function saveOne(index: number) {
     setGlobalError(null);
     setGlobalSuccess(null);
@@ -111,7 +125,7 @@ export default function ProgramTitlesPage() {
   return (
     <div className="min-h-screen bg-black text-white p-6">
       {/* Header */}
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl font-bold">Program Title Editor</h1>
 
         <Link href="/admin">
@@ -120,6 +134,49 @@ export default function ProgramTitlesPage() {
             Back to Admin
           </Button>
         </Link>
+      </div>
+
+      {/* Channel filter */}
+      <div className="mb-4 flex flex-col gap-2 rounded border border-gray-700 bg-gray-900/60 p-3 text-sm">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <label className="block text-xs font-medium text-gray-300 mb-1">
+              Filter by Channel
+            </label>
+            <div className="flex items-center gap-2">
+              <select
+                value={channelFilter}
+                onChange={(e) => setChannelFilter(e.target.value)}
+                className="rounded-md border border-gray-600 bg-gray-950 px-3 py-1.5 text-sm text-white focus:border-amber-400 focus:ring-1 focus:ring-amber-400"
+              >
+                <option value="">All Channels</option>
+                {CHANNEL_OPTIONS.map((ch) => (
+                  <option key={ch} value={String(ch)}>
+                    Channel {ch}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="text-xs text-gray-400 sm:text-right">
+            Showing{" "}
+            <span className="font-semibold text-amber-300">
+              {programs.length}
+            </span>{" "}
+            program(s)
+            {channelFilter !== "" && (
+              <>
+                {" "}
+                for{" "}
+                <span className="font-semibold">
+                  Channel {channelFilter}
+                </span>
+              </>
+            )}
+            {channelFilter === "" && " across all channels."}
+          </div>
+        </div>
       </div>
 
       {/* Global alerts */}
@@ -134,7 +191,7 @@ export default function ProgramTitlesPage() {
         </div>
       )}
 
-      {/* Loading */}
+      {/* Loading / list */}
       {loading ? (
         <div className="py-10 text-center text-gray-300">
           <Loader2 className="mx-auto mb-3 h-6 w-6 animate-spin" />
@@ -167,7 +224,9 @@ export default function ProgramTitlesPage() {
                     <input
                       type="text"
                       value={program.title || ""}
-                      onChange={(e) => updateTitleAtIndex(index, e.target.value)}
+                      onChange={(e) =>
+                        updateTitleAtIndex(index, e.target.value)
+                      }
                       className="w-full rounded-md border border-gray-600 bg-gray-950 px-3 py-2 text-sm text-white focus:border-amber-400 focus:ring-1 focus:ring-amber-400"
                       placeholder="Enter program title"
                     />
@@ -198,7 +257,7 @@ export default function ProgramTitlesPage() {
 
           {programs.length === 0 && (
             <div className="py-6 text-center text-sm text-gray-400">
-              No programs found in the database.
+              No programs found for this selection.
             </div>
           )}
         </div>
@@ -209,8 +268,8 @@ export default function ProgramTitlesPage() {
         <Check className="h-3 w-3 text-emerald-400" />
         <span>
           Each row has its own <span className="font-semibold">Save</span>{" "}
-          button. Changing one input only updates that row’s title, and we no
-          longer reference <code>programs.id</code> anywhere.
+          button. Titles are filtered by channel so you don&apos;t have to
+          scroll through all channels at once.
         </span>
       </div>
     </div>
