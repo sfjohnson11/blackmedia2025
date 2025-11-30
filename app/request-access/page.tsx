@@ -95,11 +95,32 @@ export default function RequestAccessPage() {
             fontSize: 14,
             opacity: 0.8,
             textAlign: "center",
-            marginBottom: 18,
+            marginBottom: 8,
           }}
         >
           Tell us a little about yourself and how you’d like to be part of the
           Black Truth TV community.
+        </p>
+
+        {/* 🔒 Private community / board discretion notice */}
+        <p
+          style={{
+            fontSize: 12,
+            textAlign: "center",
+            marginBottom: 18,
+            padding: "8px 10px",
+            borderRadius: 10,
+            background: "rgba(250,204,21,0.08)",
+            border: "1px solid rgba(250,204,21,0.35)",
+            color: "rgba(252,252,252,0.9)",
+          }}
+        >
+          Black Truth TV is a{" "}
+          <strong>private, curated community</strong>. Submitting this form{" "}
+          <strong>does not guarantee access</strong>. All requests are reviewed
+          and approved or declined at the sole discretion of the Black Truth TV
+          board. We may choose not to provide additional explanation regarding
+          individual decisions.
         </p>
 
         {success && (
@@ -113,8 +134,9 @@ export default function RequestAccessPage() {
               fontSize: 13,
             }}
           >
-            Thank you! Your request has been received. You’ll be contacted once
-            your account is created.
+            Thank you! Your request has been received. If your request is
+            approved, you’ll be contacted with next steps. Please note that not
+            all requests are granted.
           </div>
         )}
 
@@ -231,7 +253,9 @@ export default function RequestAccessPage() {
               <option value="Family & Youth Programming">
                 Family & Youth Programming
               </option>
-              <option value="Other / All of the above">Other / All of the above</option>
+              <option value="Other / All of the above">
+                Other / All of the above
+              </option>
             </select>
           </label>
 
