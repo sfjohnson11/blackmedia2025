@@ -22,11 +22,7 @@ type BucketFile = {
   selected: boolean;
 };
 
-type ExistingProgram = {
-  title: string | null;
-  mp4_url: string | null;
-};
-
+// ✅ UPDATED: support up to 50 channel buckets
 const CHANNEL_BUCKETS = [
   "channel1",
   "channel2",
@@ -57,7 +53,29 @@ const CHANNEL_BUCKETS = [
   "channel27",
   "channel28",
   "channel29",
+  // you were already using Freedom School as channel 30
   "freedom-school",
+  // new buckets for current & future channels
+  "channel31",
+  "channel32",
+  "channel33",
+  "channel34",
+  "channel35",
+  "channel36",
+  "channel37",
+  "channel38",
+  "channel39",
+  "channel40",
+  "channel41",
+  "channel42",
+  "channel43",
+  "channel44",
+  "channel45",
+  "channel46",
+  "channel47",
+  "channel48",
+  "channel49",
+  "channel50",
 ];
 
 // ✅ Full-day hourly presets: 00:00:00 → 23:00:00
@@ -67,12 +85,8 @@ const TIME_PRESETS: string[] = Array.from({ length: 24 }, (_, h) =>
 
 // ✅ Helper: turn a filename into a nicer title
 function makeTitleFromFilename(name: string): string {
-  let base = name.replace(/\.[^/.]+$/, ""); // remove extension
-  base = base.replace(/_+/g, " ").trim();   // underscores → spaces
-  base = base.replace(/\s+/g, " ");         // clean double spaces
-
-  // Capitalize each word
-  base = base.replace(/\b\w/g, (ch) => ch.toUpperCase());
+  let base = name.replace(/\.[^/.]+$/, "");
+  base = base.replace(/_+/g, " ").trim();
   return base || name;
 }
 
@@ -279,7 +293,6 @@ export default function AutoSchedulePage() {
     );
   }
 
-  // ✅ Create schedule, reusing existing titles when possible
   async function handleCreateSchedule() {
     setErr(null);
     setSuccessMsg(null);
@@ -295,7 +308,7 @@ export default function AutoSchedulePage() {
       return;
     }
 
-    // Parse as UTC "YYYY-MM-DDTHH:MM:SS"
+    // ✅ Parse as UTC "YYYY-MM-DDTHH:MM:SS"
     const base = parseUtcBaseStart(baseStart);
     if (!base) {
       setErr(
@@ -318,61 +331,10 @@ export default function AutoSchedulePage() {
       return;
     }
 
-    // Sort by filename so schedule is stable
     const ordered = [...selectedFiles].sort((a, b) =>
       a.name.localeCompare(b.name)
     );
 
-    // STEP 1: Build list of public URLs for each file
-    type Prepared = {
-      file: BucketFile;
-      publicUrl: string;
-    };
-
-    let prepared: Prepared[] = [];
-    try {
-      prepared = ordered.map((file) => {
-        const { data } = supabase.storage
-          .from(bucketName)
-          .getPublicUrl(file.name);
-
-        const publicUrl = data?.publicUrl;
-        if (!publicUrl) {
-          throw new Error(`Could not get public URL for ${file.name}.`);
-        }
-
-        return { file, publicUrl };
-      });
-    } catch (e: any) {
-      console.error("Error getting public URLs", e);
-      setErr(e?.message || "Could not get public URLs for one or more files.");
-      return;
-    }
-
-    // STEP 2: Look up any existing programs for this channel + these URLs
-    const urlList = prepared.map((p) => p.publicUrl);
-
-    const { data: existingPrograms, error: existingErr } = await supabase
-      .from("programs")
-      .select("title, mp4_url")
-      .eq("channel_id", chId)
-      .in("mp4_url", urlList);
-
-    if (existingErr) {
-      console.error("Error fetching existing programs", existingErr);
-      setErr(existingErr.message);
-      return;
-    }
-
-    // Build a lookup: mp4_url -> existing title
-    const titleByUrl = new Map<string, string>();
-    (existingPrograms || []).forEach((p: ExistingProgram) => {
-      if (p.mp4_url && p.title) {
-        titleByUrl.set(p.mp4_url, p.title);
-      }
-    });
-
-    // STEP 3: Build new rows, reusing any existing titles
     const rows: {
       channel_id: number;
       start_time: string;
@@ -383,16 +345,20 @@ export default function AutoSchedulePage() {
 
     let currentStart = new Date(base.getTime()); // keep UTC anchor
 
-    for (const { file, publicUrl } of prepared) {
+    for (const file of ordered) {
       const durationSec = file.duration ? Math.round(file.duration) : 0;
 
-      // If we've already scheduled this mp4 before for this channel,
-      // reuse the title the admin already fixed.
-      const existingTitle = titleByUrl.get(publicUrl);
-      const niceTitle =
-        existingTitle && existingTitle.trim().length > 0
-          ? existingTitle
-          : makeTitleFromFilename(file.name);
+      const { data } = supabase.storage
+        .from(bucketName)
+        .getPublicUrl(file.name);
+
+      const publicUrl = data?.publicUrl;
+      if (!publicUrl) {
+        setErr(`Could not get public URL for ${file.name}.`);
+        return;
+      }
+
+      const niceTitle = makeTitleFromFilename(file.name);
 
       rows.push({
         channel_id: chId,
@@ -407,7 +373,6 @@ export default function AutoSchedulePage() {
       );
     }
 
-    // STEP 4: Insert new schedule rows
     setSavingSchedule(true);
     try {
       const { error } = await supabase.from("programs").insert(rows);
@@ -449,9 +414,7 @@ export default function AutoSchedulePage() {
             <p className="mt-1 text-sm text-slate-300">
               Pull MP4 files from a channel bucket, detect durations, and
               create a sequential schedule in your{" "}
-              <code className="text-amber-300">programs</code> table. Existing
-              titles for the same MP4 + channel are reused so you don&apos;t
-              have to rename shows every time.
+              <code className="text-amber-300">programs</code> table.
             </p>
           </div>
           <div className="flex gap-2">
@@ -527,7 +490,7 @@ export default function AutoSchedulePage() {
                              focus:ring-amber-400"
                 />
 
-                {/* Presets dropdown */}
+                {/* Presets dropdown (kept) */}
                 <select
                   className="rounded-md border border-slate-600 bg-slate-900 text-sm px-2"
                   onChange={(e) => {
@@ -676,9 +639,7 @@ export default function AutoSchedulePage() {
                   <tr className="bg-slate-900/90 text-[11px] uppercase tracking-wide text-slate-300">
                     <th className="px-3 py-2 text-left">Use</th>
                     <th className="px-3 py-2 text-left">File</th>
-                    <th className="px-3 py-2 text-left">
-                      Duration (seconds)
-                    </th>
+                    <th className="px-3 py-2 text-left">Duration (seconds)</th>
                     <th className="px-3 py-2 text-left">Actions</th>
                   </tr>
                 </thead>
