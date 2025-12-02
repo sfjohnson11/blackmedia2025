@@ -15,11 +15,9 @@ type ChatRoom = {
 type ChatMessage = {
   id: string;
   room_id: string;
-  user_id: string;
-  content: string;
+  sender_id: string;
+  message: string;
   created_at: string;
-  // adjust/remove this if your table doesn't have it
-  author_name?: string | null;
 };
 
 export default function ChatRoomPage({
@@ -77,8 +75,7 @@ export default function ChatRoomPage({
 
       const { data, error } = await supabase
         .from("chat_messages")
-        // adjust selected columns to match your schema
-        .select("id, room_id, user_id, content, created_at, author_name")
+        .select("id, room_id, sender_id, message, created_at")
         .eq("room_id", roomId)
         .order("created_at", { ascending: true });
 
@@ -107,30 +104,27 @@ export default function ChatRoomPage({
     setSending(true);
 
     try {
-      // get current user
+      // Get current user for sender_id
       const {
         data: { user },
       } = await supabase.auth.getUser();
+
       if (!user) {
         alert("You must be logged in to send messages.");
         setSending(false);
         return;
       }
 
-      const payload: any = {
+      const payload = {
         room_id: roomId,
-        user_id: user.id,
-        content: newMessage.trim(),
+        sender_id: user.id, // 👈 matches your schema
+        message: newMessage.trim(),
       };
-
-      // If your table has author_name, you can pull from a profile table instead.
-      // For now we'll leave it null and just show content.
-      // payload.author_name = null;
 
       const { data, error } = await supabase
         .from("chat_messages")
         .insert(payload)
-        .select("id, room_id, user_id, content, created_at, author_name")
+        .select("id, room_id, sender_id, message, created_at")
         .single();
 
       if (error) {
@@ -218,15 +212,16 @@ export default function ChatRoomPage({
                     className="rounded-lg bg-slate-900/70 border border-slate-800 px-3 py-2 text-sm"
                   >
                     <div className="flex items-center justify-between mb-1">
+                      {/* We don't have names yet, just show Member for now */}
                       <span className="text-xs font-semibold text-amber-300">
-                        {m.author_name || "Member"}
+                        Member
                       </span>
                       <span className="text-[10px] text-slate-400">
                         {new Date(m.created_at).toLocaleString()}
                       </span>
                     </div>
                     <p className="text-sm text-slate-100 whitespace-pre-wrap">
-                      {m.content}
+                      {m.message}
                     </p>
                   </li>
                 ))}
