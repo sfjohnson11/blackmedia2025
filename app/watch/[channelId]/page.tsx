@@ -1,7 +1,13 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useState,
+  type ReactNode,
+  type FormEvent,
+} from "react";
 import VideoPlayer from "@/components/video-player";
 import {
   getCandidateUrlsForProgram,
@@ -14,6 +20,14 @@ import type { Channel, Program } from "@/types";
 import { ChevronLeft, Loader2 } from "lucide-react";
 
 type ProgramWithSrc = Program & { _resolved_src?: string };
+
+type ChatMessage = {
+  id: string;
+  room_id: string;
+  sender_id: string;
+  message: string;
+  created_at: string;
+};
 
 const CH21_ID_NUMERIC = 21;
 const YT_CH21 = "UCMkW239dyAxDyOFDP0D6p2g";
@@ -39,9 +53,26 @@ const LoadingOverlay = ({
       role="status"
     >
       <div className="flex items-center gap-3 px-4 py-2 rounded-full bg-black/60">
-        <svg className="h-5 w-5 animate-spin" viewBox="0 0 24 24" aria-hidden="true">
-          <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" opacity=".25" />
-          <path d="M22 12a10 10 0 0 1-10 10" fill="none" stroke="currentColor" strokeWidth="4" />
+        <svg
+          className="h-5 w-5 animate-spin"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+        >
+          <circle
+            cx="12"
+            cy="12"
+            r="10"
+            stroke="currentColor"
+            strokeWidth="4"
+            fill="none"
+            opacity=".25"
+          />
+          <path
+            d="M22 12a10 10 0 0 1-10 10"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="4"
+          />
         </svg>
         <span className="text-sm">{label}</span>
       </div>
@@ -96,9 +127,13 @@ function parseUtcishMs(val: unknown): number {
       const mm = m[3] ?? "00";
       s = s.replace(/([+\-]\d{2})(:?)(\d{2})?$/, `${hh}:${mm}`);
       if (/([+\-]00:00)$/.test(s)) s = s.replace(/([+\-]00:00)$/, "Z");
-    } else if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(s)) {
+    } else if (
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(s)
+    ) {
       s += "Z"; // bare ISO → UTC
-    } else if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(s)) {
+    } else if (
+      /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(s)
+    ) {
       s = s.replace(" ", "T") + "Z"; // bare datetime → UTC
     }
   }
@@ -112,7 +147,7 @@ function isActiveProgram(p: Program, nowMs: number): boolean {
   const durSec = asSeconds(p.duration);
   if (!Number.isFinite(startMs) || durSec <= 0) return false;
   const endMs = startMs + durSec * 1000;
-  return (startMs - GRACE_MS) <= nowMs && nowMs < (endMs + GRACE_MS);
+  return startMs - GRACE_MS <= nowMs && nowMs < endMs + GRACE_MS;
 }
 
 /** Quick HEAD check; ok = fast positive signal, but not required */
@@ -120,7 +155,12 @@ async function headOk(url: string, timeoutMs = 4500): Promise<boolean> {
   try {
     const ctrl = new AbortController();
     const to = setTimeout(() => ctrl.abort(), timeoutMs);
-    const res = await fetch(url, { method: "HEAD", mode: "cors", redirect: "follow", signal: ctrl.signal as any });
+    const res = await fetch(url, {
+      method: "HEAD",
+      mode: "cors",
+      redirect: "follow",
+      signal: ctrl.signal as any,
+    });
     clearTimeout(to);
     return res.ok;
   } catch {
@@ -129,7 +169,9 @@ async function headOk(url: string, timeoutMs = 4500): Promise<boolean> {
 }
 
 /** Resolve candidate: HEAD pass first, then metadata probe with longer timeout */
-async function resolvePlayableUrl(candidates: string[]): Promise<string | undefined> {
+async function resolvePlayableUrl(
+  candidates: string[]
+): Promise<string | undefined> {
   for (const url of candidates) {
     const ok = await headOk(url, 4500);
     if (ok) return url;
@@ -147,7 +189,10 @@ async function resolvePlayableUrl(candidates: string[]): Promise<string | undefi
       const cleanup = () => {
         v.onloadedmetadata = null;
         v.onerror = null;
-        try { v.src = ""; v.load(); } catch {}
+        try {
+          v.src = "";
+          v.load();
+        } catch {}
       };
 
       const to = setTimeout(() => {
@@ -176,7 +221,9 @@ async function resolvePlayableUrl(candidates: string[]): Promise<string | undefi
       };
 
       v.src = url;
-      try { v.load(); } catch {}
+      try {
+        v.load();
+      } catch {}
     });
     if (ok) return url;
   }
@@ -190,12 +237,23 @@ export default function WatchPage() {
 
   const [channelId, setChannelId] = useState<number | null>(null);
   const [channelDetails, setChannelDetails] = useState<Channel | null>(null);
-  const [currentProgram, setCurrentProgram] = useState<ProgramWithSrc | null>(null);
-  const [upcomingPrograms, setUpcomingPrograms] = useState<ProgramWithSrc[]>([]);
+  const [currentProgram, setCurrentProgram] =
+    useState<ProgramWithSrc | null>(null);
+  const [upcomingPrograms, setUpcomingPrograms] = useState<ProgramWithSrc[]>(
+    []
+  );
   const [videoPlayerKey, setVideoPlayerKey] = useState<number>(Date.now());
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isResolvingSrc, setIsResolvingSrc] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+
+  // 🔹 Chat state
+  const [chatRoomId, setChatRoomId] = useState<string | null>(null);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatLoading, setChatLoading] = useState<boolean>(false);
+  const [chatError, setChatError] = useState<string | null>(null);
+  const [newMessage, setNewMessage] = useState("");
+  const [sending, setSending] = useState(false);
 
   const getNowMs = useCallback(() => Date.now(), []);
 
@@ -224,12 +282,15 @@ export default function WatchPage() {
           if (!details) setError("Could not load channel details.");
         }
       } catch (e: any) {
-        if (!cancelled) setError(e?.message || "Error loading channel details.");
+        if (!cancelled)
+          setError(e?.message || "Error loading channel details.");
       } finally {
         if (!cancelled) setIsLoading(false);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [channelId]);
 
   // Fetch current program (with probing + cache + stickiness)
@@ -238,7 +299,11 @@ export default function WatchPage() {
       const nowMs = getNowMs();
 
       // EARLY RETURN: if still within current program window and we have a good URL, do nothing
-      if (currentProgram && isActiveProgram(currentProgram, nowMs) && currentProgram._resolved_src) {
+      if (
+        currentProgram &&
+        isActiveProgram(currentProgram, nowMs) &&
+        currentProgram._resolved_src
+      ) {
         return;
       }
 
@@ -257,20 +322,18 @@ export default function WatchPage() {
         const active = rows.find((p) => isActiveProgram(p, nowMs));
 
         // Choose program (active or standby)
-        let programToSet: Program =
-          active
-            ? { ...active, channel_id: numericChannelId }
-            : ({
-
-                id: STANDBY_PLACEHOLDER_ID as any,
-                title: "Standby Programming",
-                description: "Programming will resume shortly.",
-                channel_id: numericChannelId,
-                mp4_url: `channel${numericChannelId}/standby_blacktruthtv.mp4`,
-                duration: 300,
-                start_time: new Date().toISOString(),
-                poster_url: (channelDetails as any)?.logo_url || null,
-              } as unknown as Program);
+        let programToSet: Program = active
+          ? { ...active, channel_id: numericChannelId }
+          : ({
+              id: STANDBY_PLACEHOLDER_ID as any,
+              title: "Standby Programming",
+              description: "Programming will resume shortly.",
+              channel_id: numericChannelId,
+              mp4_url: `channel${numericChannelId}/standby_blacktruthtv.mp4`,
+              duration: 300,
+              start_time: new Date().toISOString(),
+              poster_url: (channelDetails as any)?.logo_url || null,
+            } as unknown as Program);
 
         // Build a cache key specific to this asset instance
         const cacheKey = `${programToSet.channel_id}|${programToSet.mp4_url}|${programToSet.start_time}`;
@@ -280,7 +343,8 @@ export default function WatchPage() {
         if (resolvedSrc === undefined) {
           const candidates = getCandidateUrlsForProgram(programToSet);
           // Try to resolve; if still undefined, fall back to first candidate (play optimistically)
-          resolvedSrc = (await resolvePlayableUrl(candidates)) ?? candidates[0] ?? null;
+          resolvedSrc =
+            (await resolvePlayableUrl(candidates)) ?? candidates[0] ?? null;
           urlProbeCache.set(cacheKey, resolvedSrc);
         }
 
@@ -299,11 +363,16 @@ export default function WatchPage() {
           resolvedSrc = getVideoUrlForProgram(programToSet) || "";
         }
 
-        const finalProgram: ProgramWithSrc = { ...(programToSet as ProgramWithSrc), _resolved_src: resolvedSrc || "" };
+        const finalProgram: ProgramWithSrc = {
+          ...(programToSet as ProgramWithSrc),
+          _resolved_src: resolvedSrc || "",
+        };
 
         setCurrentProgram((prev) => {
           const prevSrc = prev?._resolved_src;
-          const changed = prevSrc !== finalProgram._resolved_src || prev?.start_time !== finalProgram.start_time;
+          const changed =
+            prevSrc !== finalProgram._resolved_src ||
+            prev?.start_time !== finalProgram.start_time;
           if (changed) setVideoPlayerKey(Date.now());
           return finalProgram;
         });
@@ -318,10 +387,11 @@ export default function WatchPage() {
           duration: 300,
           start_time: new Date().toISOString(),
           poster_url: (channelDetails as any)?.logo_url || null,
-          _resolved_src: getVideoUrlForProgram({
-            channel_id: numericChannelId,
-            mp4_url: `channel${numericChannelId}/standby_blacktruthtv.mp4`,
-          } as Program) || "",
+          _resolved_src:
+            getVideoUrlForProgram({
+              channel_id: numericChannelId,
+              mp4_url: `channel${numericChannelId}/standby_blacktruthtv.mp4`,
+            } as Program) || "",
         } as ProgramWithSrc);
       } finally {
         setIsResolvingSrc(false);
@@ -351,7 +421,10 @@ export default function WatchPage() {
   // Polling: wake near expected end, otherwise every 60s; don't poll while probing
   useEffect(() => {
     if (channelId == null) return;
-    if (channelId === CH21_ID_NUMERIC) { setIsLoading(false); return; }
+    if (channelId === CH21_ID_NUMERIC) {
+      setIsLoading(false);
+      return;
+    }
 
     let timer: NodeJS.Timeout | null = null;
 
@@ -372,17 +445,148 @@ export default function WatchPage() {
         if (Number.isFinite(s) && d > 0) {
           const endMs = s + d * 1000;
           const wakeIn = Math.max(5_000, endMs - Date.now() - 5_000); // 5s before end
-          timer = setTimeout(() => { refetch(); scheduleNext(); }, wakeIn);
+          timer = setTimeout(() => {
+            refetch();
+            scheduleNext();
+          }, wakeIn);
           return;
         }
       }
       // no active program → poll in 60s
-      timer = setTimeout(() => { refetch(); scheduleNext(); }, 60_000);
+      timer = setTimeout(() => {
+        refetch();
+        scheduleNext();
+      }, 60_000);
     };
 
     scheduleNext();
-    return () => { if (timer) clearTimeout(timer); };
-  }, [channelId, currentProgram, fetchCurrentProgram, fetchUpcoming, isResolvingSrc]);
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [
+    channelId,
+    currentProgram,
+    fetchCurrentProgram,
+    fetchUpcoming,
+    isResolvingSrc,
+  ]);
+
+  // 🔹 Load chat room for this channel
+  useEffect(() => {
+    if (channelId == null) return;
+    let cancelled = false;
+
+    (async () => {
+      setChatLoading(true);
+      setChatError(null);
+      try {
+        const { data, error } = await supabase
+          .from("chat_rooms")
+          .select("id")
+          .eq("channel_id", channelId)
+          .limit(1)
+          .maybeSingle();
+
+        if (error) throw error;
+
+        if (!data) {
+          if (!cancelled) {
+            setChatRoomId(null);
+            setChatError("Chat is not enabled for this channel yet.");
+          }
+        } else {
+          if (!cancelled) {
+            setChatRoomId(data.id as string);
+          }
+        }
+      } catch (e: any) {
+        if (!cancelled) {
+          console.error("Error loading chat room:", e);
+          setChatError("Could not load chat room.");
+        }
+      } finally {
+        if (!cancelled) setChatLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [channelId]);
+
+  // 🔹 Load chat messages (simple polling)
+  useEffect(() => {
+    if (!chatRoomId) return;
+    let cancelled = false;
+
+    const loadMessages = async () => {
+      try {
+        const { data, error } = await supabase
+          .from("chat_messages")
+          .select("id,room_id,sender_id,message,created_at")
+          .eq("room_id", chatRoomId)
+          .order("created_at", { ascending: true });
+
+        if (error) throw error;
+        if (!cancelled) {
+          setChatMessages((data || []) as ChatMessage[]);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          console.error("Error loading chat messages:", e);
+          setChatError("Could not load chat messages.");
+        }
+      }
+    };
+
+    loadMessages();
+    const interval = setInterval(loadMessages, 5000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [chatRoomId]);
+
+  // 🔹 Send a message
+  const handleSendMessage = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!newMessage.trim() || !chatRoomId || sending) return;
+
+    setSending(true);
+    setChatError(null);
+
+    try {
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+
+      if (userError || !user) {
+        throw new Error("You must be logged in to send a message.");
+      }
+
+      const { data, error } = await supabase
+        .from("chat_messages")
+        .insert({
+          room_id: chatRoomId,
+          sender_id: user.id,
+          message: newMessage.trim(),
+        })
+        .select("id,room_id,sender_id,message,created_at")
+        .single();
+
+      if (error) throw error;
+
+      setChatMessages((prev) => [...prev, data as ChatMessage]);
+      setNewMessage("");
+    } catch (e: any) {
+      console.error("Error sending chat message:", e);
+      setChatError(e?.message || "Could not send message.");
+    } finally {
+      setSending(false);
+    }
+  };
 
   // Player & render
   const videoSrc = currentProgram?._resolved_src; // use the probed or fallback candidate
@@ -423,7 +627,9 @@ export default function WatchPage() {
       />
     );
   } else if (error) {
-    content = <p className="text-red-400 p-4 text-center">Error: {error}</p>;
+    content = (
+      <p className="text-red-400 p-4 text-center">Error: {error}</p>
+    );
   } else if (isLoading && !currentProgram) {
     content = (
       <div className="flex flex-col items-center justify-center h-full">
@@ -452,7 +658,11 @@ export default function WatchPage() {
       </div>
     );
   } else {
-    content = <p className="text-gray-400 p-4 text-center">Initializing channel…</p>;
+    content = (
+      <p className="text-gray-400 p-4 text-center">
+        Initializing channel…
+      </p>
+    );
   }
 
   return (
@@ -466,7 +676,8 @@ export default function WatchPage() {
           <ChevronLeft className="h-6 w-6" />
         </button>
         <h1 className="text-xl font-semibold truncate px-2">
-          {channelDetails?.name || (channelId != null ? `Channel ${channelId}` : "Channel")}
+          {channelDetails?.name ||
+            (channelId != null ? `Channel ${channelId}` : "Channel")}
         </h1>
         <div className="w-10 h-10" />
       </div>
@@ -475,42 +686,68 @@ export default function WatchPage() {
       <div className="relative w-full aspect-video bg-black flex items-center justify-center">
         {content}
         <LoadingOverlay
-          visible={Boolean((isLoading && !currentProgram) || isResolvingSrc)}
-          label={isLoading && !currentProgram ? "Loading channel…" : "Preparing stream…"}
+          visible={Boolean(
+            (isLoading && !currentProgram) || isResolvingSrc
+          )}
+          label={
+            isLoading && !currentProgram
+              ? "Loading channel…"
+              : "Preparing stream…"
+          }
         />
-        <MobileHint show={!isResolvingSrc && Boolean(currentProgram?._resolved_src)} />
+        <MobileHint
+          show={!isResolvingSrc && Boolean(currentProgram?._resolved_src)}
+        />
       </div>
 
       {/* Below the player */}
-      <div className="p-4 flex-grow">
+      <div className="p-4 flex-grow space-y-6">
+        {/* Program info (non-CH21) */}
         {channelId !== CH21_ID_NUMERIC && currentProgram && !isLoading && (
           <>
-            <h2 className="text-2xl font-bold">{currentProgram.title}</h2>
-            <p className="text-sm text-gray-400">
-              Channel: {channelDetails?.name || (channelId != null ? `Channel ${channelId}` : "")}
-            </p>
-            {!isStandby && currentProgram.start_time && (
+            <div>
+              <h2 className="text-2xl font-bold">{currentProgram.title}</h2>
               <p className="text-sm text-gray-400">
-                Scheduled Start: {new Date(currentProgram.start_time).toLocaleString()}
+                Channel:{" "}
+                {channelDetails?.name ||
+                  (channelId != null ? `Channel ${channelId}` : "")}
               </p>
-            )}
-            {currentProgram?.description && (
-              <p className="text-xs text-gray-300 mt-1">{currentProgram.description}</p>
-            )}
+              {!isStandby && currentProgram.start_time && (
+                <p className="text-sm text-gray-400">
+                  Scheduled Start:{" "}
+                  {new Date(
+                    currentProgram.start_time
+                  ).toLocaleString()}
+                </p>
+              )}
+              {currentProgram?.description && (
+                <p className="text-xs text-gray-300 mt-1">
+                  {currentProgram.description}
+                </p>
+              )}
+            </div>
+
             {upcomingPrograms.length > 0 && (
-              <div className="mt-6">
-                <h3 className="text-lg font-semibold text-white mb-2">Upcoming Programs</h3>
+              <div className="mt-2">
+                <h3 className="text-lg font-semibold text-white mb-2">
+                  Upcoming Programs
+                </h3>
                 <ul className="text-sm text-gray-300 space-y-1">
                   {upcomingPrograms.map((p, idx) => (
-                    <li key={`${p.channel_id}-${p.start_time}-${p.title}-${idx}`}>
+                    <li
+                      key={`${p.channel_id}-${p.start_time}-${p.title}-${idx}`}
+                    >
                       <span className="font-medium">{p.title}</span>{" "}
                       <span className="text-gray-400">
                         —{" "}
-                        {new Date(p.start_time!).toLocaleTimeString("en-US", {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                          timeZoneName: "short",
-                        })}
+                        {new Date(p.start_time!).toLocaleTimeString(
+                          "en-US",
+                          {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                            timeZoneName: "short",
+                          }
+                        )}
                       </span>
                     </li>
                   ))}
@@ -519,6 +756,91 @@ export default function WatchPage() {
             )}
           </>
         )}
+
+        {/* 🔹 Channel Chat (all channels, including 21) */}
+        <div className="mt-4 rounded-2xl border border-gray-800 bg-gray-950/70 p-4">
+          <div className="flex items-center justify-between mb-2">
+            <div>
+              <h3 className="text-lg font-semibold">Channel Chat</h3>
+              <p className="text-xs text-gray-400">
+                Talk with other members about what&apos;s on this channel.
+              </p>
+            </div>
+            {channelId != null && (
+              <span className="text-[11px] text-gray-500">
+                Channel {channelDetails?.name || channelId}
+              </span>
+            )}
+          </div>
+
+          {chatError && (
+            <p className="text-xs text-red-400 mb-2">{chatError}</p>
+          )}
+
+          {!chatRoomId && !chatError && !chatLoading && (
+            <p className="text-xs text-gray-400">
+              Chat is not enabled for this channel yet.
+            </p>
+          )}
+
+          {chatRoomId && (
+            <>
+              <div className="h-56 max-h-72 mb-3 rounded-lg border border-gray-800 bg-black/60 p-2 overflow-y-auto text-xs">
+                {chatLoading && !chatMessages.length ? (
+                  <p className="text-gray-400">Loading chat…</p>
+                ) : chatMessages.length === 0 ? (
+                  <p className="text-gray-400">
+                    No messages yet. Be the first to add a comment.
+                  </p>
+                ) : (
+                  chatMessages.map((m) => (
+                    <div key={m.id} className="mb-1.5">
+                      <span className="text-[10px] text-gray-500 mr-1">
+                        {new Date(m.created_at).toLocaleTimeString(
+                          "en-US",
+                          {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          }
+                        )}
+                      </span>
+                      <span className="font-semibold text-amber-300 mr-1">
+                        Member
+                      </span>
+                      <span className="text-gray-100 break-words">
+                        {m.message}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <form
+                onSubmit={handleSendMessage}
+                className="flex gap-2 items-center"
+              >
+                <input
+                  type="text"
+                  value={newMessage}
+                  onChange={(e) => setNewMessage(e.target.value)}
+                  placeholder="Type a comment…"
+                  className="flex-1 rounded-full border border-gray-700 bg-gray-950 px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-400"
+                />
+                <button
+                  type="submit"
+                  disabled={sending || !newMessage.trim()}
+                  className="rounded-full bg-amber-600 px-3 py-1.5 text-xs font-semibold text-black hover:bg-amber-500 disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {sending ? "Sending…" : "Send"}
+                </button>
+              </form>
+
+              <p className="mt-1 text-[10px] text-gray-500">
+                Chat is moderated. Please keep comments respectful.
+              </p>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
