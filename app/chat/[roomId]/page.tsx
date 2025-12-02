@@ -1,417 +1,261 @@
+// app/chat/[roomId]/page.tsx
 "use client";
 
-import { useEffect, useState, useRef, FormEvent } from "react";
+import { useEffect, useState, FormEvent } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
 type ChatRoom = {
   id: string;
   name: string;
   description: string | null;
+  channel_id: string | null;
 };
 
 type ChatMessage = {
   id: string;
-  message: string;
+  room_id: string;
+  user_id: string;
+  content: string;
   created_at: string;
-  sender_id: string;
-  sender_name: string | null;
+  // adjust/remove this if your table doesn't have it
+  author_name?: string | null;
 };
 
-export default function ChatRoomPage() {
+export default function ChatRoomPage({
+  params,
+}: {
+  params: { roomId: string };
+}) {
   const supabase = createClientComponentClient();
-  const params = useParams();
-  const roomId = params?.roomId as string;
+  const roomId = params.roomId;
 
   const [room, setRoom] = useState<ChatRoom | null>(null);
+  const [roomError, setRoomError] = useState<string | null>(null);
+  const [loadingRoom, setLoadingRoom] = useState(true);
+
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [loadingMessages, setLoadingMessages] = useState(true);
+  const [messagesError, setMessagesError] = useState<string | null>(null);
+
   const [newMessage, setNewMessage] = useState("");
-  const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
-
-  function scrollToBottom() {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
-    }
-  }
-
+  // Load room info
   useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
+    async function loadRoom() {
+      setLoadingRoom(true);
+      setRoomError(null);
 
-  // Load room + initial messages
-  useEffect(() => {
-    if (!roomId) return;
-
-    async function loadInitial() {
-      setLoading(true);
-      setErrorMsg(null);
-
-      // Load room info
-      const { data: roomData, error: roomError } = await supabase
+      const { data, error } = await supabase
         .from("chat_rooms")
-        .select("id, name, description")
+        .select("id, name, description, channel_id")
         .eq("id", roomId)
         .single();
 
-      if (roomError || !roomData) {
-        console.error("Error loading room:", roomError);
-        setErrorMsg("Could not load this chat room.");
-        setLoading(false);
-        return;
+      if (error) {
+        console.error("Error loading chat room:", error);
+        setRoomError(error.message || "Could not load chat room.");
+        setRoom(null);
+      } else {
+        setRoom(data as ChatRoom);
       }
 
-      setRoom(roomData as ChatRoom);
+      setLoadingRoom(false);
+    }
 
-      // Load messages with sender name
-      const { data: msgData, error: msgError } = await supabase
+    if (roomId) {
+      loadRoom();
+    }
+  }, [roomId, supabase]);
+
+  // Load messages
+  useEffect(() => {
+    async function loadMessages() {
+      setLoadingMessages(true);
+      setMessagesError(null);
+
+      const { data, error } = await supabase
         .from("chat_messages")
-        .select(
-          `
-          id,
-          message,
-          created_at,
-          sender_id,
-          sender:sender_id ( name )
-        `
-        )
+        // adjust selected columns to match your schema
+        .select("id, room_id, user_id, content, created_at, author_name")
         .eq("room_id", roomId)
         .order("created_at", { ascending: true });
 
-      if (msgError) {
-        console.error("Error loading messages:", msgError);
-        setErrorMsg("Could not load chat messages.");
+      if (error) {
+        console.error("Error loading chat messages:", error);
+        setMessagesError(
+          error.message || "Could not load chat messages. Please try again."
+        );
+        setMessages([]);
       } else {
-        const mapped =
-          (msgData || []).map((row: any) => ({
-            id: row.id,
-            message: row.message,
-            created_at: row.created_at,
-            sender_id: row.sender_id,
-            sender_name: row.sender?.name ?? null,
-          })) ?? [];
-        setMessages(mapped);
+        setMessages((data || []) as ChatMessage[]);
       }
 
-      setLoading(false);
+      setLoadingMessages(false);
     }
 
-    loadInitial();
+    if (roomId) {
+      loadMessages();
+    }
+  }, [roomId, supabase]);
 
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId]);
-
-  // Subscribe to realtime new messages
-  useEffect(() => {
-    if (!roomId) return;
-
-    const channel = supabase
-      .channel(`chat-room-${roomId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "chat_messages",
-          filter: `room_id=eq.${roomId}`,
-        },
-        async (payload) => {
-          const row: any = payload.new;
-
-          // Get sender name (small extra query) or just show "Member"
-          const { data: profile } = await supabase
-            .from("user_profiles")
-            .select("name")
-            .eq("id", row.sender_id)
-            .single();
-
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: row.id,
-              message: row.message,
-              created_at: row.created_at,
-              sender_id: row.sender_id,
-              sender_name: profile?.name ?? null,
-            },
-          ]);
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId]);
-
-  async function handleSend(e: FormEvent) {
+  // Send a new message
+  async function handleSendMessage(e: FormEvent) {
     e.preventDefault();
-    if (!newMessage.trim() || !roomId) return;
-
+    if (!newMessage.trim()) return;
     setSending(true);
-    setErrorMsg(null);
 
-    const { error } = await supabase.from("chat_messages").insert({
-      room_id: roomId,
-      message: newMessage.trim(),
-      // sender_id is filled by client or default RLS; if needed,
-      // you can add a trigger to set sender_id = auth.uid()
-    });
+    try {
+      // get current user
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) {
+        alert("You must be logged in to send messages.");
+        setSending(false);
+        return;
+      }
 
-    if (error) {
-      console.error("Error sending message:", error);
-      setErrorMsg("Could not send your message. Please try again.");
-    } else {
-      setNewMessage("");
-      // We rely on realtime subscription to append the new message.
+      const payload: any = {
+        room_id: roomId,
+        user_id: user.id,
+        content: newMessage.trim(),
+      };
+
+      // If your table has author_name, you can pull from a profile table instead.
+      // For now we'll leave it null and just show content.
+      // payload.author_name = null;
+
+      const { data, error } = await supabase
+        .from("chat_messages")
+        .insert(payload)
+        .select("id, room_id, user_id, content, created_at, author_name")
+        .single();
+
+      if (error) {
+        console.error("Error sending message:", error);
+        alert(error.message || "Could not send message.");
+      } else if (data) {
+        setMessages((prev) => [...prev, data as ChatMessage]);
+        setNewMessage("");
+      }
+    } finally {
+      setSending(false);
     }
-
-    setSending(false);
   }
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        background:
-          "radial-gradient(circle at top, #020617 0, #020617 40%, #000 100%)",
-        color: "#f9fafb",
-        padding: "18px 12px 24px",
-        fontFamily: "system-ui, -apple-system, Segoe UI, sans-serif",
-      }}
-    >
-      <div
-        style={{
-          maxWidth: 950,
-          margin: "0 auto",
-          display: "flex",
-          flexDirection: "column",
-          height: "calc(100vh - 40px)",
-        }}
-      >
+    <div className="min-h-screen bg-gradient-to-b from-black via-slate-950 to-black text-white">
+      <main className="max-w-4xl mx-auto px-4 pt-8 pb-10 space-y-6">
         {/* Header */}
-        <header
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            gap: 12,
-            alignItems: "baseline",
-            marginBottom: 10,
-          }}
-        >
+        <div className="flex items-center justify-between gap-3">
           <div>
-            <Link
-              href="/chat"
-              style={{
-                fontSize: 11,
-                color: "rgba(148,163,184,0.9)",
-                textDecoration: "none",
-              }}
-            >
-              ← All Rooms
-            </Link>
-            <h1
-              style={{
-                fontSize: 20,
-                fontWeight: 600,
-                margin: "4px 0 2px",
-              }}
-            >
-              {room ? room.name : "Chat Room"}
-            </h1>
-            {room?.description && (
-              <p
-                style={{
-                  fontSize: 12,
-                  color: "rgba(148,163,184,0.9)",
-                  margin: 0,
-                }}
-              >
-                {room.description}
-              </p>
+            <p className="text-xs uppercase tracking-wide text-slate-400 mb-1">
+              Black Truth TV • Community Chat
+            </p>
+            {loadingRoom ? (
+              <h1 className="text-xl font-semibold text-slate-100">
+                Loading room…
+              </h1>
+            ) : roomError ? (
+              <h1 className="text-xl font-semibold text-red-300">
+                {roomError}
+              </h1>
+            ) : (
+              <>
+                <h1 className="text-2xl font-bold text-slate-50">
+                  {room?.name || "Chat Room"}
+                </h1>
+                {room?.description && (
+                  <p className="text-sm text-slate-300 mt-1">
+                    {room.description}
+                  </p>
+                )}
+              </>
             )}
           </div>
 
           <Link
             href="/app"
-            style={{
-              fontSize: 12,
-              padding: "6px 10px",
-              borderRadius: 999,
-              border: "1px solid rgba(148,163,184,0.7)",
-              textDecoration: "none",
-              color: "rgba(241,245,249,0.96)",
-              background:
-                "linear-gradient(90deg, rgba(15,23,42,0.96), rgba(30,64,175,0.85))",
-            }}
+            className="rounded-full border border-slate-600 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-100 hover:bg-slate-800 transition"
           >
-            Member Hub →
+            ← Back to Member Hub
           </Link>
-        </header>
+        </div>
 
-        {errorMsg && (
-          <div
-            style={{
-              marginBottom: 10,
-              padding: "8px 10px",
-              borderRadius: 10,
-              border: "1px solid rgba(248,113,113,0.65)",
-              background: "rgba(127,29,29,0.32)",
-              fontSize: 12,
-              color: "#fee2e2",
-            }}
-          >
-            {errorMsg}
-          </div>
-        )}
-
-        {/* Chat area */}
-        <div
-          style={{
-            flex: 1,
-            display: "flex",
-            flexDirection: "column",
-            borderRadius: 16,
-            border: "1px solid rgba(30,64,175,0.7)",
-            background:
-              "radial-gradient(circle at top left, rgba(30,64,175,0.45), #020617 55%)",
-            overflow: "hidden",
-          }}
-        >
-          {/* Messages */}
-          <div
-            style={{
-              flex: 1,
-              padding: "12px 12px 8px",
-              overflowY: "auto",
-              fontSize: 13,
-            }}
-          >
-            {loading ? (
-              <div
-                style={{
-                  textAlign: "center",
-                  marginTop: 40,
-                  color: "rgba(148,163,184,0.9)",
-                }}
-              >
+        {/* Chat panel */}
+        <div className="rounded-2xl border border-slate-800 bg-slate-950/80 shadow-xl flex flex-col h-[70vh]">
+          {/* Messages area */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            {messagesError ? (
+              // REAL error
+              <div className="text-sm text-red-300 bg-red-900/40 border border-red-500/60 rounded-md px-3 py-2">
+                {messagesError}
+              </div>
+            ) : loadingMessages ? (
+              // Loading state
+              <div className="text-sm text-slate-300">
                 Loading messages…
               </div>
             ) : messages.length === 0 ? (
-              <div
-                style={{
-                  textAlign: "center",
-                  marginTop: 40,
-                  color: "rgba(148,163,184,0.9)",
-                }}
-              >
-                No messages yet. Say hello and start the conversation.
+              // ✅ EMPTY STATE – no messages, no error
+              <div className="text-sm text-slate-200 bg-slate-900/60 border border-slate-700 rounded-md px-4 py-3">
+                <p className="font-semibold text-slate-50 mb-1">
+                  No messages yet.
+                </p>
+                <p className="text-xs text-slate-400">
+                  Be the first to add a comment and start the conversation in
+                  this Black Truth TV room.
+                </p>
               </div>
             ) : (
-              <>
-                {messages.map((msg) => (
-                  <div
-                    key={msg.id}
-                    style={{
-                      marginBottom: 8,
-                      display: "flex",
-                      flexDirection: "column",
-                      alignItems: "flex-start",
-                    }}
+              // Messages list
+              <ul className="space-y-2">
+                {messages.map((m) => (
+                  <li
+                    key={m.id}
+                    className="rounded-lg bg-slate-900/70 border border-slate-800 px-3 py-2 text-sm"
                   >
-                    <div
-                      style={{
-                        fontSize: 11,
-                        color: "rgba(148,163,184,0.9)",
-                        marginBottom: 2,
-                      }}
-                    >
-                      <span style={{ fontWeight: 600 }}>
-                        {msg.sender_name || "Member"}
-                      </span>{" "}
-                      <span style={{ opacity: 0.8 }}>
-                        ·{" "}
-                        {new Date(msg.created_at).toLocaleTimeString("en-US", {
-                          hour: "numeric",
-                          minute: "2-digit",
-                        })}
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-semibold text-amber-300">
+                        {m.author_name || "Member"}
+                      </span>
+                      <span className="text-[10px] text-slate-400">
+                        {new Date(m.created_at).toLocaleString()}
                       </span>
                     </div>
-                    <div
-                      style={{
-                        padding: "8px 10px",
-                        borderRadius: 10,
-                        background:
-                          "linear-gradient(135deg, rgba(15,23,42,0.95), rgba(30,64,175,0.9))",
-                        border: "1px solid rgba(30,64,175,0.9)",
-                        maxWidth: "80%",
-                        whiteSpace: "pre-wrap",
-                      }}
-                    >
-                      {msg.message}
-                    </div>
-                  </div>
+                    <p className="text-sm text-slate-100 whitespace-pre-wrap">
+                      {m.content}
+                    </p>
+                  </li>
                 ))}
-                <div ref={messagesEndRef} />
-              </>
+              </ul>
             )}
           </div>
 
-          {/* Input */}
+          {/* Message input */}
           <form
-            onSubmit={handleSend}
-            style={{
-              borderTop: "1px solid rgba(30,64,175,0.85)",
-              padding: "10px 10px 9px",
-              background:
-                "linear-gradient(to right, rgba(15,23,42,0.96), rgba(15,23,42,0.94))",
-              display: "flex",
-              gap: 8,
-            }}
+            onSubmit={handleSendMessage}
+            className="border-t border-slate-800 bg-slate-950/90 px-4 py-3 flex gap-2"
           >
-            <input
-              type="text"
+            <textarea
               value={newMessage}
               onChange={(e) => setNewMessage(e.target.value)}
+              rows={1}
               placeholder="Type your message…"
-              style={{
-                flex: 1,
-                borderRadius: 999,
-                border: "1px solid rgba(148,163,184,0.8)",
-                background: "rgba(15,23,42,0.96)",
-                color: "#f9fafb",
-                fontSize: 13,
-                padding: "8px 12px",
-              }}
+              className="flex-1 resize-none rounded-lg border border-slate-700 bg-slate-900/90 px-3 py-2 text-sm text-slate-50 placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-amber-400 focus:border-amber-400"
             />
             <button
               type="submit"
               disabled={sending || !newMessage.trim()}
-              style={{
-                borderRadius: 999,
-                padding: "8px 14px",
-                border: "none",
-                fontSize: 13,
-                fontWeight: 600,
-                cursor:
-                  sending || !newMessage.trim() ? "not-allowed" : "pointer",
-                opacity: sending || !newMessage.trim() ? 0.7 : 1,
-             	background:
-                "linear-gradient(135deg, #FFD700 0%, #fbbf24 35%, #f97316 80%)",
-                color: "#111827",
-                boxShadow: "0 8px 20px rgba(180,83,9,0.55)",
-              }}
+              className="self-end rounded-lg bg-amber-500 px-4 py-2 text-xs font-semibold text-black shadow hover:bg-amber-400 disabled:opacity-60 disabled:cursor-not-allowed"
             >
               {sending ? "Sending…" : "Send"}
             </button>
           </form>
         </div>
-      </div>
+      </main>
     </div>
   );
 }
