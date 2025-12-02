@@ -182,6 +182,7 @@ export default function FreedomSchoolClient() {
               </p>
             </div>
             <div className="flex flex-col items-start md:items-end gap-2">
+              {/* Existing featured button */}
               <button
                 type="button"
                 onClick={handlePlayFeatured}
@@ -190,6 +191,20 @@ export default function FreedomSchoolClient() {
               >
                 ▶ Play Featured Lesson
               </button>
+
+              {/* NEW: Live Zoom + Prezi button */}
+              <a
+                href="https://zoom.us/j/99272346360?pwd=mppftB4PpKiaxdmSmZivWPbewR2vai.1"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center rounded-full border border-amber-400/80 bg-amber-400/10 px-4 py-2 text-xs font-semibold text-amber-200 hover:bg-amber-400/20"
+              >
+                🎥 Join Live Freedom School Class (Zoom)
+              </a>
+              <p className="text-[11px] text-slate-400 max-w-xs text-left md:text-right">
+                Live sessions are hosted in Zoom using Prezi Video so you can
+                see notes and visuals beside the instructor.
+              </p>
             </div>
           </div>
         </section>
