@@ -182,6 +182,28 @@ export default function AppPage() {
               </p>
             </div>
           </Link>
+
+          {/* 💬 Community Chat – NEW CARD */}
+          <Link href="/chat" className="group">
+            <div className="h-full rounded-2xl border border-slate-800 bg-gradient-to-br from-blue-700/40 via-slate-950 to-black p-5 shadow-lg transition group-hover:border-blue-400/80 group-hover:shadow-blue-900/40">
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <h2 className="text-xl font-bold flex items-center gap-2">
+                  <span className="text-lg">💬</span>
+                  Community Chat
+                </h2>
+                <span className="text-[11px] uppercase tracking-wide text-slate-300">
+                  Members Only
+                </span>
+              </div>
+              <p className="text-sm text-slate-200 mb-3">
+                Join private conversations about Black Truth TV channels, Freedom
+                School lessons, and upcoming specials with other approved members.
+              </p>
+              <p className="text-xs text-slate-400">
+                Chat is moderated and available only to authorized community members.
+              </p>
+            </div>
+          </Link>
         </section>
       </main>
     </div>
