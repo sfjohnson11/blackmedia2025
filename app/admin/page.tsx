@@ -67,6 +67,13 @@ const programmingTools: Tool[] = [
     path: "/admin/auto-schedule",
     description: "Auto-generate rotations from rules.",
   },
+  // ✅ NEW TOOL CARD
+  {
+    name: "Loop Schedule",
+    path: "/admin/loop-schedule",
+    description:
+      "Repeat an existing channel schedule forward for continuous rotation.",
+  },
   {
     name: "Refresh Programs",
     path: "/admin/refresh-programs",
