@@ -1,10 +1,17 @@
 // app/admin/loop-schedule/page.tsx
 "use client";
 
-import { useState, useMemo } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
-import { Loader2, AlertCircle, CheckCircle2, Repeat, ArrowLeft } from "lucide-react";
+import {
+  Loader2,
+  AlertCircle,
+  CheckCircle2,
+  Repeat,
+  ArrowLeft,
+  Clock,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 type ProgramRow = {
@@ -19,18 +26,25 @@ export default function LoopSchedulePage() {
   const supabase = createClientComponentClient();
 
   const [channelId, setChannelId] = useState<string>("");
-  const [repeatCount, setRepeatCount] = useState<string>("1");
+  const [daysToExtend, setDaysToExtend] = useState<string>("3");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [previewInfo, setPreviewInfo] = useState<{
     count: number;
+    templateCount: number;
     first: string;
     last: string;
-    windowHours: number;
+    templateWindowHours: number;
+    currentEnd: string;
   } | null>(null);
 
-  async function handlePreview() {
+  const MAX_INSERTS = 2000; // hard safety cap
+  const TEMPLATE_HOURS = 24; // treat first 24 hours as the "day" pattern
+
+  const disableActions = useMemo(() => loading, [loading]);
+
+  async function loadChannelInfo() {
     setErr(null);
     setSuccessMsg(null);
     setPreviewInfo(null);
@@ -61,28 +75,60 @@ export default function LoopSchedulePage() {
         return;
       }
 
-      const firstStart = new Date(rows[0].start_time);
-      const last = rows[rows.length - 1];
-      const lastStart = new Date(last.start_time);
-      const lastDurSec = Number(last.duration ?? 0);
-      const windowEnd = new Date(lastStart.getTime() + lastDurSec * 1000);
-      const windowHours = (windowEnd.getTime() - firstStart.getTime()) / (1000 * 60 * 60);
+      // Earliest program
+      const earliestStart = new Date(rows[0].start_time);
+      const templateEnd = new Date(
+        earliestStart.getTime() + TEMPLATE_HOURS * 60 * 60 * 1000
+      );
+
+      // Programs inside the "template day" (first 24 hours)
+      const templateRows = rows.filter((p) => {
+        const t = new Date(p.start_time);
+        return t >= earliestStart && t < templateEnd;
+      });
+
+      // If somehow no rows fell into that window, just fall back to all rows
+      const effectiveTemplate = templateRows.length ? templateRows : rows;
+
+      const templateLast = effectiveTemplate[effectiveTemplate.length - 1];
+      const templateLastStart = new Date(templateLast.start_time);
+      const templateLastDurSec = Number(templateLast.duration ?? 0);
+      const templateWindowEnd = new Date(
+        templateLastStart.getTime() + templateLastDurSec * 1000
+      );
+
+      // Current end time = max start_time + duration over *all* programs
+      let currentEndMs = earliestStart.getTime();
+      for (const p of rows) {
+        const s = new Date(p.start_time).getTime();
+        const durSec = Number(p.duration ?? 0);
+        const endMs = s + durSec * 1000;
+        if (endMs > currentEndMs) currentEndMs = endMs;
+      }
+      const currentEnd = new Date(currentEndMs);
+
+      const templateWindowHours =
+        (templateWindowEnd.getTime() - earliestStart.getTime()) /
+        (1000 * 60 * 60);
 
       setPreviewInfo({
         count: rows.length,
-        first: firstStart.toUTCString(),
-        last: windowEnd.toUTCString(),
-        windowHours: Math.max(0, Math.round(windowHours * 10) / 10),
+        templateCount: effectiveTemplate.length,
+        first: earliestStart.toUTCString(),
+        last: templateWindowEnd.toUTCString(),
+        templateWindowHours:
+          Math.max(0, Math.round(templateWindowHours * 10) / 10),
+        currentEnd: currentEnd.toUTCString(),
       });
     } catch (e: any) {
       console.error("Unexpected preview error", e);
-      setErr(e?.message || "Unexpected error loading schedule.");
+      setErr(e?.message || "Unexpected error loading channel schedule.");
     } finally {
       setLoading(false);
     }
   }
 
-  async function handleLoop() {
+  async function handleExtendSchedule() {
     setErr(null);
     setSuccessMsg(null);
 
@@ -92,15 +138,15 @@ export default function LoopSchedulePage() {
       return;
     }
 
-    const repeats = Number(repeatCount);
-    if (!Number.isInteger(repeats) || repeats <= 0) {
-      setErr("Repeat count must be a positive whole number (e.g. 1, 2, 5).");
+    const days = Number(daysToExtend);
+    if (!Number.isFinite(days) || days <= 0) {
+      setErr("Days to extend must be a positive number (e.g. 1, 3, 7).");
       return;
     }
 
     setLoading(true);
     try {
-      // 1) Get existing programs for this channel, ordered by start_time
+      // 1) Load existing programs for this channel
       const { data, error } = await supabase
         .from("programs")
         .select("channel_id,title,mp4_url,start_time,duration")
@@ -119,20 +165,86 @@ export default function LoopSchedulePage() {
         return;
       }
 
-      // 2) Compute the base “loop window” length
-      const baseStart = new Date(rows[0].start_time);
-      const last = rows[rows.length - 1];
-      const lastStart = new Date(last.start_time);
-      const lastDurSec = Number(last.duration ?? 0);
-      const baseEnd = new Date(lastStart.getTime() + lastDurSec * 1000);
-      const windowMs = baseEnd.getTime() - baseStart.getTime();
+      // 2) Determine template "day" (first 24 hours)
+      const earliestStart = new Date(rows[0].start_time);
+      const templateCutoff = new Date(
+        earliestStart.getTime() + TEMPLATE_HOURS * 60 * 60 * 1000
+      );
 
-      if (windowMs <= 0) {
-        setErr("The existing window duration is invalid (<= 0). Check durations.");
+      let templateRows = rows.filter((p) => {
+        const t = new Date(p.start_time);
+        return t >= earliestStart && t < templateCutoff;
+      });
+
+      // Fallback: if somehow nothing in first 24h, just use everything
+      if (!templateRows.length) {
+        templateRows = rows;
+      }
+
+      // Only keep rows with a valid duration and mp4_url
+      const validTemplateRows = templateRows.filter((p) => {
+        const dur = Number(p.duration ?? 0);
+        return Boolean(p.mp4_url) && Number.isFinite(dur) && dur > 0;
+      });
+
+      if (!validTemplateRows.length) {
+        setErr(
+          "No valid template rows (need positive duration and mp4 URL). Check durations in the programs table."
+        );
         return;
       }
 
-      // 3) Build repeated schedule
+      // 3) Compute template relative offsets and total duration
+      const templateStartMs = earliestStart.getTime();
+      let templateDurationMs = 0;
+
+      const templatePattern = validTemplateRows.map((p) => {
+        const startMs = new Date(p.start_time).getTime();
+        const durSec = Number(p.duration ?? 0);
+        const relOffsetMs = startMs - templateStartMs;
+        templateDurationMs += durSec * 1000;
+        return {
+          title: p.title ?? null,
+          mp4_url: p.mp4_url as string,
+          durationSec: durSec,
+          relOffsetMs,
+        };
+      });
+
+      if (templateDurationMs <= 0) {
+        setErr(
+          "Computed template duration is invalid (<= 0). Check your program durations."
+        );
+        return;
+      }
+
+      // 4) Compute current end time for the channel
+      let currentEndMs = templateStartMs;
+      for (const p of rows) {
+        const s = new Date(p.start_time).getTime();
+        const durSec = Number(p.duration ?? 0);
+        const endMs = s + durSec * 1000;
+        if (endMs > currentEndMs) currentEndMs = endMs;
+      }
+
+      // Target end time: extend by N days past currentEndMs
+      const extendMs = days * 24 * 60 * 60 * 1000;
+      const targetEndMs = currentEndMs + extendMs;
+
+      // 5) Estimate how many new rows we will insert, obey safety cap
+      const estimatedBlocks = Math.ceil(
+        (targetEndMs - currentEndMs) / templateDurationMs
+      );
+      const estimatedInserts = estimatedBlocks * templatePattern.length;
+
+      if (estimatedInserts > MAX_INSERTS) {
+        setErr(
+          `This would create about ${estimatedInserts} new programs, which is over the safety limit (${MAX_INSERTS}). Try fewer days or a smaller template.`
+        );
+        return;
+      }
+
+      // 6) Build inserts
       const inserts: {
         channel_id: number;
         start_time: string;
@@ -141,38 +253,45 @@ export default function LoopSchedulePage() {
         duration: number;
       }[] = [];
 
-      for (let r = 1; r <= repeats; r++) {
-        const offsetMs = windowMs * r;
-        for (const p of rows) {
-          const srcStart = new Date(p.start_time);
-          const newStart = new Date(srcStart.getTime() + offsetMs);
+      let workingEndMs = currentEndMs;
 
-          const durationSec = Number(p.duration ?? 0);
-          if (!Number.isFinite(durationSec) || durationSec <= 0) {
-            // Skip any program with invalid duration instead of blowing up
-            continue;
-          }
+      // Keep adding blocks until we've extended far enough
+      while (workingEndMs < targetEndMs) {
+        const blockBaseStartMs = workingEndMs; // new "day" starts right after current schedule
 
-          const url = p.mp4_url;
-          if (!url) continue;
+        for (const p of templatePattern) {
+          const newStartMs = blockBaseStartMs + p.relOffsetMs;
+          const newStart = new Date(newStartMs);
 
           inserts.push({
             channel_id: chId,
-            start_time: newStart.toISOString(), // UTC ISO
-            title: p.title ?? null,
-            mp4_url: url,
-            duration: durationSec,
+            start_time: newStart.toISOString(), // UTC
+            title: p.title,
+            mp4_url: p.mp4_url,
+            duration: p.durationSec,
           });
         }
+
+        workingEndMs = blockBaseStartMs + templateDurationMs;
       }
 
       if (!inserts.length) {
-        setErr("No valid rows to insert. Check that existing programs have durations and mp4 URLs.");
+        setErr("Nothing to insert. Check your template and durations.");
         return;
       }
 
-      // 4) Insert into programs (no reference to programs.id)
-      const { error: insertError } = await supabase.from("programs").insert(inserts);
+      // Final safety check
+      if (inserts.length > MAX_INSERTS) {
+        setErr(
+          `Would insert ${inserts.length} rows, which exceeds the safety limit (${MAX_INSERTS}). Try fewer days.`
+        );
+        return;
+      }
+
+      // 7) Insert into programs
+      const { error: insertError } = await supabase
+        .from("programs")
+        .insert(inserts);
 
       if (insertError) {
         console.error("Error inserting looped programs", insertError);
@@ -181,17 +300,15 @@ export default function LoopSchedulePage() {
       }
 
       setSuccessMsg(
-        `Created ${inserts.length} looped program(s) for channel ${chId} across ${repeats} repeat block(s).`
+        `Added ${inserts.length} program(s), extending channel ${chId} by approximately ${days} day(s) using the first ${TEMPLATE_HOURS} hours as the pattern.`
       );
     } catch (e: any) {
       console.error("Unexpected loop error", e);
-      setErr(e?.message || "Unexpected error creating loop schedule.");
+      setErr(e?.message || "Unexpected error extending schedule.");
     } finally {
       setLoading(false);
     }
   }
-
-  const disableActions = useMemo(() => loading, [loading]);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#040814] via-[#050b1a] to-black text-white pb-10">
@@ -201,13 +318,16 @@ export default function LoopSchedulePage() {
           <div>
             <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
               <Repeat className="h-6 w-6 text-amber-400" />
-              Loop Channel Schedule
+              Loop Channel Schedule (Safe)
             </h1>
             <p className="mt-1 text-sm text-slate-300 max-w-xl">
-              Take the existing schedule window for a channel and repeat it forward in time
-              for continuous 24/7 rotation. This does{" "}
-              <span className="font-semibold text-amber-300">not</span> touch or modify your
-              current entries—only adds new rows into <code>programs</code>.
+              Uses the <span className="font-semibold text-amber-300">
+                first 24 hours
+              </span>{" "}
+              of programming on a channel as a template and repeats it{" "}
+              <span className="font-semibold">forward in time</span>. Existing
+              programs are not modified, only new rows are added with safety
+              limits to avoid overloading your <code>programs</code> table.
             </p>
           </div>
           <Link href="/admin">
@@ -241,21 +361,21 @@ export default function LoopSchedulePage() {
               </p>
             </div>
 
-            {/* Repeat count */}
+            {/* Days to extend */}
             <div>
               <label className="block text-xs font-medium text-slate-200 mb-1">
-                Repeat block count
+                Days to extend
               </label>
               <input
                 type="number"
                 min={1}
-                value={repeatCount}
-                onChange={(e) => setRepeatCount(e.target.value)}
+                value={daysToExtend}
+                onChange={(e) => setDaysToExtend(e.target.value)}
                 className="w-full rounded-md border border-slate-600 bg-slate-950 px-3 py-1.5 text-sm text-white focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
                 placeholder="e.g. 3"
               />
               <p className="mt-1 text-[11px] text-slate-400">
-                1 = add the window once, 2 = twice, etc.
+                How many day(s) beyond the current end to create more programs.
               </p>
             </div>
 
@@ -265,7 +385,7 @@ export default function LoopSchedulePage() {
                 type="button"
                 variant="outline"
                 disabled={disableActions}
-                onClick={handlePreview}
+                onClick={loadChannelInfo}
                 className="border-slate-600 bg-slate-950 text-xs flex-1"
               >
                 {loading ? (
@@ -274,22 +394,25 @@ export default function LoopSchedulePage() {
                     Working…
                   </>
                 ) : (
-                  "Preview Window"
+                  <>
+                    <Clock className="mr-2 h-4 w-4" />
+                    Preview Window
+                  </>
                 )}
               </Button>
               <Button
                 type="button"
                 disabled={disableActions}
-                onClick={handleLoop}
+                onClick={handleExtendSchedule}
                 className="bg-emerald-600 hover:bg-emerald-700 text-xs flex-1"
               >
                 {loading ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Creating…
+                    Extending…
                   </>
                 ) : (
-                  "Create Loop Schedule"
+                  "Extend Schedule"
                 )}
               </Button>
             </div>
@@ -297,23 +420,37 @@ export default function LoopSchedulePage() {
 
           {previewInfo && (
             <div className="mt-2 rounded-md border border-slate-600 bg-slate-900/80 px-3 py-2 text-xs text-slate-200">
-              <div className="font-semibold mb-1">Current window overview</div>
+              <div className="font-semibold mb-1">
+                Current schedule overview
+              </div>
               <p>
-                Programs in window:{" "}
+                Total programs on channel:{" "}
                 <span className="text-amber-300">{previewInfo.count}</span>
               </p>
               <p>
-                From:{" "}
+                Programs in template window (first {TEMPLATE_HOURS} hours):{" "}
+                <span className="text-amber-300">
+                  {previewInfo.templateCount}
+                </span>
+              </p>
+              <p>
+                Template from:{" "}
                 <span className="font-mono text-amber-200">
                   {previewInfo.first}
                 </span>
               </p>
               <p>
-                To:{" "}
+                Template to:{" "}
                 <span className="font-mono text-amber-200">
                   {previewInfo.last}
                 </span>{" "}
-                ({previewInfo.windowHours} hours total)
+                ({previewInfo.templateWindowHours} hours)
+              </p>
+              <p>
+                Current channel ends at:{" "}
+                <span className="font-mono text-emerald-200">
+                  {previewInfo.currentEnd}
+                </span>
               </p>
             </div>
           )}
