@@ -1,106 +1,27 @@
-import { type NextRequest, NextResponse } from "next/server"
-import { supabase } from "@/lib/supabase"
+// app/api/setup-live-streams/route.ts
+// TEMP SAFE VERSION
+// This endpoint used to create/manage live_streams in Supabase,
+// but it's currently causing build failures. For now, we disable
+// the heavy logic and return safe JSON responses so the app can build.
 
-// Create the live_streams table if it doesn't exist
-async function createLiveStreamsTable() {
-  const { error } = await supabase.rpc("create_live_streams_table", {})
+import { NextResponse } from "next/server";
 
-  if (error && !error.message.includes("already exists")) {
-    console.error("Error creating live_streams table:", error)
-    throw error
-  }
-}
+// Make sure Next never tries to statically analyze this in a way that breaks the build
+export const dynamic = "force-dynamic";
 
-// Handle GET requests - setup table and return live streams
 export async function GET() {
-  try {
-    // First, ensure the function exists
-    await supabase.rpc("create_function_if_not_exists", {
-      function_name: "create_live_streams_table",
-      function_definition: `
-        CREATE OR REPLACE FUNCTION create_live_streams_table()
-        RETURNS void AS $$
-        BEGIN
-          -- Create the live_streams table if it doesn't exist
-          CREATE TABLE IF NOT EXISTS live_streams (
-            id SERIAL PRIMARY KEY,
-            channel_id TEXT NOT NULL,
-            stream_url TEXT NOT NULL,
-            is_active BOOLEAN DEFAULT true,
-            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-          );
-          
-          -- Create unique index on channel_id
-          CREATE UNIQUE INDEX IF NOT EXISTS live_streams_channel_id_idx ON live_streams (channel_id);
-        END;
-        $$ LANGUAGE plpgsql;
-      `,
-    })
-
-    // Now create the table
-    await createLiveStreamsTable()
-
-    // Return success
-    return NextResponse.json({ success: true, message: "Live streams table setup complete" })
-  } catch (error) {
-    console.error("Error in setup-live-streams GET:", error)
-    return NextResponse.json({ success: false, error: "Failed to setup live streams table" }, { status: 500 })
-  }
+  return NextResponse.json({
+    success: true,
+    message: "Live streams setup endpoint is currently disabled (no-op).",
+  });
 }
 
-// Handle POST requests - add or update a live stream
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json()
-    const { channelId, streamUrl } = body
-
-    if (!channelId || !streamUrl) {
-      return NextResponse.json({ success: false, error: "Channel ID and Stream URL are required" }, { status: 400 })
-    }
-
-    // Ensure table exists
-    await createLiveStreamsTable()
-
-    // Check if entry exists for this channel
-    const { data: existingStream } = await supabase
-      .from("live_streams")
-      .select("*")
-      .eq("channel_id", channelId)
-      .single()
-
-    let result
-
-    if (existingStream) {
-      // Update existing stream
-      result = await supabase
-        .from("live_streams")
-        .update({
-          stream_url: streamUrl,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("channel_id", channelId)
-    } else {
-      // Insert new stream
-      result = await supabase.from("live_streams").insert({
-        channel_id: channelId,
-        stream_url: streamUrl,
-      })
-    }
-
-    if (result.error) {
-      throw result.error
-    }
-
-    return NextResponse.json({
-      success: true,
-      message: `Live stream for channel ${channelId} ${existingStream ? "updated" : "added"} successfully`,
-    })
-  } catch (error) {
-    console.error("Error in setup-live-streams POST:", error)
-    return NextResponse.json(
-      { success: false, error: error instanceof Error ? error.message : "Unknown error occurred" },
-      { status: 500 },
-    )
-  }
+export async function POST() {
+  return NextResponse.json(
+    {
+      success: false,
+      error: "Live streams setup endpoint is currently disabled. No changes were made.",
+    },
+    { status: 503 },
+  );
 }
