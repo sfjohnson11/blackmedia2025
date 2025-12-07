@@ -26,7 +26,7 @@ export default function LoopSchedulePage() {
   const supabase = createClientComponentClient();
 
   const [channelId, setChannelId] = useState<string>("");
-  const [daysToExtend, setDaysToExtend] = useState<string>("3");
+  const [blocksToExtend, setBlocksToExtend] = useState<string>("3"); // "blocks" = how many template repeats
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -37,10 +37,14 @@ export default function LoopSchedulePage() {
     last: string;
     templateWindowHours: number;
     currentEnd: string;
+    templateDurationHours: number;
+    projectedEnd?: string;
+    projectedBlocks?: number;
+    projectedHoursAdded?: number;
   } | null>(null);
 
-  const MAX_INSERTS = 2000; // hard safety cap
-  const TEMPLATE_HOURS = 24; // treat first 24 hours as the "day" pattern
+  const MAX_INSERTS = 2000; // safety cap
+  const TEMPLATE_HOURS = 24; // we use the first 24 hours as the "day" pattern
 
   const disableActions = useMemo(() => loading, [loading]);
 
@@ -75,30 +79,59 @@ export default function LoopSchedulePage() {
         return;
       }
 
-      // Earliest program
+      // Earliest program start
       const earliestStart = new Date(rows[0].start_time);
-      const templateEnd = new Date(
+      const templateCutoff = new Date(
         earliestStart.getTime() + TEMPLATE_HOURS * 60 * 60 * 1000
       );
 
-      // Programs inside the "template day" (first 24 hours)
-      const templateRows = rows.filter((p) => {
+      // Programs inside the template window (first 24 hours)
+      let templateRows = rows.filter((p) => {
         const t = new Date(p.start_time);
-        return t >= earliestStart && t < templateEnd;
+        return t >= earliestStart && t < templateCutoff;
       });
 
-      // If somehow no rows fell into that window, just fall back to all rows
-      const effectiveTemplate = templateRows.length ? templateRows : rows;
+      // Fallback: if somehow nothing in first 24h, use everything
+      if (!templateRows.length) {
+        templateRows = rows;
+      }
 
-      const templateLast = effectiveTemplate[effectiveTemplate.length - 1];
-      const templateLastStart = new Date(templateLast.start_time);
-      const templateLastDurSec = Number(templateLast.duration ?? 0);
-      const templateWindowEnd = new Date(
-        templateLastStart.getTime() + templateLastDurSec * 1000
-      );
+      // Only rows with valid duration + mp4_url
+      const validTemplateRows = templateRows.filter((p) => {
+        const dur = Number(p.duration ?? 0);
+        return Boolean(p.mp4_url) && Number.isFinite(dur) && dur > 0;
+      });
 
-      // Current end time = max start_time + duration over *all* programs
-      let currentEndMs = earliestStart.getTime();
+      if (!validTemplateRows.length) {
+        setErr(
+          "No valid template rows (need positive duration and mp4 URL). Check durations in the programs table."
+        );
+        return;
+      }
+
+      // Compute template duration in ms and find template end
+      const templateStartMs = earliestStart.getTime();
+      let templateDurationMs = 0;
+      let templateEndMs = templateStartMs;
+
+      for (const p of validTemplateRows) {
+        const sMs = new Date(p.start_time).getTime();
+        const durSec = Number(p.duration ?? 0);
+        const endMs = sMs + durSec * 1000;
+        if (endMs > templateEndMs) templateEndMs = endMs;
+        templateDurationMs += durSec * 1000;
+      }
+
+      const templateDurationHours =
+        Math.round((templateDurationMs / (1000 * 60 * 60)) * 10) / 10;
+
+      const templateWindowHours =
+        Math.round(
+          ((templateEndMs - templateStartMs) / (1000 * 60 * 60)) * 10
+        ) / 10;
+
+      // Current end time for the whole channel
+      let currentEndMs = templateStartMs;
       for (const p of rows) {
         const s = new Date(p.start_time).getTime();
         const durSec = Number(p.duration ?? 0);
@@ -107,18 +140,32 @@ export default function LoopSchedulePage() {
       }
       const currentEnd = new Date(currentEndMs);
 
-      const templateWindowHours =
-        (templateWindowEnd.getTime() - earliestStart.getTime()) /
-        (1000 * 60 * 60);
+      // Projected end if we add N blocks (Option B)
+      let projectedEnd: string | undefined = undefined;
+      let projectedBlocks: number | undefined = undefined;
+      let projectedHoursAdded: number | undefined = undefined;
+
+      const blocks = Number(blocksToExtend);
+      if (Number.isFinite(blocks) && blocks > 0 && templateDurationMs > 0) {
+        const addedMs = blocks * templateDurationMs;
+        const projectedEndMs = currentEndMs + addedMs;
+        projectedEnd = new Date(projectedEndMs).toUTCString();
+        projectedBlocks = blocks;
+        projectedHoursAdded =
+          Math.round((addedMs / (1000 * 60 * 60)) * 10) / 10;
+      }
 
       setPreviewInfo({
         count: rows.length,
-        templateCount: effectiveTemplate.length,
+        templateCount: validTemplateRows.length,
         first: earliestStart.toUTCString(),
-        last: templateWindowEnd.toUTCString(),
-        templateWindowHours:
-          Math.max(0, Math.round(templateWindowHours * 10) / 10),
+        last: new Date(templateEndMs).toUTCString(),
+        templateWindowHours,
         currentEnd: currentEnd.toUTCString(),
+        templateDurationHours,
+        projectedEnd,
+        projectedBlocks,
+        projectedHoursAdded,
       });
     } catch (e: any) {
       console.error("Unexpected preview error", e);
@@ -138,15 +185,15 @@ export default function LoopSchedulePage() {
       return;
     }
 
-    const days = Number(daysToExtend);
-    if (!Number.isFinite(days) || days <= 0) {
-      setErr("Days to extend must be a positive number (e.g. 1, 3, 7).");
+    const blocks = Number(blocksToExtend);
+    if (!Number.isFinite(blocks) || blocks <= 0) {
+      setErr("Blocks to extend must be a positive number (e.g. 1, 3, 7).");
       return;
     }
 
     setLoading(true);
     try {
-      // 1) Load existing programs for this channel
+      // 1) Load existing programs
       const { data, error } = await supabase
         .from("programs")
         .select("channel_id,title,mp4_url,start_time,duration")
@@ -165,7 +212,7 @@ export default function LoopSchedulePage() {
         return;
       }
 
-      // 2) Determine template "day" (first 24 hours)
+      // 2) Determine template window (first 24 hours)
       const earliestStart = new Date(rows[0].start_time);
       const templateCutoff = new Date(
         earliestStart.getTime() + TEMPLATE_HOURS * 60 * 60 * 1000
@@ -176,12 +223,12 @@ export default function LoopSchedulePage() {
         return t >= earliestStart && t < templateCutoff;
       });
 
-      // Fallback: if somehow nothing in first 24h, just use everything
+      // Fallback: if nothing in first 24h, use everything
       if (!templateRows.length) {
         templateRows = rows;
       }
 
-      // Only keep rows with a valid duration and mp4_url
+      // Valid template rows only
       const validTemplateRows = templateRows.filter((p) => {
         const dur = Number(p.duration ?? 0);
         return Boolean(p.mp4_url) && Number.isFinite(dur) && dur > 0;
@@ -194,7 +241,7 @@ export default function LoopSchedulePage() {
         return;
       }
 
-      // 3) Compute template relative offsets and total duration
+      // 3) Build template pattern with relative offsets and total duration
       const templateStartMs = earliestStart.getTime();
       let templateDurationMs = 0;
 
@@ -218,7 +265,7 @@ export default function LoopSchedulePage() {
         return;
       }
 
-      // 4) Compute current end time for the channel
+      // 4) Find current end of channel
       let currentEndMs = templateStartMs;
       for (const p of rows) {
         const s = new Date(p.start_time).getTime();
@@ -227,24 +274,18 @@ export default function LoopSchedulePage() {
         if (endMs > currentEndMs) currentEndMs = endMs;
       }
 
-      // Target end time: extend by N days past currentEndMs
-      const extendMs = days * 24 * 60 * 60 * 1000;
-      const targetEndMs = currentEndMs + extendMs;
-
-      // 5) Estimate how many new rows we will insert, obey safety cap
-      const estimatedBlocks = Math.ceil(
-        (targetEndMs - currentEndMs) / templateDurationMs
-      );
-      const estimatedInserts = estimatedBlocks * templatePattern.length;
+      // Each "block" = one full template duration (Option B)
+      const totalBlocks = blocks;
+      const estimatedInserts = totalBlocks * templatePattern.length;
 
       if (estimatedInserts > MAX_INSERTS) {
         setErr(
-          `This would create about ${estimatedInserts} new programs, which is over the safety limit (${MAX_INSERTS}). Try fewer days or a smaller template.`
+          `This would create about ${estimatedInserts} new programs, which is over the safety limit (${MAX_INSERTS}). Try fewer blocks or a smaller template.`
         );
         return;
       }
 
-      // 6) Build inserts
+      // 5) Build inserts
       const inserts: {
         channel_id: number;
         start_time: string;
@@ -255,9 +296,8 @@ export default function LoopSchedulePage() {
 
       let workingEndMs = currentEndMs;
 
-      // Keep adding blocks until we've extended far enough
-      while (workingEndMs < targetEndMs) {
-        const blockBaseStartMs = workingEndMs; // new "day" starts right after current schedule
+      for (let i = 0; i < totalBlocks; i++) {
+        const blockBaseStartMs = workingEndMs;
 
         for (const p of templatePattern) {
           const newStartMs = blockBaseStartMs + p.relOffsetMs;
@@ -280,15 +320,14 @@ export default function LoopSchedulePage() {
         return;
       }
 
-      // Final safety check
       if (inserts.length > MAX_INSERTS) {
         setErr(
-          `Would insert ${inserts.length} rows, which exceeds the safety limit (${MAX_INSERTS}). Try fewer days.`
+          `Would insert ${inserts.length} rows, which exceeds the safety limit (${MAX_INSERTS}). Try fewer blocks.`
         );
         return;
       }
 
-      // 7) Insert into programs
+      // 6) Insert into programs
       const { error: insertError } = await supabase
         .from("programs")
         .insert(inserts);
@@ -299,8 +338,13 @@ export default function LoopSchedulePage() {
         return;
       }
 
+      const totalHoursAdded =
+        Math.round(
+          ((templateDurationMs * totalBlocks) / (1000 * 60 * 60)) * 10
+        ) / 10;
+
       setSuccessMsg(
-        `Added ${inserts.length} program(s), extending channel ${chId} by approximately ${days} day(s) using the first ${TEMPLATE_HOURS} hours as the pattern.`
+        `Added ${inserts.length} program(s), repeating the template ${totalBlocks} time(s) and adding ~${totalHoursAdded} hours of programming for channel ${chId}.`
       );
     } catch (e: any) {
       console.error("Unexpected loop error", e);
@@ -321,13 +365,14 @@ export default function LoopSchedulePage() {
               Loop Channel Schedule (Safe)
             </h1>
             <p className="mt-1 text-sm text-slate-300 max-w-xl">
-              Uses the <span className="font-semibold text-amber-300">
+              Uses the{" "}
+              <span className="font-semibold text-amber-300">
                 first 24 hours
               </span>{" "}
-              of programming on a channel as a template and repeats it{" "}
-              <span className="font-semibold">forward in time</span>. Existing
-              programs are not modified, only new rows are added with safety
-              limits to avoid overloading your <code>programs</code> table.
+              of programming on a channel as a template and repeats that block
+              forward in time. Existing rows are not modified, only new rows
+              are added with safety limits to avoid overloading your{" "}
+              <code>programs</code> table.
             </p>
           </div>
           <Link href="/admin">
@@ -361,21 +406,21 @@ export default function LoopSchedulePage() {
               </p>
             </div>
 
-            {/* Days to extend */}
+            {/* Blocks to extend */}
             <div>
               <label className="block text-xs font-medium text-slate-200 mb-1">
-                Days to extend
+                Blocks to extend (template repeats)
               </label>
               <input
                 type="number"
                 min={1}
-                value={daysToExtend}
-                onChange={(e) => setDaysToExtend(e.target.value)}
+                value={blocksToExtend}
+                onChange={(e) => setBlocksToExtend(e.target.value)}
                 className="w-full rounded-md border border-slate-600 bg-slate-950 px-3 py-1.5 text-sm text-white focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
                 placeholder="e.g. 3"
               />
               <p className="mt-1 text-[11px] text-slate-400">
-                How many day(s) beyond the current end to create more programs.
+                1 = add the template block once, 2 = twice, etc.
               </p>
             </div>
 
@@ -419,7 +464,7 @@ export default function LoopSchedulePage() {
           </div>
 
           {previewInfo && (
-            <div className="mt-2 rounded-md border border-slate-600 bg-slate-900/80 px-3 py-2 text-xs text-slate-200">
+            <div className="mt-2 rounded-md border border-slate-600 bg-slate-900/80 px-3 py-2 text-xs text-slate-200 space-y-1">
               <div className="font-semibold mb-1">
                 Current schedule overview
               </div>
@@ -434,17 +479,23 @@ export default function LoopSchedulePage() {
                 </span>
               </p>
               <p>
-                Template from:{" "}
+                Template window from:{" "}
                 <span className="font-mono text-amber-200">
                   {previewInfo.first}
                 </span>
               </p>
               <p>
-                Template to:{" "}
+                Template window to:{" "}
                 <span className="font-mono text-amber-200">
                   {previewInfo.last}
                 </span>{" "}
                 ({previewInfo.templateWindowHours} hours)
+              </p>
+              <p>
+                Template block duration:{" "}
+                <span className="font-mono text-emerald-200">
+                  ~{previewInfo.templateDurationHours} hours
+                </span>
               </p>
               <p>
                 Current channel ends at:{" "}
@@ -452,6 +503,29 @@ export default function LoopSchedulePage() {
                   {previewInfo.currentEnd}
                 </span>
               </p>
+
+              {previewInfo.projectedEnd &&
+                previewInfo.projectedBlocks &&
+                previewInfo.projectedHoursAdded !== undefined && (
+                  <div className="mt-2 pt-2 border-t border-slate-700">
+                    <div className="font-semibold mb-1">
+                      If you extend by {previewInfo.projectedBlocks} block
+                      {previewInfo.projectedBlocks > 1 ? "s" : ""}:
+                    </div>
+                    <p>
+                      Approx. hours added:{" "}
+                      <span className="font-mono text-amber-200">
+                        ~{previewInfo.projectedHoursAdded} hours
+                      </span>
+                    </p>
+                    <p>
+                      Projected new end time:{" "}
+                      <span className="font-mono text-amber-200">
+                        {previewInfo.projectedEnd}
+                      </span>
+                    </p>
+                  </div>
+                )}
             </div>
           )}
 
