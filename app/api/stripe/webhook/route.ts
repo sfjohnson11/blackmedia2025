@@ -3,7 +3,7 @@ import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-export const runtime = "nodejs";
+export const runtime = "nodejs"; // required for Stripe signature verification
 
 function mustEnv(name: string): string {
   const v = process.env[name];
@@ -11,17 +11,26 @@ function mustEnv(name: string): string {
   return v;
 }
 
+/**
+ * REQUIRED ENV VARS
+ * - STRIPE_SECRET_KEY (sk_live_...)
+ * - STRIPE_WEBHOOK_SECRET (whsec_...)
+ * - NEXT_PUBLIC_SUPABASE_URL
+ * - SUPABASE_SERVICE_ROLE_KEY
+ */
+const STRIPE_SECRET_KEY = mustEnv("STRIPE_SECRET_KEY");
 const STRIPE_WEBHOOK_SECRET = mustEnv("STRIPE_WEBHOOK_SECRET");
+
 const SUPABASE_URL = mustEnv("NEXT_PUBLIC_SUPABASE_URL");
 const SUPABASE_SERVICE_ROLE_KEY = mustEnv("SUPABASE_SERVICE_ROLE_KEY");
 
-// server-only admin client (bypasses RLS)
+// Server-only admin Supabase client (bypasses RLS)
 const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
-// Stripe needs an instance to verify signatures; key not used for constructEvent
-const stripe = new Stripe("sk_test_placeholder_not_used", {
+// Stripe SDK (needs secret key even if you only use webhooks)
+const stripe = new Stripe(STRIPE_SECRET_KEY, {
   apiVersion: "2024-06-20",
 });
 
@@ -32,6 +41,7 @@ function normalizeEmail(email: unknown): string | null {
 }
 
 async function setMemberActiveByEmail(email: string) {
+  // Update their profile to active
   const { error } = await supabaseAdmin
     .from("user_profiles")
     .update({
@@ -45,6 +55,7 @@ async function setMemberActiveByEmail(email: string) {
 
 export async function POST(req: Request) {
   try {
+    // Stripe needs the RAW body
     const rawBody = await req.text();
     const sig = (await headers()).get("stripe-signature");
 
@@ -73,6 +84,7 @@ export async function POST(req: Request) {
       );
     }
 
+    // ✅ For subscriptions created via Payment Link / Checkout
     if (event.type === "checkout.session.completed") {
       const session = event.data.object as Stripe.Checkout.Session;
 
@@ -82,11 +94,9 @@ export async function POST(req: Request) {
         normalizeEmail((session as any)?.metadata?.email);
 
       if (!email) {
+        // Don't fail the webhook — just acknowledge
         return NextResponse.json(
-          {
-            ok: true,
-            note: "No email found in checkout session; membership not updated.",
-          },
+          { ok: true, note: "No email found; membership not updated." },
           { status: 200 }
         );
       }
@@ -99,6 +109,7 @@ export async function POST(req: Request) {
       );
     }
 
+    // (Optional later) handle cancel/past_due events here.
     return NextResponse.json(
       { ok: true, ignored: true, type: event.type },
       { status: 200 }
