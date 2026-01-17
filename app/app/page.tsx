@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
 type Summary = { channels: number };
@@ -34,6 +35,13 @@ function parseMs(iso: string | null) {
 
 export default function AppPage() {
   const supabase = createClientComponentClient();
+  const searchParams = useSearchParams();
+
+  // 🔹 query params from middleware redirect
+  const paywallParam = searchParams.get("paywall"); // "1" when blocked
+  const redirectParam = searchParams.get("redirect"); // original destination
+
+  const isPaywallRedirect = paywallParam === "1";
 
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loadingSummary, setLoadingSummary] = useState(true);
@@ -81,10 +89,9 @@ export default function AppPage() {
             .eq("id", user.id);
 
           if (upErr) console.error("Failed to set welcome_started_at:", upErr);
+
           if (!cancelled) {
-            setProfile((p) =>
-              p ? { ...p, welcome_started_at: nowIso } : p
-            );
+            setProfile((p) => (p ? { ...p, welcome_started_at: nowIso } : p));
           }
         }
       } catch (e) {
@@ -132,7 +139,6 @@ export default function AppPage() {
   }, [profile]);
 
   const hasAccess = useMemo(() => {
-    // Admin always allowed
     if (isAdmin) return true;
 
     const status = (profile?.membership_status ?? "").toLowerCase().trim();
@@ -146,9 +152,13 @@ export default function AppPage() {
 
   const showWelcome = useMemo(() => {
     if (!profile) return false;
-    if (!hasAccess) return false; // keep paywall clean
+    if (!hasAccess) return false;
     return isWithin7Days(profile.welcome_started_at);
   }, [profile, hasAccess]);
+
+  // A small helper to show where they tried to go (safe display)
+  const attemptedPath =
+    redirectParam && redirectParam.startsWith("/") ? redirectParam : null;
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-black via-slate-950 to-black text-white">
@@ -164,14 +174,14 @@ export default function AppPage() {
           </p>
         </section>
 
-        {/* PAYWALL (only if logged-in profile exists and access is not active/grace) */}
-        {!profileLoading && profile && !hasAccess && (
-          <section className="rounded-2xl border border-amber-500/30 bg-gradient-to-br from-amber-500/10 via-slate-950 to-black px-5 py-5 md:px-6 md:py-6 shadow-lg">
-            <p className="text-xs font-semibold uppercase tracking-wide text-amber-300/90">
-              Membership required
+        {/* ✅ PAYWALL BANNER WHEN MIDDLEWARE REDIRECTS HERE */}
+        {!profileLoading && isPaywallRedirect && !hasAccess && (
+          <section className="rounded-2xl border border-red-500/30 bg-gradient-to-br from-red-500/10 via-slate-950 to-black px-5 py-5 md:px-6 md:py-6 shadow-lg">
+            <p className="text-xs font-semibold uppercase tracking-wide text-red-300/90">
+              Access blocked — membership required
             </p>
             <h2 className="text-2xl font-extrabold tracking-tight mt-1">
-              Upgrade to keep access
+              Upgrade to keep watching
             </h2>
             <p className="text-sm text-slate-200 mt-2 max-w-3xl">
               Black Truth TV is now a private, member-supported network. To watch
@@ -179,22 +189,29 @@ export default function AppPage() {
               an active membership.
             </p>
 
+            {attemptedPath && (
+              <p className="text-xs text-slate-400 mt-2">
+                You tried to access:{" "}
+                <span className="text-slate-200 font-semibold">{attemptedPath}</span>
+              </p>
+            )}
+
             <div className="mt-4 flex flex-wrap gap-2">
               <a href={STRIPE_UPGRADE_URL}>
                 <button className="rounded-full border border-amber-500/50 bg-amber-500/90 px-4 py-2 text-xs font-semibold text-black shadow hover:bg-amber-400 transition">
                   Upgrade — $9.99/month
                 </button>
               </a>
+
               <Link href="/request-access">
                 <button className="rounded-full border border-slate-500/70 bg-slate-800/90 px-4 py-2 text-xs font-semibold text-slate-100 shadow hover:bg-slate-700 transition">
-                  Need help? Contact / Request
+                  Need help? Request / Contact
                 </button>
               </Link>
             </div>
 
             <p className="text-xs text-slate-500 mt-3">
-              If you already paid, log out and log back in (or give it 1–2 minutes)
-              so your status updates.
+              After upgrading, log out and log back in so your access updates.
             </p>
           </section>
         )}
@@ -297,7 +314,6 @@ export default function AppPage() {
                 🔴 Go to Live Network
               </button>
             </Link>
-
             <Link href={hasAccess ? "/freedom-school" : "#"}>
               <button
                 disabled={!hasAccess}
@@ -306,7 +322,6 @@ export default function AppPage() {
                 📚 Freedom School
               </button>
             </Link>
-
             <Link href={hasAccess ? "/guide" : "#"}>
               <button
                 disabled={!hasAccess}
@@ -326,10 +341,16 @@ export default function AppPage() {
           </div>
         </section>
 
-        {/* MAIN GRID */}
+        {/* MAIN GRID (unchanged visuals; gated links are disabled if no access) */}
         <section className="grid gap-6 md:grid-cols-2">
           <Link href={hasAccess ? "/channels" : "#"} className="group">
-            <div className={`h-full rounded-2xl border border-slate-800 bg-gradient-to-br from-red-800/40 via-slate-950 to-black p-5 shadow-lg transition ${hasAccess ? "group-hover:border-red-400/80 group-hover:shadow-red-900/40" : "opacity-60"}`}>
+            <div
+              className={`h-full rounded-2xl border border-slate-800 bg-gradient-to-br from-red-800/40 via-slate-950 to-black p-5 shadow-lg transition ${
+                hasAccess
+                  ? "group-hover:border-red-400/80 group-hover:shadow-red-900/40"
+                  : "opacity-60"
+              }`}
+            >
               <div className="flex items-center justify-between gap-3 mb-3">
                 <h2 className="text-xl font-bold flex items-center gap-2">
                   <span className="inline-flex h-2 w-2 rounded-full bg-red-500 animate-pulse" />
@@ -344,13 +365,21 @@ export default function AppPage() {
                 Construction Queen TV, Freedom School, and more.
               </p>
               <p className="text-xs text-slate-400">
-                {hasAccess ? "Click to open the full channel grid and choose where to watch." : "Upgrade required to watch."}
+                {hasAccess
+                  ? "Click to open the full channel grid and choose where to watch."
+                  : "Upgrade required to watch."}
               </p>
             </div>
           </Link>
 
           <Link href={hasAccess ? "/freedom-school" : "#"} className="group">
-            <div className={`h-full rounded-2xl border border-slate-800 bg-gradient-tobr from-emerald-800/30 via-slate-950 to-black p-5 shadow-lg transition ${hasAccess ? "group-hover:border-emerald-400/80 group-hover:shadow-emerald-900/40" : "opacity-60"}`}>
+            <div
+              className={`h-full rounded-2xl border border-slate-800 bg-gradient-to-br from-emerald-800/30 via-slate-950 to-black p-5 shadow-lg transition ${
+                hasAccess
+                  ? "group-hover:border-emerald-400/80 group-hover:shadow-emerald-900/40"
+                  : "opacity-60"
+              }`}
+            >
               <div className="flex items-center justify-between gap-3 mb-3">
                 <h2 className="text-xl font-bold flex items-center gap-2">
                   <span className="text-lg">📚</span>
@@ -365,13 +394,21 @@ export default function AppPage() {
                 Freedom School library.
               </p>
               <p className="text-xs text-slate-400">
-                {hasAccess ? "Video, audio, and PDF content all in one virtual classroom." : "Upgrade required to access."}
+                {hasAccess
+                  ? "Video, audio, and PDF content all in one virtual classroom."
+                  : "Upgrade required to access."}
               </p>
             </div>
           </Link>
 
           <Link href={hasAccess ? "/on-demand" : "#"} className="group">
-            <div className={`h-full rounded-2xl border border-slate-800 bg-gradient-to-br from-indigo-700/30 via-slate-950 to-black p-5 shadow-lg transition ${hasAccess ? "group-hover:border-indigo-400/80 group-hover:shadow-indigo-900/40" : "opacity-60"}`}>
+            <div
+              className={`h-full rounded-2xl border border-slate-800 bg-gradient-to-br from-indigo-700/30 via-slate-950 to-black p-5 shadow-lg transition ${
+                hasAccess
+                  ? "group-hover:border-indigo-400/80 group-hover:shadow-indigo-900/40"
+                  : "opacity-60"
+              }`}
+            >
               <div className="flex items-center justify-between gap-3 mb-3">
                 <h2 className="text-xl font-bold flex items-center gap-2">
                   <span className="text-lg">🎬</span>
@@ -392,7 +429,13 @@ export default function AppPage() {
           </Link>
 
           <Link href={hasAccess ? "/breaking-news" : "#"} className="group">
-            <div className={`h-full rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-700/40 via-slate-950 to-black p-5 shadow-lg transition ${hasAccess ? "group-hover:border-slate-400/80 group-hover:shadow-slate-900/40" : "opacity-60"}`}>
+            <div
+              className={`h-full rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-700/40 via-slate-950 to-black p-5 shadow-lg transition ${
+                hasAccess
+                  ? "group-hover:border-slate-400/80 group-hover:shadow-slate-900/40"
+                  : "opacity-60"
+              }`}
+            >
               <div className="flex items-center justify-between gap-3 mb-3">
                 <h2 className="text-xl font-bold flex items-center gap-2">
                   <span className="text-lg">📰</span>
@@ -413,7 +456,13 @@ export default function AppPage() {
           </Link>
 
           <Link href={hasAccess ? "/chat" : "#"} className="group">
-            <div className={`h-full rounded-2xl border border-slate-800 bg-gradient-to-br from-blue-700/40 via-slate-950 to-black p-5 shadow-lg transition ${hasAccess ? "group-hover:border-blue-400/80 group-hover:shadow-blue-900/40" : "opacity-60"}`}>
+            <div
+              className={`h-full rounded-2xl border border-slate-800 bg-gradient-to-br from-blue-700/40 via-slate-950 to-black p-5 shadow-lg transition ${
+                hasAccess
+                  ? "group-hover:border-blue-400/80 group-hover:shadow-blue-900/40"
+                  : "opacity-60"
+              }`}
+            >
               <div className="flex items-center justify-between gap-3 mb-3">
                 <h2 className="text-xl font-bold flex items-center gap-2">
                   <span className="text-lg">💬</span>
@@ -433,13 +482,6 @@ export default function AppPage() {
             </div>
           </Link>
         </section>
-
-        {/* Footer hint for unpaid users */}
-        {!profileLoading && profile && !hasAccess && (
-          <div className="text-xs text-slate-500">
-            Your access is currently inactive. If you upgraded, log out and log back in.
-          </div>
-        )}
       </main>
     </div>
   );
