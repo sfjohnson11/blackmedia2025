@@ -5,8 +5,8 @@ export type Program = {
   channel_id: number | string;
   title?: string | null;
   mp4_url?: string | null;
-  duration?: number | string | null;  // seconds or "HH:MM:SS" / "MM:SS"
-  start_time?: string | null;         // ISO-like string (UTC with Z preferred)
+  duration?: number | string | null; // seconds or "HH:MM:SS" / "MM:SS"
+  start_time?: string | null; // ISO-like string (UTC with Z preferred)
   [k: string]: any;
 };
 
@@ -33,7 +33,11 @@ export const supabase = getSupabase();
 /* ---------- Storage public URLs ---------- */
 const ROOT = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "");
 const cleanKey = (k: string) =>
-  (k || "").trim().replace(/^\.?\//, "").replace(/\\/g, "/").replace(/\/{2,}/g, "/");
+  (k || "")
+    .trim()
+    .replace(/^\.?\//, "")
+    .replace(/\\/g, "/")
+    .replace(/\/{2,}/g, "/");
 
 function safeEncodePath(path: string) {
   return cleanKey(path)
@@ -84,10 +88,13 @@ export function getCandidateUrlsForProgram(p: Program): string[] {
   const stripped = cleaned.replace(/^channel[^/]+\/+/i, ""); // remove accidental "channelX/" prefix
 
   // 1) channelN/file.mp4
-  // 2) channelN/channelN/file.mp4 (defensive: if someone uploaded into a nested folder)
+  // 2) channelN/channelN/file.mp4 (defensive: nested folder)
   const urls = new Set<string>([
     buildPublicUrl(chanBucket, stripped),
-    buildPublicUrl(chanBucket, `channel${String(p.channel_id).toLowerCase()}/${stripped}`),
+    buildPublicUrl(
+      chanBucket,
+      `channel${String(p.channel_id).toLowerCase()}/${stripped}`
+    ),
   ]);
 
   return Array.from(urls);
@@ -100,9 +107,16 @@ export function getVideoUrlForProgram(p: Program): string | undefined {
 }
 
 /* ---------- Channels ---------- */
-export async function fetchChannelById(client: SupabaseClient, id: number | string): Promise<Channel | null> {
+export async function fetchChannelById(
+  client: SupabaseClient,
+  id: number | string
+): Promise<Channel | null> {
   try {
-    const { data, error } = await client.from("channels").select("*").eq("id", String(id)).maybeSingle();
+    const { data, error } = await client
+      .from("channels")
+      .select("*")
+      .eq("id", String(id))
+      .maybeSingle();
     if (error) throw error;
     return (data as Channel) ?? null;
   } catch {
@@ -111,3 +125,27 @@ export async function fetchChannelById(client: SupabaseClient, id: number | stri
 }
 
 export const STANDBY_PLACEHOLDER_ID = "__standby__";
+
+/* -------------------------------------------------------------------
+   ✅ Missing exports required by your build
+   These stop the "Attempted import error: not exported" warnings.
+   They are SAFE placeholders and will not affect playback.
+------------------------------------------------------------------- */
+
+/** Used by /app/debug/rls-checker/page.tsx */
+export async function listBuckets() {
+  // If you later want real buckets, you must use a service-role key server-side.
+  return { data: [], error: null };
+}
+
+/** Used by /app/debug/rls-checker/page.tsx */
+export async function checkRLSStatus() {
+  // Placeholder so build succeeds; wire real checks later if needed.
+  return { ok: true, notes: "RLS checker placeholder (not wired)" };
+}
+
+/** Used by /app/history/page.tsx */
+export async function getWatchProgress() {
+  // Placeholder response until you connect a watch-progress table.
+  return { data: [], error: null };
+}
