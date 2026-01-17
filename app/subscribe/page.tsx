@@ -1,4 +1,8 @@
+"use client";
+
 export default function SubscribePage() {
+  const STRIPE_LINK = "https://buy.stripe.com/7sY8wPekWcUp6IM6Rq6J314";
+
   return (
     <main
       style={{
@@ -45,35 +49,40 @@ export default function SubscribePage() {
           }}
         >
           <div style={{ fontSize: 22, fontWeight: 900, color: "#facc15" }}>
-            $90.99 / month
-          </div>
-          <div style={{ marginTop: 6, opacity: 0.9 }}>
-            Upgrade to keep access.
+            $9.99 / month
           </div>
 
-          <button
-            disabled
+          <div style={{ marginTop: 6, opacity: 0.9 }}>
+            Upgrade now to keep uninterrupted access.
+          </div>
+
+          <a
+            href={STRIPE_LINK}
+            target="_blank"
+            rel="noopener noreferrer"
             style={{
+              display: "block",
               marginTop: 14,
               width: "100%",
+              textAlign: "center",
               padding: "12px 14px",
               borderRadius: 999,
-              border: "none",
               background:
                 "linear-gradient(135deg, #FFD700 0%, #fbbf24 35%, #f97316 80%)",
               color: "#111827",
               fontWeight: 900,
               letterSpacing: 0.06,
               textTransform: "uppercase",
-              opacity: 0.65,
-              cursor: "not-allowed",
+              textDecoration: "none",
+              boxShadow: "0 10px 25px rgba(180,83,9,0.5)",
             }}
           >
-            Upgrade (Stripe setup next)
-          </button>
+            Upgrade Now
+          </a>
 
           <p style={{ marginTop: 10, fontSize: 13, opacity: 0.75 }}>
-            You’ll be able to upgrade here once Stripe is connected.
+            After upgrading, log out and log back in if access doesn’t refresh
+            immediately.
           </p>
         </div>
 
