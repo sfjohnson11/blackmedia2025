@@ -1,9 +1,16 @@
-// app/login/page.tsx
 "use client";
 
 import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+
+type Profile = {
+  id: string;
+  role: string | null;
+  email: string | null;
+  membership_status: string | null;
+  grace_until: string | null;
+};
 
 export default function LoginPage() {
   const router = useRouter();
@@ -14,15 +21,53 @@ export default function LoginPage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // IMPORTANT: your admin email from user_profiles
+  // Your admin email
   const ADMIN_EMAIL = "info@sfjohnsonconsulting.com";
+
+  function hasAccess(profile: Profile | null) {
+    // Paid users always allowed
+    const status = String(profile?.membership_status || "free").toLowerCase();
+    if (status === "paid") return true;
+
+    // Grace period allowed
+    if (profile?.grace_until) {
+      const graceUntil = new Date(profile.grace_until);
+      if (new Date() < graceUntil) return true;
+    }
+
+    return false;
+  }
+
+  async function loadProfile(userId: string, userEmail?: string | null) {
+    // Best: lookup by auth user id
+    const byId = await supabase
+      .from("user_profiles")
+      .select("id, role, email, membership_status, grace_until")
+      .eq("id", userId)
+      .maybeSingle();
+
+    if (byId.data) return byId.data as Profile;
+
+    // Fallback: lookup by email (in case your profile id mapping differs)
+    if (userEmail) {
+      const byEmail = await supabase
+        .from("user_profiles")
+        .select("id, role, email, membership_status, grace_until")
+        .eq("email", userEmail)
+        .maybeSingle();
+
+      if (byEmail.data) return byEmail.data as Profile;
+    }
+
+    return null;
+  }
 
   async function handleSignIn(e: FormEvent) {
     e.preventDefault();
     setLoading(true);
     setErrorMsg(null);
 
-    // Read ?redirect=/something (e.g. /admin)
+    // Optional: handle ?redirect=/something
     let redirectTo: string | null = null;
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
@@ -43,67 +88,49 @@ export default function LoginPage() {
 
     const user = data.user;
 
-    // 🔍 Load profile to determine role
-    let role: string | null = null;
+    // IMPORTANT: Approval in your system means they were invited,
+    // which means they should have a user_profiles row.
+    const profile = await loadProfile(user.id, user.email);
 
-    // 1) Try by ID first (best with RLS: auth.uid() = id)
-    const { data: profileById, error: idError } = await supabase
-      .from("user_profiles")
-      .select("id, role, email")
-      .eq("id", user.id)
-      .maybeSingle();
-
-    if (idError) {
-      console.error("Error loading profile by id:", idError.message);
+    // If no profile exists, they are NOT approved (they're only in sign_up_requests).
+    if (!profile) {
+      // prevent half-logged-in state
+      await supabase.auth.signOut();
+      router.push("/pending");
+      setLoading(false);
+      return;
     }
 
-    if (profileById?.role) {
-      role = String(profileById.role);
-    }
+    // Determine role
+    let role = profile.role ? String(profile.role) : null;
 
-    // 2) Fallback: try by email if still no role
-    if (!role && user.email) {
-      const { data: profileByEmail, error: emailError } = await supabase
-        .from("user_profiles")
-        .select("id, role, email")
-        .eq("email", user.email)
-        .maybeSingle();
-
-      if (emailError) {
-        console.error(
-          "Error loading profile by email (fallback):",
-          emailError.message
-        );
-      }
-
-      if (profileByEmail?.role) {
-        role = String(profileByEmail.role);
-      }
-    }
-
-    // 3) FINAL SAFETY: hard-wire your admin email as admin
-    if (!role && user.email === ADMIN_EMAIL) {
-      role = "admin";
-    }
+    // Safety: hard-wire admin email
+    if (!role && user.email === ADMIN_EMAIL) role = "admin";
 
     const finalRole = (role || "member").toLowerCase().trim();
 
-    // If URL requested a specific redirect (like /admin), honor it
+    // Honor ?redirect=
     if (redirectTo && redirectTo.startsWith("/")) {
       router.push(redirectTo);
       setLoading(false);
       return;
     }
 
-    // ✅ YOUR RULE:
-    // Admin → /admin
-    // Member → /app
+    // Admin route
     if (finalRole === "admin") {
       router.push("/admin");
-    } else {
-      router.push("/app");
+      setLoading(false);
+      return;
     }
 
+    // Member route with paywall
+    if (!hasAccess(profile)) {
+      router.push("/subscribe");
+      setLoading(false);
+      return;
+    }
+
+    router.push("/app");
     setLoading(false);
   }
 
@@ -142,6 +169,7 @@ export default function LoginPage() {
         >
           Black Truth TV Login
         </h1>
+
         <p
           style={{
             fontSize: 14,
@@ -230,7 +258,6 @@ export default function LoginPage() {
           </button>
         </form>
 
-        {/* 🔹 New: Request access link */}
         <p
           style={{
             marginTop: 12,
