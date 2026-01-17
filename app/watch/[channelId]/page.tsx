@@ -33,6 +33,11 @@ const CH21_ID_NUMERIC = 21;
 const YT_CH21 = "UCMkW239dyAxDyOFDP0D6p2g";
 const GRACE_MS = 120_000; // 2 minutes grace around start/end
 
+// 🔒 Feature flag (server env). Default OFF. Turn ON only after deploy + when ready to flip buckets.
+const USE_SIGNED_MEDIA =
+  typeof window !== "undefined" &&
+  String(process.env.NEXT_PUBLIC_USE_SIGNED_MEDIA || "").toLowerCase() === "true";
+
 // In-memory cache so we don't keep probing the same asset
 // key = `${channel_id}|${mp4_url}|${start_time}`
 const urlProbeCache = new Map<string, string | null>();
@@ -53,11 +58,7 @@ const LoadingOverlay = ({
       role="status"
     >
       <div className="flex items-center gap-3 px-4 py-2 rounded-full bg-black/60">
-        <svg
-          className="h-5 w-5 animate-spin"
-          viewBox="0 0 24 24"
-          aria-hidden="true"
-        >
+        <svg className="h-5 w-5 animate-spin" viewBox="0 0 24 24" aria-hidden="true">
           <circle
             cx="12"
             cy="12"
@@ -127,13 +128,9 @@ function parseUtcishMs(val: unknown): number {
       const mm = m[3] ?? "00";
       s = s.replace(/([+\-]\d{2})(:?)(\d{2})?$/, `${hh}:${mm}`);
       if (/([+\-]00:00)$/.test(s)) s = s.replace(/([+\-]00:00)$/, "Z");
-    } else if (
-      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(s)
-    ) {
+    } else if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(s)) {
       s += "Z"; // bare ISO → UTC
-    } else if (
-      /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(s)
-    ) {
+    } else if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(s)) {
       s = s.replace(" ", "T") + "Z"; // bare datetime → UTC
     }
   }
@@ -169,9 +166,7 @@ async function headOk(url: string, timeoutMs = 4500): Promise<boolean> {
 }
 
 /** Resolve candidate: HEAD pass first, then metadata probe with longer timeout */
-async function resolvePlayableUrl(
-  candidates: string[]
-): Promise<string | undefined> {
+async function resolvePlayableUrl(candidates: string[]): Promise<string | undefined> {
   for (const url of candidates) {
     const ok = await headOk(url, 4500);
     if (ok) return url;
@@ -230,6 +225,58 @@ async function resolvePlayableUrl(
   return undefined; // we'll still try the first candidate in the player if needed
 }
 
+/* ---------------- Signed URL helper (SAFE: never crashes watch page) ---------------- */
+function parseSupabaseStorageUrl(
+  url: string
+): { bucket: string; path: string } | null {
+  try {
+    const u = new URL(url);
+    const parts = u.pathname.split("/").filter(Boolean);
+
+    // /storage/v1/object/public/<bucket>/<path...>
+    const idx = parts.findIndex((p) => p === "object");
+    if (idx === -1) return null;
+
+    const bucket = parts[idx + 2];
+    const path = parts.slice(idx + 3).join("/");
+    if (!bucket || !path) return null;
+
+    return { bucket, path };
+  } catch {
+    return null;
+  }
+}
+
+async function getSignedUrlFromPublicUrl(publicUrl: string): Promise<string | null> {
+  // If feature flag off, don't attempt
+  if (!USE_SIGNED_MEDIA) return null;
+
+  // If it's not a Supabase storage URL, leave it alone
+  if (!publicUrl.includes("/storage/v1/object/")) return null;
+
+  const parsed = parseSupabaseStorageUrl(publicUrl);
+  if (!parsed) return null;
+
+  try {
+    const res = await fetch("/api/media/signed-url", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(parsed),
+    });
+
+    const j = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      return null;
+    }
+
+    return typeof j?.signedUrl === "string" ? j.signedUrl : null;
+  } catch {
+    return null;
+  }
+}
+/* ------------------------------------------------------------------- */
+
 export default function WatchPage() {
   const params = useParams();
   const router = useRouter();
@@ -239,13 +286,14 @@ export default function WatchPage() {
   const [channelDetails, setChannelDetails] = useState<Channel | null>(null);
   const [currentProgram, setCurrentProgram] =
     useState<ProgramWithSrc | null>(null);
-  const [upcomingPrograms, setUpcomingPrograms] = useState<ProgramWithSrc[]>(
-    []
-  );
+  const [upcomingPrograms, setUpcomingPrograms] = useState<ProgramWithSrc[]>([]);
   const [videoPlayerKey, setVideoPlayerKey] = useState<number>(Date.now());
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isResolvingSrc, setIsResolvingSrc] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+
+  // 🔹 Signed src state (does NOT affect anything until buckets are private / flag enabled)
+  const [signedVideoSrc, setSignedVideoSrc] = useState<string | null>(null);
 
   // 🔹 Chat state
   const [chatRoomId, setChatRoomId] = useState<string | null>(null);
@@ -282,8 +330,7 @@ export default function WatchPage() {
           if (!details) setError("Could not load channel details.");
         }
       } catch (e: any) {
-        if (!cancelled)
-          setError(e?.message || "Error loading channel details.");
+        if (!cancelled) setError(e?.message || "Error loading channel details.");
       } finally {
         if (!cancelled) setIsLoading(false);
       }
@@ -340,11 +387,21 @@ export default function WatchPage() {
 
         // Resolve a playable URL (use cache first)
         let resolvedSrc = urlProbeCache.get(cacheKey) ?? undefined;
+
         if (resolvedSrc === undefined) {
           const candidates = getCandidateUrlsForProgram(programToSet);
-          // Try to resolve; if still undefined, fall back to first candidate (play optimistically)
-          resolvedSrc =
-            (await resolvePlayableUrl(candidates)) ?? candidates[0] ?? null;
+
+          // ✅ IMPORTANT CHANGE:
+          // If you turn on signed media + buckets are private, probing HEAD/metadata will fail.
+          // So we pick the first candidate and later convert it to a signed URL for playback.
+          if (USE_SIGNED_MEDIA) {
+            resolvedSrc = candidates[0] ?? null;
+          } else {
+            // Normal current behavior (public buckets)
+            resolvedSrc =
+              (await resolvePlayableUrl(candidates)) ?? candidates[0] ?? null;
+          }
+
           urlProbeCache.set(cacheKey, resolvedSrc);
         }
 
@@ -471,6 +528,30 @@ export default function WatchPage() {
     isResolvingSrc,
   ]);
 
+  // 🔹 When currentProgram._resolved_src changes, attempt to sign it (only when flag enabled)
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      const publicUrl = currentProgram?._resolved_src || null;
+
+      // Clear when program changes
+      setSignedVideoSrc(null);
+
+      if (!publicUrl) return;
+      if (!USE_SIGNED_MEDIA) return;
+
+      const signed = await getSignedUrlFromPublicUrl(publicUrl);
+      if (!cancelled && signed) {
+        setSignedVideoSrc(signed);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentProgram?._resolved_src]);
+
   // 🔹 Load chat room for this channel
   useEffect(() => {
     if (channelId == null) return;
@@ -589,7 +670,8 @@ export default function WatchPage() {
   };
 
   // Player & render
-  const videoSrc = currentProgram?._resolved_src; // use the probed or fallback candidate
+  const videoSrc = currentProgram?._resolved_src; // current behavior
+  const finalVideoSrc = signedVideoSrc || videoSrc; // ✅ only change that matters
   const posterSrc =
     (currentProgram as any)?.poster_url ||
     (channelDetails as any)?.logo_url ||
@@ -627,9 +709,7 @@ export default function WatchPage() {
       />
     );
   } else if (error) {
-    content = (
-      <p className="text-red-400 p-4 text-center">Error: {error}</p>
-    );
+    content = <p className="text-red-400 p-4 text-center">Error: {error}</p>;
   } else if (isLoading && !currentProgram) {
     content = (
       <div className="flex flex-col items-center justify-center h-full">
@@ -637,12 +717,12 @@ export default function WatchPage() {
         <p>Loading Channel…</p>
       </div>
     );
-  } else if (currentProgram && videoSrc) {
+  } else if (currentProgram && finalVideoSrc) {
     // Show the player if we have a URL
     content = (
       <VideoPlayer
         key={videoPlayerKey}
-        src={videoSrc}
+        src={finalVideoSrc}
         poster={posterSrc}
         isStandby={isStandby}
         programTitle={currentProgram?.title}
@@ -650,7 +730,6 @@ export default function WatchPage() {
       />
     );
   } else if (isResolvingSrc) {
-    // Only show spinner if we don't yet have any playable URL
     content = (
       <div className="flex flex-col items-center justify-center h-full">
         <Loader2 className="h-10 w-10 animate-spin text-red-500 mb-2" />
@@ -659,9 +738,7 @@ export default function WatchPage() {
     );
   } else {
     content = (
-      <p className="text-gray-400 p-4 text-center">
-        Initializing channel…
-      </p>
+      <p className="text-gray-400 p-4 text-center">Initializing channel…</p>
     );
   }
 
@@ -686,18 +763,12 @@ export default function WatchPage() {
       <div className="relative w-full aspect-video bg-black flex items-center justify-center">
         {content}
         <LoadingOverlay
-          visible={Boolean(
-            (isLoading && !currentProgram) || isResolvingSrc
-          )}
+          visible={Boolean((isLoading && !currentProgram) || isResolvingSrc)}
           label={
-            isLoading && !currentProgram
-              ? "Loading channel…"
-              : "Preparing stream…"
+            isLoading && !currentProgram ? "Loading channel…" : "Preparing stream…"
           }
         />
-        <MobileHint
-          show={!isResolvingSrc && Boolean(currentProgram?._resolved_src)}
-        />
+        <MobileHint show={!isResolvingSrc && Boolean(currentProgram?._resolved_src)} />
       </div>
 
       {/* Below the player */}
@@ -714,16 +785,11 @@ export default function WatchPage() {
               </p>
               {!isStandby && currentProgram.start_time && (
                 <p className="text-sm text-gray-400">
-                  Scheduled Start:{" "}
-                  {new Date(
-                    currentProgram.start_time
-                  ).toLocaleString()}
+                  Scheduled Start: {new Date(currentProgram.start_time).toLocaleString()}
                 </p>
               )}
               {currentProgram?.description && (
-                <p className="text-xs text-gray-300 mt-1">
-                  {currentProgram.description}
-                </p>
+                <p className="text-xs text-gray-300 mt-1">{currentProgram.description}</p>
               )}
             </div>
 
@@ -734,20 +800,15 @@ export default function WatchPage() {
                 </h3>
                 <ul className="text-sm text-gray-300 space-y-1">
                   {upcomingPrograms.map((p, idx) => (
-                    <li
-                      key={`${p.channel_id}-${p.start_time}-${p.title}-${idx}`}
-                    >
+                    <li key={`${p.channel_id}-${p.start_time}-${p.title}-${idx}`}>
                       <span className="font-medium">{p.title}</span>{" "}
                       <span className="text-gray-400">
                         —{" "}
-                        {new Date(p.start_time!).toLocaleTimeString(
-                          "en-US",
-                          {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                            timeZoneName: "short",
-                          }
-                        )}
+                        {new Date(p.start_time!).toLocaleTimeString("en-US", {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          timeZoneName: "short",
+                        })}
                       </span>
                     </li>
                   ))}
@@ -773,9 +834,7 @@ export default function WatchPage() {
             )}
           </div>
 
-          {chatError && (
-            <p className="text-xs text-red-400 mb-2">{chatError}</p>
-          )}
+          {chatError && <p className="text-xs text-red-400 mb-2">{chatError}</p>}
 
           {!chatRoomId && !chatError && !chatLoading && (
             <p className="text-xs text-gray-400">
@@ -796,29 +855,19 @@ export default function WatchPage() {
                   chatMessages.map((m) => (
                     <div key={m.id} className="mb-1.5">
                       <span className="text-[10px] text-gray-500 mr-1">
-                        {new Date(m.created_at).toLocaleTimeString(
-                          "en-US",
-                          {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          }
-                        )}
+                        {new Date(m.created_at).toLocaleTimeString("en-US", {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
                       </span>
-                      <span className="font-semibold text-amber-300 mr-1">
-                        Member
-                      </span>
-                      <span className="text-gray-100 break-words">
-                        {m.message}
-                      </span>
+                      <span className="font-semibold text-amber-300 mr-1">Member</span>
+                      <span className="text-gray-100 break-words">{m.message}</span>
                     </div>
                   ))
                 )}
               </div>
 
-              <form
-                onSubmit={handleSendMessage}
-                className="flex gap-2 items-center"
-              >
+              <form onSubmit={handleSendMessage} className="flex gap-2 items-center">
                 <input
                   type="text"
                   value={newMessage}
