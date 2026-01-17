@@ -5,20 +5,32 @@ import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 
-function hasAccess(profile: any) {
-  // paid users allowed
+// Feature flag (so nothing breaks if you deploy before flipping buckets)
+function enabled() {
+  return (
+    String(process.env.USE_SIGNED_MEDIA || "false").toLowerCase() === "true"
+  );
+}
+
+function hasPaidAccess(profile: any) {
   const status = String(profile?.membership_status || "free").toLowerCase();
   if (status === "paid") return true;
 
-  // grace period allowed
+  // Optional grace support
   if (profile?.grace_until) {
     const graceUntil = new Date(profile.grace_until);
     if (new Date() < graceUntil) return true;
   }
+
   return false;
 }
 
 export async function POST(req: Request) {
+  // If flag off, act like route doesn't exist
+  if (!enabled()) {
+    return NextResponse.json({ error: "Signed media disabled" }, { status: 404 });
+  }
+
   try {
     const { bucket, path } = await req.json();
 
@@ -26,7 +38,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Missing bucket/path" }, { status: 400 });
     }
 
-    // 1) Must be logged in
+    // Must be logged in
     const supabase = createRouteHandlerClient({ cookies });
     const { data: userData, error: userErr } = await supabase.auth.getUser();
 
@@ -34,7 +46,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
     }
 
-    // 2) Load profile for access control
+    // Paywall check (admin bypass)
     const { data: profile, error: profErr } = await supabase
       .from("user_profiles")
       .select("id, role, membership_status, grace_until")
@@ -48,11 +60,11 @@ export async function POST(req: Request) {
     const role = String(profile?.role || "").toLowerCase().trim();
     const isAdmin = role === "admin";
 
-    if (!isAdmin && !hasAccess(profile)) {
+    if (!isAdmin && !hasPaidAccess(profile)) {
       return NextResponse.json({ error: "Payment required" }, { status: 402 });
     }
 
-    // 3) Create signed URL using service role (server-only)
+    // Sign using service role
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
@@ -67,10 +79,10 @@ export async function POST(req: Request) {
       auth: { persistSession: false },
     });
 
-    // 5-minute expiration stops sharing
+    // Short expiry = sharing dies quickly
     const { data, error } = await admin.storage
       .from(bucket)
-      .createSignedUrl(path, 60 * 5);
+      .createSignedUrl(path, 60 * 5); // 5 minutes
 
     if (error || !data?.signedUrl) {
       return NextResponse.json(
@@ -81,7 +93,10 @@ export async function POST(req: Request) {
 
     return new NextResponse(JSON.stringify({ signedUrl: data.signedUrl }), {
       status: 200,
-      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+      },
     });
   } catch (e: any) {
     return NextResponse.json(
