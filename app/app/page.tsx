@@ -1,7 +1,7 @@
 // app/app/page.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
@@ -12,14 +12,63 @@ type Summary = {
 
 const STRIPE_UPGRADE_URL = "https://buy.stripe.com/7sY8wPekWcUp6IM6Rq6J314";
 
-export default function AppPage() {
-  const supabase = createClientComponentClient();
-
-  // ✅ read paywall flag from middleware redirect
+/**
+ * ✅ Suspense-safe banner reader for Next 15:
+ * useSearchParams MUST be inside a Suspense boundary.
+ */
+function PaywallBanner() {
   const searchParams = useSearchParams();
   const isPaywall = searchParams.get("paywall") === "1";
-  const attempted = searchParams.get("redirect"); // where they tried to go
+  const attempted = searchParams.get("redirect");
 
+  if (!isPaywall) return null;
+
+  return (
+    <section className="rounded-2xl border border-red-500/30 bg-gradient-to-br from-red-500/10 via-slate-950 to-black px-5 py-5 md:px-6 md:py-6 shadow-lg">
+      <p className="text-xs font-semibold uppercase tracking-wide text-red-300/90">
+        Access blocked — membership required
+      </p>
+
+      <h2 className="text-2xl font-extrabold tracking-tight mt-1">
+        Upgrade to keep watching
+      </h2>
+
+      <p className="text-sm text-slate-200 mt-2 max-w-3xl">
+        Black Truth TV is now a private, member-supported network. To watch
+        channels, on-demand specials, and Freedom School content, you’ll need an
+        active membership.
+      </p>
+
+      {attempted?.startsWith("/") && (
+        <p className="text-xs text-slate-400 mt-2">
+          You tried to access:{" "}
+          <span className="text-slate-200 font-semibold">{attempted}</span>
+        </p>
+      )}
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        <a href={STRIPE_UPGRADE_URL}>
+          <button className="rounded-full border border-amber-500/50 bg-amber-500/90 px-4 py-2 text-xs font-semibold text-black shadow hover:bg-amber-400 transition">
+            Upgrade — $9.99/month
+          </button>
+        </a>
+
+        <Link href="/request-access">
+          <button className="rounded-full border border-slate-500/70 bg-slate-800/90 px-4 py-2 text-xs font-semibold text-slate-100 shadow hover:bg-slate-700 transition">
+            Need help? Request access
+          </button>
+        </Link>
+      </div>
+
+      <p className="text-xs text-slate-500 mt-3">
+        After upgrading, log out and log back in so your access updates.
+      </p>
+    </section>
+  );
+}
+
+export default function AppPage() {
+  const supabase = createClientComponentClient();
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loadingSummary, setLoadingSummary] = useState(true);
 
@@ -61,49 +110,10 @@ export default function AppPage() {
           </p>
         </section>
 
-        {/* ✅ PAYWALL BANNER (only shows when middleware redirects here with ?paywall=1) */}
-        {isPaywall && (
-          <section className="rounded-2xl border border-red-500/30 bg-gradient-to-br from-red-500/10 via-slate-950 to-black px-5 py-5 md:px-6 md:py-6 shadow-lg">
-            <p className="text-xs font-semibold uppercase tracking-wide text-red-300/90">
-              Access blocked — membership required
-            </p>
-
-            <h2 className="text-2xl font-extrabold tracking-tight mt-1">
-              Upgrade to keep watching
-            </h2>
-
-            <p className="text-sm text-slate-200 mt-2 max-w-3xl">
-              Black Truth TV is now a private, member-supported network. To watch
-              channels, on-demand specials, and Freedom School content, you’ll need
-              an active membership.
-            </p>
-
-            {attempted?.startsWith("/") && (
-              <p className="text-xs text-slate-400 mt-2">
-                You tried to access:{" "}
-                <span className="text-slate-200 font-semibold">{attempted}</span>
-              </p>
-            )}
-
-            <div className="mt-4 flex flex-wrap gap-2">
-              <a href={STRIPE_UPGRADE_URL}>
-                <button className="rounded-full border border-amber-500/50 bg-amber-500/90 px-4 py-2 text-xs font-semibold text-black shadow hover:bg-amber-400 transition">
-                  Upgrade — $9.99/month
-                </button>
-              </a>
-
-              <Link href="/request-access">
-                <button className="rounded-full border border-slate-500/70 bg-slate-800/90 px-4 py-2 text-xs font-semibold text-slate-100 shadow hover:bg-slate-700 transition">
-                  Need help? Request access
-                </button>
-              </Link>
-            </div>
-
-            <p className="text-xs text-slate-500 mt-3">
-              After upgrading, log out and log back in so your access updates.
-            </p>
-          </section>
-        )}
+        {/* ✅ Paywall banner (Suspense-safe in Next 15) */}
+        <Suspense fallback={null}>
+          <PaywallBanner />
+        </Suspense>
 
         {/* TODAY SUMMARY BAR */}
         <section className="rounded-2xl border border-slate-800 bg-slate-900/80 px-4 py-3 md:px-6 md:py-4 shadow-lg flex flex-col md:flex-row md:items-center md:justify-between gap-3">
@@ -183,8 +193,8 @@ export default function AppPage() {
                 </span>
               </div>
               <p className="text-sm text-slate-200 mb-3">
-                Watch lessons, listen to lectures, and download study packets from the
-                Freedom School library.
+                Watch lessons, listen to lectures, and download study packets from
+                the Freedom School library.
               </p>
               <p className="text-xs text-slate-400">
                 Video, audio, and PDF content all in one virtual classroom.
@@ -205,8 +215,8 @@ export default function AppPage() {
                 </span>
               </div>
               <p className="text-sm text-slate-200 mb-3">
-                Binge full series, documentaries, and special features without waiting
-                for the live schedule.
+                Binge full series, documentaries, and special features without
+                waiting for the live schedule.
               </p>
               <p className="text-xs text-slate-400">
                 Perfect when you want to go deep on one topic.
@@ -227,11 +237,12 @@ export default function AppPage() {
                 </span>
               </div>
               <p className="text-sm text-slate-200 mb-3">
-                Go to the Breaking News Hub for Channel 21 — watch the live stream and
-                see today&apos;s top stories in one place.
+                Go to the Breaking News Hub for Channel 21 — watch the live stream
+                and see today&apos;s top stories in one place.
               </p>
               <p className="text-xs text-slate-400">
-                Channel 21 is your live news window. Click here to enter the news hub.
+                Channel 21 is your live news window. Click here to enter the news
+                hub.
               </p>
             </div>
           </Link>
@@ -253,7 +264,8 @@ export default function AppPage() {
                 School lessons, and upcoming specials with other approved members.
               </p>
               <p className="text-xs text-slate-400">
-                Chat is moderated and available only to authorized community members.
+                Chat is moderated and available only to authorized community
+                members.
               </p>
             </div>
           </Link>
