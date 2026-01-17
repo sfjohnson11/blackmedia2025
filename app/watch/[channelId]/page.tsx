@@ -8,12 +8,12 @@ import {
   type ReactNode,
   type FormEvent,
 } from "react";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import VideoPlayer from "@/components/video-player";
 import {
   getCandidateUrlsForProgram,
   getVideoUrlForProgram,
   fetchChannelById,
-  supabase,
   STANDBY_PLACEHOLDER_ID,
 } from "@/lib/supabase";
 import type { Channel, Program } from "@/types";
@@ -33,16 +33,17 @@ const CH21_ID_NUMERIC = 21;
 const YT_CH21 = "UCMkW239dyAxDyOFDP0D6p2g";
 const GRACE_MS = 120_000; // 2 minutes grace around start/end
 
-// 🔒 Feature flag (server env). Default OFF. Turn ON only after deploy + when ready to flip buckets.
+// 🔒 Feature flag (client env)
 const USE_SIGNED_MEDIA =
   typeof window !== "undefined" &&
-  String(process.env.NEXT_PUBLIC_USE_SIGNED_MEDIA || "").toLowerCase() === "true";
+  String(process.env.NEXT_PUBLIC_USE_SIGNED_MEDIA || "")
+    .toLowerCase()
+    .trim() === "true";
 
 // In-memory cache so we don't keep probing the same asset
-// key = `${channel_id}|${mp4_url}|${start_time}`
 const urlProbeCache = new Map<string, string | null>();
 
-/* ---------------- UI overlays (pure UI; safe to add) ---------------- */
+/* ---------------- UI overlays ---------------- */
 const LoadingOverlay = ({
   visible,
   label = "Preparing stream…",
@@ -89,7 +90,7 @@ const MobileHint = ({ show }: { show: boolean }) => {
     </div>
   );
 };
-/* ------------------------------------------------------------------- */
+/* --------------------------------------------- */
 
 /* ---------- Time & duration helpers ---------- */
 function asSeconds(v: unknown): number {
@@ -107,21 +108,16 @@ function asSeconds(v: unknown): number {
   return Number.isFinite(num) && num > 0 ? Math.round(num) : 0;
 }
 
-/** Robust UTC parser — accepts common Postgres/Supabase variants and coerces to UTC */
 function parseUtcishMs(val: unknown): number {
   if (val == null) return NaN;
   let s = String(val).trim();
   if (!s) return NaN;
 
-  // "YYYY-MM-DD HH:mm:ss" -> "YYYY-MM-DDTHH:mm:ss"
-  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(s)) {
-    s = s.replace(" ", "T");
-  }
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(s)) s = s.replace(" ", "T");
 
   if (/[zZ]$/.test(s)) {
     s = s.replace(/[zZ]$/, "Z");
   } else {
-    // Normalize offsets: +00, +0000, +00:00, +07, +0730 → "+00:00"/"+07:30"
     const m = /([+\-]\d{2})(:?)(\d{2})?$/.exec(s);
     if (m) {
       const hh = m[1];
@@ -129,9 +125,9 @@ function parseUtcishMs(val: unknown): number {
       s = s.replace(/([+\-]\d{2})(:?)(\d{2})?$/, `${hh}:${mm}`);
       if (/([+\-]00:00)$/.test(s)) s = s.replace(/([+\-]00:00)$/, "Z");
     } else if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(s)) {
-      s += "Z"; // bare ISO → UTC
+      s += "Z";
     } else if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(s)) {
-      s = s.replace(" ", "T") + "Z"; // bare datetime → UTC
+      s = s.replace(" ", "T") + "Z";
     }
   }
 
@@ -147,7 +143,6 @@ function isActiveProgram(p: Program, nowMs: number): boolean {
   return startMs - GRACE_MS <= nowMs && nowMs < endMs + GRACE_MS;
 }
 
-/** Quick HEAD check; ok = fast positive signal, but not required */
 async function headOk(url: string, timeoutMs = 4500): Promise<boolean> {
   try {
     const ctrl = new AbortController();
@@ -161,18 +156,16 @@ async function headOk(url: string, timeoutMs = 4500): Promise<boolean> {
     clearTimeout(to);
     return res.ok;
   } catch {
-    return false; // CORS/timeout doesn't prove it's missing
+    return false;
   }
 }
 
-/** Resolve candidate: HEAD pass first, then metadata probe with longer timeout */
 async function resolvePlayableUrl(candidates: string[]): Promise<string | undefined> {
   for (const url of candidates) {
     const ok = await headOk(url, 4500);
     if (ok) return url;
   }
   for (const url of candidates) {
-    // eslint-disable-next-line no-await-in-loop
     const ok = await new Promise<boolean>((resolve) => {
       const v = document.createElement("video");
       v.muted = true;
@@ -196,7 +189,7 @@ async function resolvePlayableUrl(candidates: string[]): Promise<string | undefi
           cleanup();
           resolve(false);
         }
-      }, 12_000); // allow slow storage
+      }, 12_000);
 
       v.onloadedmetadata = () => {
         if (!settled) {
@@ -222,18 +215,14 @@ async function resolvePlayableUrl(candidates: string[]): Promise<string | undefi
     });
     if (ok) return url;
   }
-  return undefined; // we'll still try the first candidate in the player if needed
+  return undefined;
 }
 
-/* ---------------- Signed URL helper (SAFE: never crashes watch page) ---------------- */
-function parseSupabaseStorageUrl(
-  url: string
-): { bucket: string; path: string } | null {
+/* ---------------- Signed URL helper ---------------- */
+function parseSupabaseStorageUrl(url: string): { bucket: string; path: string } | null {
   try {
     const u = new URL(url);
     const parts = u.pathname.split("/").filter(Boolean);
-
-    // /storage/v1/object/public/<bucket>/<path...>
     const idx = parts.findIndex((p) => p === "object");
     if (idx === -1) return null;
 
@@ -248,10 +237,7 @@ function parseSupabaseStorageUrl(
 }
 
 async function getSignedUrlFromPublicUrl(publicUrl: string): Promise<string | null> {
-  // If feature flag off, don't attempt
   if (!USE_SIGNED_MEDIA) return null;
-
-  // If it's not a Supabase storage URL, leave it alone
   if (!publicUrl.includes("/storage/v1/object/")) return null;
 
   const parsed = parseSupabaseStorageUrl(publicUrl);
@@ -265,37 +251,34 @@ async function getSignedUrlFromPublicUrl(publicUrl: string): Promise<string | nu
     });
 
     const j = await res.json().catch(() => ({}));
-
-    if (!res.ok) {
-      return null;
-    }
+    if (!res.ok) return null;
 
     return typeof j?.signedUrl === "string" ? j.signedUrl : null;
   } catch {
     return null;
   }
 }
-/* ------------------------------------------------------------------- */
+/* --------------------------------------------- */
 
 export default function WatchPage() {
+  // ✅ Use the logged-in session client (fixes chat + any RLS-protected reads)
+  const supabase = createClientComponentClient();
+
   const params = useParams();
   const router = useRouter();
   const channelIdString = params.channelId as string;
 
   const [channelId, setChannelId] = useState<number | null>(null);
   const [channelDetails, setChannelDetails] = useState<Channel | null>(null);
-  const [currentProgram, setCurrentProgram] =
-    useState<ProgramWithSrc | null>(null);
+  const [currentProgram, setCurrentProgram] = useState<ProgramWithSrc | null>(null);
   const [upcomingPrograms, setUpcomingPrograms] = useState<ProgramWithSrc[]>([]);
   const [videoPlayerKey, setVideoPlayerKey] = useState<number>(Date.now());
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isResolvingSrc, setIsResolvingSrc] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
-  // 🔹 Signed src state (does NOT affect anything until buckets are private / flag enabled)
   const [signedVideoSrc, setSignedVideoSrc] = useState<string | null>(null);
 
-  // 🔹 Chat state
   const [chatRoomId, setChatRoomId] = useState<string | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatLoading, setChatLoading] = useState<boolean>(false);
@@ -305,7 +288,6 @@ export default function WatchPage() {
 
   const getNowMs = useCallback(() => Date.now(), []);
 
-  // Parse channel id (programs.channel_id is int8 → number)
   useEffect(() => {
     const n = Number.parseInt(channelIdString || "", 10);
     if (!Number.isInteger(n)) {
@@ -317,14 +299,14 @@ export default function WatchPage() {
     }
   }, [channelIdString]);
 
-  // Load channel details (channels.id is TEXT → pass string)
   useEffect(() => {
     if (channelId == null) return;
     let cancelled = false;
+
     (async () => {
       setIsLoading(true);
       try {
-        const details = await fetchChannelById(supabase, String(channelId));
+        const details = await fetchChannelById(supabase as any, String(channelId));
         if (!cancelled) {
           setChannelDetails(details);
           if (!details) setError("Could not load channel details.");
@@ -335,17 +317,16 @@ export default function WatchPage() {
         if (!cancelled) setIsLoading(false);
       }
     })();
+
     return () => {
       cancelled = true;
     };
-  }, [channelId]);
+  }, [channelId, supabase]);
 
-  // Fetch current program (with probing + cache + stickiness)
   const fetchCurrentProgram = useCallback(
     async (numericChannelId: number) => {
       const nowMs = getNowMs();
 
-      // EARLY RETURN: if still within current program window and we have a good URL, do nothing
       if (
         currentProgram &&
         isActiveProgram(currentProgram, nowMs) &&
@@ -355,7 +336,7 @@ export default function WatchPage() {
       }
 
       try {
-        setIsResolvingSrc(true); // show resolving overlay
+        setIsResolvingSrc(true);
 
         const { data, error: dbError } = await supabase
           .from("programs")
@@ -368,7 +349,6 @@ export default function WatchPage() {
         const rows = (data || []) as Program[];
         const active = rows.find((p) => isActiveProgram(p, nowMs));
 
-        // Choose program (active or standby)
         let programToSet: Program = active
           ? { ...active, channel_id: numericChannelId }
           : ({
@@ -382,22 +362,16 @@ export default function WatchPage() {
               poster_url: (channelDetails as any)?.logo_url || null,
             } as unknown as Program);
 
-        // Build a cache key specific to this asset instance
         const cacheKey = `${programToSet.channel_id}|${programToSet.mp4_url}|${programToSet.start_time}`;
 
-        // Resolve a playable URL (use cache first)
         let resolvedSrc = urlProbeCache.get(cacheKey) ?? undefined;
 
         if (resolvedSrc === undefined) {
           const candidates = getCandidateUrlsForProgram(programToSet);
 
-          // ✅ IMPORTANT CHANGE:
-          // If you turn on signed media + buckets are private, probing HEAD/metadata will fail.
-          // So we pick the first candidate and later convert it to a signed URL for playback.
           if (USE_SIGNED_MEDIA) {
             resolvedSrc = candidates[0] ?? null;
           } else {
-            // Normal current behavior (public buckets)
             resolvedSrc =
               (await resolvePlayableUrl(candidates)) ?? candidates[0] ?? null;
           }
@@ -405,7 +379,6 @@ export default function WatchPage() {
           urlProbeCache.set(cacheKey, resolvedSrc);
         }
 
-        // If we have no candidates at all, or resolution failed → use this channel's standby
         if (!resolvedSrc) {
           programToSet = {
             id: STANDBY_PLACEHOLDER_ID as any,
@@ -417,6 +390,7 @@ export default function WatchPage() {
             start_time: new Date().toISOString(),
             poster_url: (channelDetails as any)?.logo_url || null,
           } as unknown as Program;
+
           resolvedSrc = getVideoUrlForProgram(programToSet) || "";
         }
 
@@ -454,28 +428,29 @@ export default function WatchPage() {
         setIsResolvingSrc(false);
       }
     },
-    [channelDetails, getNowMs, currentProgram]
+    [channelDetails, currentProgram, getNowMs, supabase]
   );
 
-  // Fetch next 6 upcoming for this channel
-  const fetchUpcoming = useCallback(async (numericChannelId: number) => {
-    try {
-      const nowIso = new Date().toISOString();
-      const { data, error } = await supabase
-        .from("programs")
-        .select("channel_id,title,mp4_url,start_time,duration")
-        .eq("channel_id", numericChannelId)
-        .gt("start_time", nowIso)
-        .order("start_time", { ascending: true })
-        .limit(6);
+  const fetchUpcoming = useCallback(
+    async (numericChannelId: number) => {
+      try {
+        const nowIso = new Date().toISOString();
+        const { data, error } = await supabase
+          .from("programs")
+          .select("channel_id,title,mp4_url,start_time,duration")
+          .eq("channel_id", numericChannelId)
+          .gt("start_time", nowIso)
+          .order("start_time", { ascending: true })
+          .limit(6);
 
-      if (!error && data) setUpcomingPrograms(data as ProgramWithSrc[]);
-    } catch (e) {
-      console.warn("Error loading upcoming programs", e);
-    }
-  }, []);
+        if (!error && data) setUpcomingPrograms(data as ProgramWithSrc[]);
+      } catch (e) {
+        console.warn("Error loading upcoming programs", e);
+      }
+    },
+    [supabase]
+  );
 
-  // Polling: wake near expected end, otherwise every 60s; don't poll while probing
   useEffect(() => {
     if (channelId == null) return;
     if (channelId === CH21_ID_NUMERIC) {
@@ -487,12 +462,11 @@ export default function WatchPage() {
 
     const refetch = () => {
       if (document.visibilityState !== "visible") return;
-      if (isResolvingSrc) return; // do not refetch while probing
+      if (isResolvingSrc) return;
       fetchCurrentProgram(channelId);
       fetchUpcoming(channelId);
     };
 
-    // initial
     refetch();
 
     const scheduleNext = () => {
@@ -501,7 +475,7 @@ export default function WatchPage() {
         const d = asSeconds(currentProgram.duration);
         if (Number.isFinite(s) && d > 0) {
           const endMs = s + d * 1000;
-          const wakeIn = Math.max(5_000, endMs - Date.now() - 5_000); // 5s before end
+          const wakeIn = Math.max(5_000, endMs - Date.now() - 5_000);
           timer = setTimeout(() => {
             refetch();
             scheduleNext();
@@ -509,7 +483,7 @@ export default function WatchPage() {
           return;
         }
       }
-      // no active program → poll in 60s
+
       timer = setTimeout(() => {
         refetch();
         scheduleNext();
@@ -520,31 +494,20 @@ export default function WatchPage() {
     return () => {
       if (timer) clearTimeout(timer);
     };
-  }, [
-    channelId,
-    currentProgram,
-    fetchCurrentProgram,
-    fetchUpcoming,
-    isResolvingSrc,
-  ]);
+  }, [channelId, currentProgram, fetchCurrentProgram, fetchUpcoming, isResolvingSrc]);
 
-  // 🔹 When currentProgram._resolved_src changes, attempt to sign it (only when flag enabled)
   useEffect(() => {
     let cancelled = false;
 
     (async () => {
       const publicUrl = currentProgram?._resolved_src || null;
-
-      // Clear when program changes
       setSignedVideoSrc(null);
 
       if (!publicUrl) return;
       if (!USE_SIGNED_MEDIA) return;
 
       const signed = await getSignedUrlFromPublicUrl(publicUrl);
-      if (!cancelled && signed) {
-        setSignedVideoSrc(signed);
-      }
+      if (!cancelled && signed) setSignedVideoSrc(signed);
     })();
 
     return () => {
@@ -552,7 +515,7 @@ export default function WatchPage() {
     };
   }, [currentProgram?._resolved_src]);
 
-  // 🔹 Load chat room for this channel
+  // ✅ FIXED: load chat room using logged-in supabase client
   useEffect(() => {
     if (channelId == null) return;
     let cancelled = false;
@@ -560,30 +523,29 @@ export default function WatchPage() {
     (async () => {
       setChatLoading(true);
       setChatError(null);
+
       try {
         const { data, error } = await supabase
           .from("chat_rooms")
           .select("id")
-          .eq("channel_id", channelId)
-          .limit(1)
+          .eq("channel_id", channelId) // matches your table output (1..31)
           .maybeSingle();
 
         if (error) throw error;
 
-        if (!data) {
+        if (!data?.id) {
           if (!cancelled) {
             setChatRoomId(null);
-            setChatError("Chat is not enabled for this channel yet.");
+            setChatError("Chat room missing for this channel (unexpected).");
           }
         } else {
-          if (!cancelled) {
-            setChatRoomId(data.id as string);
-          }
+          if (!cancelled) setChatRoomId(data.id as string);
         }
       } catch (e: any) {
         if (!cancelled) {
           console.error("Error loading chat room:", e);
-          setChatError("Could not load chat room.");
+          setChatRoomId(null);
+          setChatError(e?.message || "Could not load chat room.");
         }
       } finally {
         if (!cancelled) setChatLoading(false);
@@ -593,9 +555,8 @@ export default function WatchPage() {
     return () => {
       cancelled = true;
     };
-  }, [channelId]);
+  }, [channelId, supabase]);
 
-  // 🔹 Load chat messages (simple polling)
   useEffect(() => {
     if (!chatRoomId) return;
     let cancelled = false;
@@ -609,9 +570,7 @@ export default function WatchPage() {
           .order("created_at", { ascending: true });
 
         if (error) throw error;
-        if (!cancelled) {
-          setChatMessages((data || []) as ChatMessage[]);
-        }
+        if (!cancelled) setChatMessages((data || []) as ChatMessage[]);
       } catch (e) {
         if (!cancelled) {
           console.error("Error loading chat messages:", e);
@@ -627,9 +586,8 @@ export default function WatchPage() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [chatRoomId]);
+  }, [chatRoomId, supabase]);
 
-  // 🔹 Send a message
   const handleSendMessage = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!newMessage.trim() || !chatRoomId || sending) return;
@@ -669,13 +627,10 @@ export default function WatchPage() {
     }
   };
 
-  // Player & render
-  const videoSrc = currentProgram?._resolved_src; // current behavior
-  const finalVideoSrc = signedVideoSrc || videoSrc; // ✅ only change that matters
+  const videoSrc = currentProgram?._resolved_src;
+  const finalVideoSrc = signedVideoSrc || videoSrc;
   const posterSrc =
-    (currentProgram as any)?.poster_url ||
-    (channelDetails as any)?.logo_url ||
-    undefined;
+    (currentProgram as any)?.poster_url || (channelDetails as any)?.logo_url || undefined;
   const isStandby = (currentProgram as any)?.id === STANDBY_PLACEHOLDER_ID;
 
   const handleEnded = useCallback(() => {
@@ -718,7 +673,6 @@ export default function WatchPage() {
       </div>
     );
   } else if (currentProgram && finalVideoSrc) {
-    // Show the player if we have a URL
     content = (
       <VideoPlayer
         key={videoPlayerKey}
@@ -737,9 +691,7 @@ export default function WatchPage() {
       </div>
     );
   } else {
-    content = (
-      <p className="text-gray-400 p-4 text-center">Initializing channel…</p>
-    );
+    content = <p className="text-gray-400 p-4 text-center">Initializing channel…</p>;
   }
 
   return (
@@ -753,35 +705,27 @@ export default function WatchPage() {
           <ChevronLeft className="h-6 w-6" />
         </button>
         <h1 className="text-xl font-semibold truncate px-2">
-          {channelDetails?.name ||
-            (channelId != null ? `Channel ${channelId}` : "Channel")}
+          {channelDetails?.name || (channelId != null ? `Channel ${channelId}` : "Channel")}
         </h1>
         <div className="w-10 h-10" />
       </div>
 
-      {/* Video area + subtle overlays */}
       <div className="relative w-full aspect-video bg-black flex items-center justify-center">
         {content}
         <LoadingOverlay
           visible={Boolean((isLoading && !currentProgram) || isResolvingSrc)}
-          label={
-            isLoading && !currentProgram ? "Loading channel…" : "Preparing stream…"
-          }
+          label={isLoading && !currentProgram ? "Loading channel…" : "Preparing stream…"}
         />
         <MobileHint show={!isResolvingSrc && Boolean(currentProgram?._resolved_src)} />
       </div>
 
-      {/* Below the player */}
       <div className="p-4 flex-grow space-y-6">
-        {/* Program info (non-CH21) */}
         {channelId !== CH21_ID_NUMERIC && currentProgram && !isLoading && (
           <>
             <div>
               <h2 className="text-2xl font-bold">{currentProgram.title}</h2>
               <p className="text-sm text-gray-400">
-                Channel:{" "}
-                {channelDetails?.name ||
-                  (channelId != null ? `Channel ${channelId}` : "")}
+                Channel: {channelDetails?.name || (channelId != null ? `Channel ${channelId}` : "")}
               </p>
               {!isStandby && currentProgram.start_time && (
                 <p className="text-sm text-gray-400">
@@ -795,9 +739,7 @@ export default function WatchPage() {
 
             {upcomingPrograms.length > 0 && (
               <div className="mt-2">
-                <h3 className="text-lg font-semibold text-white mb-2">
-                  Upcoming Programs
-                </h3>
+                <h3 className="text-lg font-semibold text-white mb-2">Upcoming Programs</h3>
                 <ul className="text-sm text-gray-300 space-y-1">
                   {upcomingPrograms.map((p, idx) => (
                     <li key={`${p.channel_id}-${p.start_time}-${p.title}-${idx}`}>
@@ -818,7 +760,6 @@ export default function WatchPage() {
           </>
         )}
 
-        {/* 🔹 Channel Chat (all channels, including 21) */}
         <div className="mt-4 rounded-2xl border border-gray-800 bg-gray-950/70 p-4">
           <div className="flex items-center justify-between mb-2">
             <div>
@@ -837,9 +778,7 @@ export default function WatchPage() {
           {chatError && <p className="text-xs text-red-400 mb-2">{chatError}</p>}
 
           {!chatRoomId && !chatError && !chatLoading && (
-            <p className="text-xs text-gray-400">
-              Chat is not enabled for this channel yet.
-            </p>
+            <p className="text-xs text-gray-400">Chat is not enabled for this channel yet.</p>
           )}
 
           {chatRoomId && (
@@ -848,9 +787,7 @@ export default function WatchPage() {
                 {chatLoading && !chatMessages.length ? (
                   <p className="text-gray-400">Loading chat…</p>
                 ) : chatMessages.length === 0 ? (
-                  <p className="text-gray-400">
-                    No messages yet. Be the first to add a comment.
-                  </p>
+                  <p className="text-gray-400">No messages yet. Be the first to add a comment.</p>
                 ) : (
                   chatMessages.map((m) => (
                     <div key={m.id} className="mb-1.5">
