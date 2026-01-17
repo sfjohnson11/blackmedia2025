@@ -1,27 +1,35 @@
 // app/app/page.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
-type Summary = {
-  channels: number;
-};
+type Summary = { channels: number };
 
 type Profile = {
   id: string;
-  role?: string | null;
-  welcome_started_at?: string | null;
+  role: string | null;
+  membership_status: string | null;
+  grace_until: string | null;
+  welcome_started_at: string | null;
 };
+
+const STRIPE_UPGRADE_URL = "https://buy.stripe.com/7sY8wPekWcUp6IM6Rq6J314";
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
 function isWithin7Days(iso: string | null | undefined) {
-  if (!iso) return true; // no timestamp = treat as "new" (show welcome)
+  if (!iso) return true;
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return true;
   return Date.now() - t < SEVEN_DAYS_MS;
+}
+
+function parseMs(iso: string | null) {
+  if (!iso) return NaN;
+  const t = Date.parse(iso);
+  return Number.isNaN(t) ? NaN : t;
 }
 
 export default function AppPage() {
@@ -30,13 +38,15 @@ export default function AppPage() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loadingSummary, setLoadingSummary] = useState(true);
 
-  // Welcome state
-  const [showWelcome, setShowWelcome] = useState(false);
-  const [welcomeLoading, setWelcomeLoading] = useState(true);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [profileLoading, setProfileLoading] = useState(true);
 
+  // Load profile + set welcome_started_at once
   useEffect(() => {
-    async function initWelcome() {
-      setWelcomeLoading(true);
+    let cancelled = false;
+
+    async function loadProfile() {
+      setProfileLoading(true);
       try {
         const {
           data: { user },
@@ -44,58 +54,54 @@ export default function AppPage() {
         } = await supabase.auth.getUser();
 
         if (userErr || !user) {
-          // Not logged in; no welcome logic here
-          setShowWelcome(false);
+          if (!cancelled) setProfile(null);
           return;
         }
 
-        // Load profile by auth uid
-        const { data: profile, error: profErr } = await supabase
+        const { data: prof, error: profErr } = await supabase
           .from("user_profiles")
-          .select("id, role, welcome_started_at")
+          .select("id, role, membership_status, grace_until, welcome_started_at")
           .eq("id", user.id)
           .maybeSingle<Profile>();
 
         if (profErr) {
           console.error("Profile load error:", profErr);
-          // fail open: don't block hub
-          setShowWelcome(false);
+          if (!cancelled) setProfile(null);
           return;
         }
 
-        // If missing profile row, fail open (do nothing)
-        if (!profile?.id) {
-          setShowWelcome(false);
-          return;
-        }
+        if (!cancelled) setProfile(prof ?? null);
 
-        const shouldShow = isWithin7Days(profile.welcome_started_at ?? null);
-        setShowWelcome(shouldShow);
-
-        // If they have no welcome_started_at, set it ONCE (first login)
-        if (!profile.welcome_started_at) {
+        // Set welcome_started_at once (first time they hit the hub)
+        if (prof?.id && !prof.welcome_started_at) {
           const nowIso = new Date().toISOString();
           const { error: upErr } = await supabase
             .from("user_profiles")
             .update({ welcome_started_at: nowIso })
             .eq("id", user.id);
 
-          if (upErr) {
-            // Not fatal. Welcome still shows because timestamp was missing.
-            console.error("Failed to set welcome_started_at:", upErr);
+          if (upErr) console.error("Failed to set welcome_started_at:", upErr);
+          if (!cancelled) {
+            setProfile((p) =>
+              p ? { ...p, welcome_started_at: nowIso } : p
+            );
           }
         }
       } catch (e) {
-        console.error("Welcome init error:", e);
-        setShowWelcome(false);
+        console.error("Profile init error:", e);
+        if (!cancelled) setProfile(null);
       } finally {
-        setWelcomeLoading(false);
+        if (!cancelled) setProfileLoading(false);
       }
     }
 
-    initWelcome();
+    loadProfile();
+    return () => {
+      cancelled = true;
+    };
   }, [supabase]);
 
+  // Load channel count summary (unchanged)
   useEffect(() => {
     async function loadSummary() {
       try {
@@ -120,6 +126,30 @@ export default function AppPage() {
     loadSummary();
   }, [supabase]);
 
+  const isAdmin = useMemo(() => {
+    const r = (profile?.role ?? "").toLowerCase().trim();
+    return r === "admin";
+  }, [profile]);
+
+  const hasAccess = useMemo(() => {
+    // Admin always allowed
+    if (isAdmin) return true;
+
+    const status = (profile?.membership_status ?? "").toLowerCase().trim();
+    if (status === "active") return true;
+
+    const graceMs = parseMs(profile?.grace_until ?? null);
+    if (Number.isFinite(graceMs) && Date.now() < graceMs) return true;
+
+    return false;
+  }, [profile, isAdmin]);
+
+  const showWelcome = useMemo(() => {
+    if (!profile) return false;
+    if (!hasAccess) return false; // keep paywall clean
+    return isWithin7Days(profile.welcome_started_at);
+  }, [profile, hasAccess]);
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-black via-slate-950 to-black text-white">
       <main className="max-w-6xl mx-auto px-4 pt-20 pb-16 space-y-10">
@@ -134,40 +164,71 @@ export default function AppPage() {
           </p>
         </section>
 
-        {/* ✅ 7-DAY WELCOME (shows for 7 days after first login, then disappears) */}
-        {!welcomeLoading && showWelcome && (
+        {/* PAYWALL (only if logged-in profile exists and access is not active/grace) */}
+        {!profileLoading && profile && !hasAccess && (
           <section className="rounded-2xl border border-amber-500/30 bg-gradient-to-br from-amber-500/10 via-slate-950 to-black px-5 py-5 md:px-6 md:py-6 shadow-lg">
-            <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-              <div className="space-y-2">
-                <p className="text-xs font-semibold uppercase tracking-wide text-amber-300/90">
-                  Welcome to your private on-demand network
-                </p>
-                <h2 className="text-2xl font-extrabold tracking-tight">
-                  Start Here (first 7 days)
-                </h2>
-                <p className="text-sm text-slate-200 max-w-2xl">
-                  Everything is member-only and built for on-demand viewing. Here are
-                  the fastest ways to get value immediately.
-                </p>
-              </div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-amber-300/90">
+              Membership required
+            </p>
+            <h2 className="text-2xl font-extrabold tracking-tight mt-1">
+              Upgrade to keep access
+            </h2>
+            <p className="text-sm text-slate-200 mt-2 max-w-3xl">
+              Black Truth TV is now a private, member-supported network. To watch
+              channels, on-demand specials, and Freedom School content, you’ll need
+              an active membership.
+            </p>
 
-              <div className="flex flex-wrap gap-2">
-                <Link href="/channels">
-                  <button className="rounded-full border border-amber-500/50 bg-amber-500/90 px-4 py-1.5 text-xs font-semibold text-black shadow hover:bg-amber-400 transition">
-                    ▶ Start Watching
-                  </button>
-                </Link>
-                <Link href="/on-demand">
-                  <button className="rounded-full border border-slate-500/70 bg-slate-800/90 px-4 py-1.5 text-xs font-semibold text-slate-100 shadow hover:bg-slate-700 transition">
-                    🎬 Browse On-Demand
-                  </button>
-                </Link>
-                <Link href="/freedom-school">
-                  <button className="rounded-full border border-emerald-500/50 bg-emerald-500/20 px-4 py-1.5 text-xs font-semibold text-emerald-200 shadow hover:bg-emerald-500/25 transition">
-                    📚 Open Freedom School
-                  </button>
-                </Link>
-              </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <a href={STRIPE_UPGRADE_URL}>
+                <button className="rounded-full border border-amber-500/50 bg-amber-500/90 px-4 py-2 text-xs font-semibold text-black shadow hover:bg-amber-400 transition">
+                  Upgrade — $9.99/month
+                </button>
+              </a>
+              <Link href="/request-access">
+                <button className="rounded-full border border-slate-500/70 bg-slate-800/90 px-4 py-2 text-xs font-semibold text-slate-100 shadow hover:bg-slate-700 transition">
+                  Need help? Contact / Request
+                </button>
+              </Link>
+            </div>
+
+            <p className="text-xs text-slate-500 mt-3">
+              If you already paid, log out and log back in (or give it 1–2 minutes)
+              so your status updates.
+            </p>
+          </section>
+        )}
+
+        {/* ✅ 7-DAY WELCOME (only for paid/grace users) */}
+        {!profileLoading && showWelcome && (
+          <section className="rounded-2xl border border-amber-500/30 bg-gradient-to-br from-amber-500/10 via-slate-950 to-black px-5 py-5 md:px-6 md:py-6 shadow-lg">
+            <p className="text-xs font-semibold uppercase tracking-wide text-amber-300/90">
+              Welcome (shows for your first 7 days)
+            </p>
+            <h2 className="text-2xl font-extrabold tracking-tight mt-1">
+              Start Here
+            </h2>
+            <p className="text-sm text-slate-200 mt-2 max-w-3xl">
+              Everything is on-demand, but we guide you to the best content fast.
+              Use these shortcuts to get value immediately.
+            </p>
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Link href="/channels">
+                <button className="rounded-full border border-amber-500/50 bg-amber-500/90 px-4 py-2 text-xs font-semibold text-black shadow hover:bg-amber-400 transition">
+                  ▶ Start Watching
+                </button>
+              </Link>
+              <Link href="/on-demand">
+                <button className="rounded-full border border-slate-500/70 bg-slate-800/90 px-4 py-2 text-xs font-semibold text-slate-100 shadow hover:bg-slate-700 transition">
+                  🎬 Browse On-Demand
+                </button>
+              </Link>
+              <Link href="/freedom-school">
+                <button className="rounded-full border border-emerald-500/50 bg-emerald-500/20 px-4 py-2 text-xs font-semibold text-emerald-200 shadow hover:bg-emerald-500/25 transition">
+                  📚 Open Freedom School
+                </button>
+              </Link>
             </div>
 
             <div className="mt-4 grid gap-4 md:grid-cols-3">
@@ -176,11 +237,7 @@ export default function AppPage() {
                   ✅ Start Here Picks
                 </p>
                 <p className="text-sm text-slate-200">
-                  Add your 3 “must-watch” items here (the strongest content that shows
-                  what Black Truth TV is about).
-                </p>
-                <p className="text-xs text-slate-500 mt-2">
-                  (You can swap these anytime — weekly is fine.)
+                  Add 3 must-watch items that explain what Black Truth TV is about.
                 </p>
               </div>
 
@@ -189,11 +246,7 @@ export default function AppPage() {
                   ⭐ Featured This Week
                 </p>
                 <p className="text-sm text-slate-200">
-                  Rotate 6–12 curated picks weekly so the network feels alive even
-                  though everything is on-demand.
-                </p>
-                <p className="text-xs text-slate-500 mt-2">
-                  (Promote these picks publicly.)
+                  Rotate 6–12 picks weekly so the network feels alive.
                 </p>
               </div>
 
@@ -202,18 +255,14 @@ export default function AppPage() {
                   🎁 Member Bonuses
                 </p>
                 <p className="text-sm text-slate-200">
-                  Add watch guides, playlists, discussion questions, and monthly watch
-                  parties (replays go here).
-                </p>
-                <p className="text-xs text-slate-500 mt-2">
-                  (This is what reduces churn.)
+                  Watch guides, playlists, discussion prompts, and watch party replays.
                 </p>
               </div>
             </div>
 
-            <div className="mt-3 text-xs text-slate-500">
-              This welcome section automatically disappears after 7 days.
-            </div>
+            <p className="text-xs text-slate-500 mt-3">
+              This welcome section disappears automatically after 7 days.
+            </p>
           </section>
         )}
 
@@ -240,29 +289,47 @@ export default function AppPage() {
           </div>
 
           <div className="flex flex-wrap gap-2">
-            <Link href="/channels">
-              <button className="rounded-full border border-red-500/70 bg-red-600/80 px-4 py-1.5 text-xs font-semibold shadow hover:bg-red-700/90 transition">
+            <Link href={hasAccess ? "/channels" : "#"}>
+              <button
+                disabled={!hasAccess}
+                className="rounded-full border border-red-500/70 bg-red-600/80 px-4 py-1.5 text-xs font-semibold shadow hover:bg-red-700/90 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
                 🔴 Go to Live Network
               </button>
             </Link>
-            <Link href="/freedom-school">
-              <button className="rounded-full border border-amber-500/70 bg-amber-500/90 px-4 py-1.5 text-xs font-semibold text-black shadow hover:bg-amber-400 transition">
+
+            <Link href={hasAccess ? "/freedom-school" : "#"}>
+              <button
+                disabled={!hasAccess}
+                className="rounded-full border border-amber-500/70 bg-amber-500/90 px-4 py-1.5 text-xs font-semibold text-black shadow hover:bg-amber-400 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
                 📚 Freedom School
               </button>
             </Link>
-            <Link href="/guide">
-              <button className="rounded-full border border-slate-500/70 bg-slate-800/90 px-4 py-1.5 text-xs font-semibold text-slate-100 shadow hover:bg-slate-700 transition">
+
+            <Link href={hasAccess ? "/guide" : "#"}>
+              <button
+                disabled={!hasAccess}
+                className="rounded-full border border-slate-500/70 bg-slate-800/90 px-4 py-1.5 text-xs font-semibold text-slate-100 shadow hover:bg-slate-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
                 📺 24-Hour Guide
               </button>
             </Link>
+
+            {!hasAccess && (
+              <a href={STRIPE_UPGRADE_URL}>
+                <button className="rounded-full border border-amber-500/50 bg-amber-500/90 px-4 py-1.5 text-xs font-semibold text-black shadow hover:bg-amber-400 transition">
+                  Upgrade — $9.99/mo
+                </button>
+              </a>
+            )}
           </div>
         </section>
 
         {/* MAIN GRID */}
         <section className="grid gap-6 md:grid-cols-2">
-          {/* Live Channels */}
-          <Link href="/channels" className="group">
-            <div className="h-full rounded-2xl border border-slate-800 bg-gradient-to-br from-red-800/40 via-slate-950 to-black p-5 shadow-lg transition group-hover:border-red-400/80 group-hover:shadow-red-900/40">
+          <Link href={hasAccess ? "/channels" : "#"} className="group">
+            <div className={`h-full rounded-2xl border border-slate-800 bg-gradient-to-br from-red-800/40 via-slate-950 to-black p-5 shadow-lg transition ${hasAccess ? "group-hover:border-red-400/80 group-hover:shadow-red-900/40" : "opacity-60"}`}>
               <div className="flex items-center justify-between gap-3 mb-3">
                 <h2 className="text-xl font-bold flex items-center gap-2">
                   <span className="inline-flex h-2 w-2 rounded-full bg-red-500 animate-pulse" />
@@ -277,14 +344,13 @@ export default function AppPage() {
                 Construction Queen TV, Freedom School, and more.
               </p>
               <p className="text-xs text-slate-400">
-                Click to open the full channel grid and choose where to watch.
+                {hasAccess ? "Click to open the full channel grid and choose where to watch." : "Upgrade required to watch."}
               </p>
             </div>
           </Link>
 
-          {/* Freedom School */}
-          <Link href="/freedom-school" className="group">
-            <div className="h-full rounded-2xl border border-slate-800 bg-gradient-to-br from-emerald-800/30 via-slate-950 to-black p-5 shadow-lg transition group-hover:border-emerald-400/80 group-hover:shadow-emerald-900/40">
+          <Link href={hasAccess ? "/freedom-school" : "#"} className="group">
+            <div className={`h-full rounded-2xl border border-slate-800 bg-gradient-tobr from-emerald-800/30 via-slate-950 to-black p-5 shadow-lg transition ${hasAccess ? "group-hover:border-emerald-400/80 group-hover:shadow-emerald-900/40" : "opacity-60"}`}>
               <div className="flex items-center justify-between gap-3 mb-3">
                 <h2 className="text-xl font-bold flex items-center gap-2">
                   <span className="text-lg">📚</span>
@@ -299,14 +365,13 @@ export default function AppPage() {
                 Freedom School library.
               </p>
               <p className="text-xs text-slate-400">
-                Video, audio, and PDF content all in one virtual classroom.
+                {hasAccess ? "Video, audio, and PDF content all in one virtual classroom." : "Upgrade required to access."}
               </p>
             </div>
           </Link>
 
-          {/* On-Demand */}
-          <Link href="/on-demand" className="group">
-            <div className="h-full rounded-2xl border border-slate-800 bg-gradient-to-br from-indigo-700/30 via-slate-950 to-black p-5 shadow-lg transition group-hover:border-indigo-400/80 group-hover:shadow-indigo-900/40">
+          <Link href={hasAccess ? "/on-demand" : "#"} className="group">
+            <div className={`h-full rounded-2xl border border-slate-800 bg-gradient-to-br from-indigo-700/30 via-slate-950 to-black p-5 shadow-lg transition ${hasAccess ? "group-hover:border-indigo-400/80 group-hover:shadow-indigo-900/40" : "opacity-60"}`}>
               <div className="flex items-center justify-between gap-3 mb-3">
                 <h2 className="text-xl font-bold flex items-center gap-2">
                   <span className="text-lg">🎬</span>
@@ -321,14 +386,13 @@ export default function AppPage() {
                 for the live schedule.
               </p>
               <p className="text-xs text-slate-400">
-                Perfect when you want to go deep on one topic.
+                {hasAccess ? "Perfect when you want to go deep on one topic." : "Upgrade required to watch."}
               </p>
             </div>
           </Link>
 
-          {/* Daily News / Breaking News Hub */}
-          <Link href="/breaking-news" className="group">
-            <div className="h-full rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-700/40 via-slate-950 to-black p-5 shadow-lg transition group-hover:border-slate-400/80 group-hover:shadow-slate-900/40">
+          <Link href={hasAccess ? "/breaking-news" : "#"} className="group">
+            <div className={`h-full rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-700/40 via-slate-950 to-black p-5 shadow-lg transition ${hasAccess ? "group-hover:border-slate-400/80 group-hover:shadow-slate-900/40" : "opacity-60"}`}>
               <div className="flex items-center justify-between gap-3 mb-3">
                 <h2 className="text-xl font-bold flex items-center gap-2">
                   <span className="text-lg">📰</span>
@@ -343,14 +407,13 @@ export default function AppPage() {
                 see today&apos;s top stories in one place.
               </p>
               <p className="text-xs text-slate-400">
-                Channel 21 is your live news window. Click here to enter the news hub.
+                {hasAccess ? "Channel 21 is your live news window. Click here to enter the news hub." : "Upgrade required to access."}
               </p>
             </div>
           </Link>
 
-          {/* 💬 Community Chat */}
-          <Link href="/chat" className="group">
-            <div className="h-full rounded-2xl border border-slate-800 bg-gradient-to-br from-blue-700/40 via-slate-950 to-black p-5 shadow-lg transition group-hover:border-blue-400/80 group-hover:shadow-blue-900/40">
+          <Link href={hasAccess ? "/chat" : "#"} className="group">
+            <div className={`h-full rounded-2xl border border-slate-800 bg-gradient-to-br from-blue-700/40 via-slate-950 to-black p-5 shadow-lg transition ${hasAccess ? "group-hover:border-blue-400/80 group-hover:shadow-blue-900/40" : "opacity-60"}`}>
               <div className="flex items-center justify-between gap-3 mb-3">
                 <h2 className="text-xl font-bold flex items-center gap-2">
                   <span className="text-lg">💬</span>
@@ -361,15 +424,22 @@ export default function AppPage() {
                 </span>
               </div>
               <p className="text-sm text-slate-200 mb-3">
-                Join private conversations about Black Truth TV channels, Freedom
-                School lessons, and upcoming specials with other approved members.
+                Join private conversations about channels, Freedom School lessons, and
+                specials with other members.
               </p>
               <p className="text-xs text-slate-400">
-                Chat is moderated and available only to authorized community members.
+                {hasAccess ? "Chat is moderated and available only to authorized members." : "Upgrade required to participate."}
               </p>
             </div>
           </Link>
         </section>
+
+        {/* Footer hint for unpaid users */}
+        {!profileLoading && profile && !hasAccess && (
+          <div className="text-xs text-slate-500">
+            Your access is currently inactive. If you upgraded, log out and log back in.
+          </div>
+        )}
       </main>
     </div>
   );
