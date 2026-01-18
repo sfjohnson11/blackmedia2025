@@ -4,30 +4,23 @@ import { useEffect } from "react";
 
 export default function DisableContextMenu() {
   useEffect(() => {
-    const onContextMenu = (e: MouseEvent) => {
-      e.preventDefault();
-    };
-
-    const onKeyDown = (e: KeyboardEvent) => {
-      const key = e.key.toLowerCase();
-
-      // Block common “view source/devtools/save” shortcuts (best-effort)
+    const blockContextMenu = (e: MouseEvent) => e.preventDefault();
+    const blockKeys = (e: KeyboardEvent) => {
+      // Block common inspect / save shortcuts
       if (
-        (e.ctrlKey && (key === "s" || key === "u" || key === "p")) || // save, view source, print
-        (e.ctrlKey && e.shiftKey && (key === "i" || key === "c" || key === "j")) || // devtools
-        key === "f12"
+        e.key === "F12" ||
+        (e.ctrlKey && ["u", "s", "i", "j"].includes(e.key.toLowerCase()))
       ) {
         e.preventDefault();
-        e.stopPropagation();
       }
     };
 
-    document.addEventListener("contextmenu", onContextMenu);
-    document.addEventListener("keydown", onKeyDown, { capture: true });
+    document.addEventListener("contextmenu", blockContextMenu);
+    document.addEventListener("keydown", blockKeys);
 
     return () => {
-      document.removeEventListener("contextmenu", onContextMenu);
-      document.removeEventListener("keydown", onKeyDown, { capture: true } as any);
+      document.removeEventListener("contextmenu", blockContextMenu);
+      document.removeEventListener("keydown", blockKeys);
     };
   }, []);
 
