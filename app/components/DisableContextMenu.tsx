@@ -9,13 +9,28 @@ export default function DisableContextMenu() {
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
-      const key = e.key?.toLowerCase();
+      const key = e.key.toLowerCase();
       const ctrlOrCmd = e.ctrlKey || e.metaKey;
 
-      if (e.key === "F12") e.preventDefault();
-      if (ctrlOrCmd && (key === "u" || key === "s")) e.preventDefault();
-      if (ctrlOrCmd && e.shiftKey && (key === "i" || key === "j" || key === "c"))
+      // Ctrl/Cmd+U (view source)
+      if (ctrlOrCmd && key === "u") {
         e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+
+      // Ctrl/Cmd+Shift+I/J/C (devtools shortcuts)
+      if (ctrlOrCmd && e.shiftKey && (key === "i" || key === "j" || key === "c")) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+
+      // F12
+      if (e.key === "F12") {
+        e.preventDefault();
+        e.stopPropagation();
+      }
     };
 
     document.addEventListener("contextmenu", onContextMenu, { capture: true });
@@ -27,5 +42,5 @@ export default function DisableContextMenu() {
     };
   }, []);
 
-  return null;
+  return null; // ✅ renders nothing, so it will NOT block clicking
 }
