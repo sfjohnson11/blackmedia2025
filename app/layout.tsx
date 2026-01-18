@@ -1,5 +1,6 @@
 // app/layout.tsx
 import "./globals.css";
+import DisableContextMenu from "@/app/components/DisableContextMenu";
 
 export const metadata = {
   title: "Black Truth TV",
@@ -9,7 +10,10 @@ export const metadata = {
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <DisableContextMenu />
+        {children}
+      </body>
     </html>
   );
 }
