@@ -1,4 +1,3 @@
-// app/layout.tsx
 import "./globals.css";
 import DisableContextMenu from "./components/DisableContextMenu";
 
