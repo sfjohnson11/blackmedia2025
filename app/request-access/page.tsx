@@ -4,6 +4,9 @@
 import { useState, FormEvent } from "react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
+const STRIPE_LINK = "https://buy.stripe.com/7sY8wPekWcUp6IM6Rq6J314";
+const PRICE_TEXT = "$9.99/month";
+
 export default function RequestAccessPage() {
   const supabase = createClientComponentClient();
 
@@ -37,9 +40,7 @@ export default function RequestAccessPage() {
 
     if (error) {
       console.error("Error saving signup request:", error);
-      setErrorMsg(
-        "There was a problem sending your request. Please try again."
-      );
+      setErrorMsg("There was a problem sending your request. Please try again.");
       setSubmitting(false);
       return;
     }
@@ -72,7 +73,7 @@ export default function RequestAccessPage() {
       <div
         style={{
           width: "100%",
-          maxWidth: 540,
+          maxWidth: 560,
           background: "rgba(10,20,40,0.95)",
           borderRadius: 16,
           padding: "28px 24px 24px",
@@ -80,6 +81,98 @@ export default function RequestAccessPage() {
           border: "1px solid rgba(255,255,255,0.08)",
         }}
       >
+        {/* ===================== PAID MEMBERSHIP NOTICE (ADDED) ===================== */}
+        <div
+          style={{
+            marginBottom: 14,
+            padding: "12px 12px",
+            borderRadius: 14,
+            background: "rgba(250,204,21,0.10)",
+            border: "1px solid rgba(250,204,21,0.35)",
+          }}
+        >
+          <div style={{ textAlign: "center" }}>
+            <div
+              style={{
+                fontSize: 12,
+                letterSpacing: 0.12,
+                textTransform: "uppercase",
+                opacity: 0.9,
+                marginBottom: 6,
+              }}
+            >
+              Membership Required
+            </div>
+
+            <div style={{ fontSize: 18, fontWeight: 850, marginBottom: 4 }}>
+              {PRICE_TEXT}
+            </div>
+
+            <div style={{ fontSize: 13, opacity: 0.88, lineHeight: 1.35 }}>
+              Black Truth TV is a <strong>paid</strong>, Black-owned network.
+              Storage + streaming costs are real — your membership keeps the
+              platform alive and independent.
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                gap: 10,
+                justifyContent: "center",
+                flexWrap: "wrap",
+                marginTop: 10,
+              }}
+            >
+              <a
+                href={STRIPE_LINK}
+                target="_blank"
+                rel="noreferrer"
+                style={{
+                  display: "inline-block",
+                  padding: "10px 14px",
+                  borderRadius: 999,
+                  background:
+                    "linear-gradient(135deg, #FFD700 0%, #fbbf24 35%, #f97316 80%)",
+                  color: "#111827",
+                  fontWeight: 850,
+                  fontSize: 13,
+                  textTransform: "uppercase",
+                  letterSpacing: 0.06,
+                  boxShadow: "0 10px 25px rgba(180,83,9,0.45)",
+                  textDecoration: "none",
+                }}
+              >
+                Join Now — {PRICE_TEXT}
+              </a>
+
+              <a
+                href="/login"
+                style={{
+                  display: "inline-block",
+                  padding: "10px 14px",
+                  borderRadius: 999,
+                  background: "rgba(255,255,255,0.08)",
+                  border: "1px solid rgba(255,255,255,0.14)",
+                  color: "#fff",
+                  fontWeight: 750,
+                  fontSize: 13,
+                  textTransform: "uppercase",
+                  letterSpacing: 0.06,
+                  textDecoration: "none",
+                }}
+              >
+                I already paid — Log in
+              </a>
+            </div>
+
+            <div style={{ marginTop: 10, fontSize: 12, opacity: 0.88 }}>
+              <strong>How it works:</strong> (1) Pay the membership, (2) submit
+              this request, (3) if approved you’ll receive your sign-in link.
+            </div>
+          </div>
+        </div>
+        {/* ======================================================================= */}
+
         <h1
           style={{
             fontSize: "1.7rem",
@@ -428,7 +521,7 @@ export default function RequestAccessPage() {
             marginTop: 12,
             fontSize: 12,
             textAlign: "center",
-            opacity: 0.8,
+            opacity: 0.88,
           }}
         >
           Already have an account?{" "}
@@ -437,6 +530,15 @@ export default function RequestAccessPage() {
             style={{ color: "#facc15", textDecoration: "underline" }}
           >
             Go back to login
+          </a>
+          <span style={{ opacity: 0.7 }}> • </span>
+          <a
+            href={STRIPE_LINK}
+            target="_blank"
+            rel="noreferrer"
+            style={{ color: "#facc15", textDecoration: "underline" }}
+          >
+            Join / Upgrade ({PRICE_TEXT})
           </a>
         </p>
       </div>
