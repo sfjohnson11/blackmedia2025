@@ -16,7 +16,6 @@ export const FREE_CHANNELS = new Set<number>([
 ])
 
 // MEMBER channels — require $9.99/mo membership
-// (everything not in FREE_CHANNELS)
 export const MEMBER_ONLY_CHANNELS = new Set<number>([
   4,  // Voices of the Movement
   5,  // The People's Archive
@@ -42,7 +41,6 @@ export const MEMBER_ONLY_CHANNELS = new Set<number>([
 ])
 
 // CONSTRUCTIQ channels — free for Constructiq family accounts
-// (construction education channels)
 export const CONSTRUCTIQ_FREE_CHANNELS = new Set<number>([
   15, // Construction Queen TV
   19, // Apprentice Academy
@@ -58,8 +56,12 @@ export const CONSTRUCTIQ_FREE_CHANNELS = new Set<number>([
 
 // Keep for backward compatibility
 export const PROTECTED_CHANNELS = MEMBER_ONLY_CHANNELS
+export const PROTECTED_CHANNEL_KEYS = Array.from(MEMBER_ONLY_CHANNELS).map(String)
 
-// Helper functions
+export function isProtectedChannelKey(key: string): boolean {
+  return MEMBER_ONLY_CHANNELS.has(parseInt(key))
+}
+
 export function isFreeChannel(channelId: number): boolean {
   return FREE_CHANNELS.has(channelId)
 }
@@ -76,21 +78,12 @@ export function canAccessChannel(
   channelId: number,
   tier: 'free' | 'member' | 'constructiq' | 'admin' | null
 ): boolean {
-  // Admins get everything
   if (tier === 'admin') return true
-
-  // Free channels — everyone gets them
   if (FREE_CHANNELS.has(channelId)) return true
-
-  // Member channels — need active membership
   if (MEMBER_ONLY_CHANNELS.has(channelId)) {
     if (tier === 'member') return true
-
-    // Constructiq users get construction channels free
     if (tier === 'constructiq' && CONSTRUCTIQ_FREE_CHANNELS.has(channelId)) return true
-
     return false
   }
-
   return false
 }
