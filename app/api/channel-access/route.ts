@@ -1,32 +1,93 @@
-import { NextRequest, NextResponse } from "next/server";
-import { PASSCODES, PROTECTED_CHANNELS } from "@/lib/protected-channels";
+import { NextRequest, NextResponse } from 'next/server'
+import { createServerComponentClient } from '@supabase/auth-helpers-nextjs'
+import { cookies } from 'next/headers'
+import { canAccessChannel, isFreeChannel } from '@/lib/protected-channels'
 
-const COOKIE_PREFIX = "channel_unlocked_";
+export const dynamic = 'force-dynamic'
+
+export async function GET(req: NextRequest) {
+  const { searchParams } = new URL(req.url)
+  const channelId = parseInt(searchParams.get('channelId') || '0')
+
+  // Free channels — no login needed
+  if (isFreeChannel(channelId)) {
+    return NextResponse.json({ hasAccess: true, tier: 'free' })
+  }
+
+  const supabase = createServerComponentClient({ cookies })
+  const { data: { user } } = await supabase.auth.getUser()
+
+  if (!user) {
+    return NextResponse.json({
+      hasAccess: false,
+      reason: 'not_logged_in',
+      upgrade_url: '/membership',
+    })
+  }
+
+  const { data: profile } = await supabase
+    .from('user_profiles')
+    .select('role, membership_tier, membership_status')
+    .eq('id', user.id)
+    .single()
+
+  const tier = profile?.role === 'admin'
+    ? 'admin'
+    : profile?.membership_status === 'active'
+      ? (profile?.membership_tier as 'member' | 'constructiq' | 'admin')
+      : 'free'
+
+  const hasAccess = canAccessChannel(channelId, tier)
+
+  return NextResponse.json({
+    hasAccess,
+    tier,
+    reason: hasAccess ? null : 'no_membership',
+    upgrade_url: hasAccess ? null : '/membership',
+  })
+}
 
 export async function POST(req: NextRequest) {
-  try {
-    const { channelId, passcode } = await req.json();
-    const id = Number.parseInt(String(channelId), 10);
+  const { channelId } = await req.json()
+  const id = parseInt(String(channelId))
 
-    if (!Number.isFinite(id) || !PROTECTED_CHANNELS.has(id)) {
-      return NextResponse.json({ ok: false, error: "Invalid channel" }, { status: 400 });
-    }
-
-    const expected = PASSCODES[id];
-    if (!expected || passcode !== expected) {
-      return NextResponse.json({ ok: false, error: "Invalid passcode" }, { status: 401 });
-    }
-
-    const res = NextResponse.json({ ok: true });
-    res.cookies.set(`${COOKIE_PREFIX}${id}`, "1", {
-      httpOnly: true,
-      secure: true,
-      sameSite: "lax",
-      path: "/",
-      maxAge: 60 * 60 * 12, // 12 hours
-    });
-    return res;
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message || "Bad request" }, { status: 400 });
+  // Free channels — always accessible
+  if (isFreeChannel(id)) {
+    return NextResponse.json({ ok: true, tier: 'free' })
   }
+
+  const supabase = createServerComponentClient({ cookies })
+  const { data: { user } } = await supabase.auth.getUser()
+
+  if (!user) {
+    return NextResponse.json({
+      ok: false,
+      error: 'Please log in to access this channel',
+      upgrade_url: '/membership',
+    }, { status: 401 })
+  }
+
+  const { data: profile } = await supabase
+    .from('user_profiles')
+    .select('role, membership_tier, membership_status')
+    .eq('id', user.id)
+    .single()
+
+  const tier = profile?.role === 'admin'
+    ? 'admin'
+    : profile?.membership_status === 'active'
+      ? (profile?.membership_tier as 'member' | 'constructiq' | 'admin')
+      : 'free'
+
+  const hasAccess = canAccessChannel(id, tier)
+
+  if (!hasAccess) {
+    return NextResponse.json({
+      ok: false,
+      error: 'Membership required to access this channel',
+      upgrade_url: '/membership',
+    }, { status: 403 })
+  }
+
+  return NextResponse.json({ ok: true, tier })
 }
