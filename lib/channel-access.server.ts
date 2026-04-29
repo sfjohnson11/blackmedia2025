@@ -1,7 +1,8 @@
-// lib/channel-access.server.ts
-import { cookies } from "next/headers";
-import { COOKIE_PREFIX } from "./channel-access";
+// Replaced by membership-based access control
+// Keeping this file to avoid import errors in any components that still reference it
 
-export function hasChannelCookie(key: string) {
-  return cookies().get(`${COOKIE_PREFIX}${key}`)?.value === "1";
+export const COOKIE_PREFIX = 'channel_unlocked_'
+
+export function hasChannelCookie(key: string): boolean {
+  return false // passcode system disabled — membership required
 }
