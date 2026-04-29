@@ -9,7 +9,6 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const channelId = parseInt(searchParams.get('channelId') || '0')
 
-  // Free channels — no login needed
   if (isFreeChannel(channelId)) {
     return NextResponse.json({ hasAccess: true, tier: 'free' })
   }
@@ -51,7 +50,6 @@ export async function POST(req: NextRequest) {
   const { channelId } = await req.json()
   const id = parseInt(String(channelId))
 
-  // Free channels — always accessible
   if (isFreeChannel(id)) {
     return NextResponse.json({ ok: true, tier: 'free' })
   }
