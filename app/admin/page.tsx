@@ -58,16 +58,10 @@ const programmingTools: Tool[] = [
     description: "Build and tweak channel lineups.",
   },
   {
-    name: "Monday Schedule",
-    path: "/admin/monday-schedule",
-    description: "Reset and seed the Monday master schedule.",
-  },
-  {
     name: "Auto Schedule",
     path: "/admin/auto-schedule",
     description: "Auto-generate rotations from rules.",
   },
-  // ✅ NEW TOOL CARD
   {
     name: "Loop Schedule",
     path: "/admin/loop-schedule",
@@ -85,14 +79,14 @@ const programmingTools: Tool[] = [
     description: "Remove duplicates and broken entries.",
   },
   {
-    name: "Reset Programs",
-    path: "/admin/reset-programs",
-    description: "Hard reset of program schedules.",
+    name: "Schedule Health",
+    path: "/admin/schedule-health",
+    description: "View cron auto-extend run history and any errors.",
   },
   {
-    name: "News Manager",
-    path: "/admin/news",
-    description: "Control Black Truth TV news content and ticker.",
+    name: "News Ticker",
+    path: "/admin/news-ticker",
+    description: "Add or remove items in the scrolling banner on the member hub.",
   },
   {
     name: "Breaking News Editor",
@@ -572,9 +566,14 @@ export default function AdminDashboard() {
                   detail="Review and update program entries."
                 />
                 <QuickLink
-                  label="Monday Schedule"
-                  path="/admin/monday-schedule"
-                  detail="Run or review the weekly reset."
+                  label="Auto Schedule"
+                  path="/admin/auto-schedule"
+                  detail="Pull files from buckets and build a schedule."
+                />
+                <QuickLink
+                  label="Schedule Health"
+                  path="/admin/schedule-health"
+                  detail="Check cron auto-extend runs and errors."
                 />
                 <QuickLink
                   label="Freedom School Library"
@@ -582,9 +581,14 @@ export default function AdminDashboard() {
                   detail="Curate and upload study content."
                 />
                 <QuickLink
+                  label="News Ticker"
+                  path="/admin/news-ticker"
+                  detail="Update the scrolling member hub banner."
+                />
+                <QuickLink
                   label="Breaking News Editor"
                   path="/admin/breaking-news"
-                  detail="Update tonight’s lead story and segment cards."
+                  detail="Update tonight's lead story and segment cards."
                 />
                 <QuickLink
                   label="Membership Requests"
