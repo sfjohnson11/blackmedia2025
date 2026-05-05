@@ -1,21 +1,34 @@
-// middleware.ts
-import { NextResponse } from "next/server";
-import type { NextRequest } from "next/server";
-import { createMiddlewareClient } from "@supabase/auth-helpers-nextjs";
+import { createServerClient } from "@supabase/ssr";
+import { NextResponse, type NextRequest } from "next/server";
 
-export async function middleware(req: NextRequest) {
-  const res = NextResponse.next();
+export async function updateSession(request: NextRequest) {
+  let supabaseResponse = NextResponse.next({ request });
 
-  // Sync Supabase session cookie (safe)
-  const supabase = createMiddlewareClient({ req, res });
-  await supabase.auth.getSession();
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return request.cookies.getAll();
+        },
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value }) =>
+            request.cookies.set(name, value),
+          );
+          supabaseResponse = NextResponse.next({ request });
+          cookiesToSet.forEach(({ name, value, options }) =>
+            supabaseResponse.cookies.set(name, value, options),
+          );
+        },
+      },
+    },
+  );
 
-  return res;
+  // IMPORTANT: do NOT add code between createServerClient and getUser().
+  // Token refresh happens here; any other Supabase call would race with it
+  // and you can end up with stale/missing sessions on intermittent requests.
+  await supabase.auth.getUser();
+
+  return supabaseResponse;
 }
-
-// ✅ IMPORTANT: do NOT run middleware on auth/login/api/static routes
-export const config = {
-  matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|login|auth|api).*)",
-  ],
-};
