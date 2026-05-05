@@ -21,11 +21,13 @@ type Program = {
 type Channel = {
   id: string;
   name: string;
-  bucket: string;         // ✅ per-channel storage bucket
-  program_table: string;  // ✅ per-channel program table
 };
 
 const COLS = "id, channel_id, title, mp4_url, start_time, duration";
+const PROGRAMS_TABLE = "programs";
+
+// Derive the storage bucket name from a channel id (e.g. "21" → "channel21").
+const bucketForChannel = (id: string) => `channel${String(id).toLowerCase()}`;
 
 // Convert <input type="datetime-local"> to UTC ISO
 const toUtcIso = (local: string) => {
@@ -48,9 +50,9 @@ export default function ProgramScheduler() {
 
   const [newProgram, setNewProgram] = useState({
     title: "",
-    mp4_url: "",            // filename only (e.g., "folder/video.mp4")
-    start_time_local: "",   // from datetime-local
-    duration_seconds: 1800, // seconds
+    mp4_url: "",
+    start_time_local: "",
+    duration_seconds: 1800,
   });
 
   const selectedChannel = useMemo(
@@ -58,12 +60,12 @@ export default function ProgramScheduler() {
     [channels, selectedChannelId]
   );
 
-  // Load channels (must include bucket + program_table)
+  // Load channels
   useEffect(() => {
     (async () => {
       const { data, error } = await supabase
         .from("channels")
-        .select("id, name, bucket, program_table")
+        .select("id, name")
         .order("name", { ascending: true });
 
       if (error) {
@@ -77,13 +79,12 @@ export default function ProgramScheduler() {
     })();
   }, []);
 
-  // Load programs for the selected channel from its program_table
+  // Load programs for the selected channel
   useEffect(() => {
     if (!selectedChannel) return;
     (async () => {
-      const table = selectedChannel.program_table;
       const { data, error } = await supabase
-        .from(table)
+        .from(PROGRAMS_TABLE)
         .select(COLS)
         .eq("channel_id", selectedChannel.id)
         .order("start_time", { ascending: true });
@@ -102,9 +103,8 @@ export default function ProgramScheduler() {
 
   const refreshPrograms = async () => {
     if (!selectedChannel) return;
-    const table = selectedChannel.program_table;
     const { data, error } = await supabase
-      .from(table)
+      .from(PROGRAMS_TABLE)
       .select(COLS)
       .eq("channel_id", selectedChannel.id)
       .order("start_time", { ascending: true });
@@ -118,22 +118,22 @@ export default function ProgramScheduler() {
 
   const handleAddProgram = async () => {
     if (!selectedChannel) return alert("Pick a channel first.");
-    if (!newProgram.title.trim() || !newProgram.mp4_url.trim() || !newProgram.start_time_local)
+    if (!newProgram.title.trim() || !newProgram.mp4_url.trim() || !newProgram.start_time_local) {
       return alert("Title, MP4 filename, and Start Time are required.");
+    }
 
-    const startUtc = toUtcIso(newProgram.start_time_local); // ✅ store UTC
+    const startUtc = toUtcIso(newProgram.start_time_local);
     if (!startUtc) return alert("Invalid start time.");
 
-    const table = selectedChannel.program_table;
     const payload = {
       title: newProgram.title.trim(),
-      mp4_url: newProgram.mp4_url.trim(),                 // ✅ keep filename in DB
-      start_time: startUtc,                               // ✅ UTC
-      duration: Number(newProgram.duration_seconds) || 1800, // ✅ seconds
+      mp4_url: newProgram.mp4_url.trim(),
+      start_time: startUtc,
+      duration: Number(newProgram.duration_seconds) || 1800,
       channel_id: selectedChannel.id,
     };
 
-    const { data, error } = await supabase.from(table).insert([payload]).select().single();
+    const { data, error } = await supabase.from(PROGRAMS_TABLE).insert([payload]).select().single();
     if (error) return alert(`Failed to add program: ${error.message}`);
 
     setPrograms(prev =>
@@ -218,8 +218,7 @@ export default function ProgramScheduler() {
                           </div>
                           {program.mp4_url && selectedChannel && (
                             <video
-                              // Resolve filename from THIS channel's bucket for preview
-                              src={publicUrl(selectedChannel.bucket, program.mp4_url)}
+                              src={publicUrl(bucketForChannel(selectedChannel.id), program.mp4_url)}
                               controls
                               preload="metadata"
                               className="mt-2 w-full max-w-md rounded"
