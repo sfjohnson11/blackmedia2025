@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { supabase } from "@/lib/supabase";
+import { createClient } from "@/utils/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -32,6 +32,7 @@ type EditedChannel = {
 };
 
 export default function ChannelManager() {
+  const supabase = createClient();
   const [channels, setChannels] = useState<Channel[]>([]);
   const [editedChannels, setEditedChannels] = useState<
     Record<string, EditedChannel>
