@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { createClient } from "@/utils/supabase/client";
 
 type BreakingNewsRow = {
   id: number;
@@ -12,7 +12,7 @@ type BreakingNewsRow = {
 };
 
 export default function BreakingNewsPage() {
-  const supabase = createClientComponentClient();
+  const supabase = createClient();
   const [rows, setRows] = useState<BreakingNewsRow[]>([]);
   const [loading, setLoading] = useState(true);
 

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createServerComponentClient } from '@supabase/auth-helpers-nextjs'
+import { createClient } from '@/utils/supabase/server'
 import { cookies } from 'next/headers'
 import { canAccessChannel, isFreeChannel } from '@/lib/protected-channels'
 
@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ hasAccess: true, tier: 'free' })
   }
 
-  const supabase = createServerComponentClient({ cookies })
+  const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
   if (!user) {
@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, tier: 'free' })
   }
 
-  const supabase = createServerComponentClient({ cookies })
+  const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
   if (!user) {

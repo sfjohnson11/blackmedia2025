@@ -1,5 +1,5 @@
 import { cookies } from "next/headers";
-import { createServerComponentClient } from "@supabase/auth-helpers-nextjs";
+import { createClient } from "@/utils/supabase/server";
 
 const COOKIE_PREFIX = "channel_unlocked_";
 
@@ -8,7 +8,7 @@ export function hasChannelCookie(key: string) {
 }
 
 export async function verifyAndGrantChannelAccess(key: string, passcode: string) {
-  const supabase = createServerComponentClient({ cookies });
+  const supabase = await createClient();
 
   const { data, error } = await supabase.rpc("verify_channel_passcode", {
     p_channel_key: key,

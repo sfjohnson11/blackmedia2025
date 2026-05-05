@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { createClient } from "@/utils/supabase/client";
 
 type LibraryRow = {
   id: number;
@@ -61,7 +61,7 @@ function cleanTitle(row: LibraryRow): string {
 }
 
 export default function FreedomSchoolClient() {
-  const supabase = createClientComponentClient();
+  const supabase = createClient();
 
   const [lessons, setLessons] = useState<Lesson[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);

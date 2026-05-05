@@ -3,7 +3,7 @@
 import { useState, useEffect, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { createClient } from "@/utils/supabase/client";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, PlusCircle, Info } from "lucide-react";
 
@@ -11,7 +11,7 @@ type InsertStatus = "idle" | "saving" | "success" | "error";
 
 export default function AddChannelPage() {
   const router = useRouter();
-  const supabase = createClientComponentClient();
+  const supabase = createClient();
 
   const [channelId, setChannelId] = useState<string>("");
   const [name, setName] = useState<string>("");

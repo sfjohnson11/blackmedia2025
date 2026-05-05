@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
-import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
+import { createClient } from "@/utils/supabase/server";
 import { cookies } from "next/headers";
 
 // GET ?channelId=23&day=2025-08-11  -> list draft rows
 export async function GET(req: Request) {
-  const supabase = createRouteHandlerClient({ cookies });
+  const supabase = await createClient();
   const url = new URL(req.url);
   const channelId = url.searchParams.get("channelId");
   const day = url.searchParams.get("day"); // YYYY-MM-DD
@@ -25,7 +25,7 @@ export async function GET(req: Request) {
 // POST body: { channelId, day, rows: [{title, mp4_url, duration, poster_url, sort_index}], baseTimeUtc: "YYYY-MM-DDTHH:mm:ssZ" }
 // This replaces the draft for that day/channel and auto-chains start_time from baseTimeUtc by duration.
 export async function POST(req: Request) {
-  const supabase = createRouteHandlerClient({ cookies });
+  const supabase = await createClient();
   const body = await req.json().catch(() => ({}));
   const { channelId, day, rows, baseTimeUtc } = body as {
     channelId?: string | number;

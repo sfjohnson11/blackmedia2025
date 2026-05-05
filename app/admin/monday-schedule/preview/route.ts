@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
+import { createClient } from "@/utils/supabase/server";
 import { cookies } from "next/headers";
 
 export async function POST(req: Request) {
-  const supabase = createRouteHandlerClient({ cookies });
+  const supabase = await createClient();
   const { channelId, date } = (await req.json().catch(() => ({}))) as {
     channelId?: string | number;
     date?: string; // "YYYY-MM-DD" (UTC date)

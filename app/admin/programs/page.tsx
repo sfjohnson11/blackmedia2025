@@ -3,7 +3,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { createClient } from "@/utils/supabase/client";
 import {
   Loader2,
   RefreshCw,
@@ -24,7 +24,7 @@ type Program = {
 };
 
 export default function ProgramsManagerPage() {
-  const supabase = createClientComponentClient();
+  const supabase = createClient();
 
   const [programs, setPrograms] = useState<Program[]>([]);
   const [loading, setLoading] = useState(true);

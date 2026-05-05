@@ -1,7 +1,7 @@
 // app/api/contact/route.ts
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
+import { createClient } from "@/utils/supabase/server";
 
 const CONTACT_TO = process.env.CONTACT_TO || "director@sfjfamilyservices.org";
 const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
@@ -31,7 +31,7 @@ export async function POST(req: Request) {
     }
 
     // 1) Save to Supabase
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = await createClient();
     const { error: insertErr } = await supabase
       .from("contact_messages")
       .insert([{ name: _name, email: _email, subject: _subject, message: _message }]);

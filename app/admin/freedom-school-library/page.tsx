@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { createClient } from "@/utils/supabase/client";
 import {
   ArrowLeft,
   BookOpen,
@@ -29,7 +29,7 @@ type LibraryRow = {
 };
 
 export default function FreedomSchoolLibraryAdminPage() {
-  const supabase = createClientComponentClient();
+  const supabase = createClient();
 
   const [rows, setRows] = useState<LibraryRow[]>([]);
   const [loading, setLoading] = useState(true);

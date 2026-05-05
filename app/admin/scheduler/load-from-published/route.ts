@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
-import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
+import { createClient } from "@/utils/supabase/server";
 import { cookies } from "next/headers";
 
 // POST body: { channelId, day }
 export async function POST(req: Request) {
-  const supabase = createRouteHandlerClient({ cookies });
+  const supabase = await createClient();
   const { channelId, day } = (await req.json().catch(() => ({}))) as { channelId?: string | number; day?: string };
   if (!channelId || !day) return NextResponse.json({ ok: false, error: "channelId and day are required" }, { status: 400 });
 

@@ -1,12 +1,12 @@
 // app/api/admin/stats/route.ts
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
+import { createClient } from "@/utils/supabase/server";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const supabase = createRouteHandlerClient({ cookies });
+  const supabase = await createClient();
 
   // 🔹 Adjust table names if yours are different
   const { count: channelCount, error: channelError } = await supabase

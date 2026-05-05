@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { createClient } from "@/utils/supabase/client";
 import { ArrowLeft, Save, Loader2, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -23,7 +23,7 @@ const CHANNEL_OPTIONS: number[] = [
 ];
 
 export default function ProgramTitlesPage() {
-  const supabase = createClientComponentClient();
+  const supabase = createClient();
 
   const [programs, setPrograms] = useState<Program[]>([]);
   const [loading, setLoading] = useState(true);

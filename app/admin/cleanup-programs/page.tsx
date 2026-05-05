@@ -3,7 +3,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { createClient } from "@/utils/supabase/client";
 import {
   ArrowLeft,
   Trash2,
@@ -25,7 +25,7 @@ type ProgramRow = {
 };
 
 export default function CleanupProgramsPage() {
-  const supabase = createClientComponentClient();
+  const supabase = createClient();
 
   const [channelId, setChannelId] = useState<string>(""); // filter
   const [fromDate, setFromDate] = useState<string>("");   // YYYY-MM-DD

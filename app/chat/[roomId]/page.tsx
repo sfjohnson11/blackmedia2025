@@ -3,7 +3,7 @@
 
 import { useEffect, useState, FormEvent } from "react";
 import Link from "next/link";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { createClient } from "@/utils/supabase/client";
 
 type ChatRoom = {
   id: string;
@@ -25,7 +25,7 @@ export default function ChatRoomPage({
 }: {
   params: { roomId: string };
 }) {
-  const supabase = createClientComponentClient();
+  const supabase = createClient();
   const roomId = params.roomId;
 
   const [room, setRoom] = useState<ChatRoom | null>(null);

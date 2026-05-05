@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { createClient } from "@/utils/supabase/client";
 import {
   ArrowLeft,
   ArrowUp,
@@ -31,7 +31,7 @@ const CHANNEL_OPTIONS: number[] = [
 ];
 
 export default function ProgramOrderPage() {
-  const supabase = createClientComponentClient();
+  const supabase = createClient();
 
   const [channelFilter, setChannelFilter] = useState<string>(""); // "" = none selected yet
   const [programs, setPrograms] = useState<Program[]>([]);

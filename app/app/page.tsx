@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { createClient } from "@/utils/supabase/client";
 
 type Summary = { channels: number };
 
@@ -43,7 +43,7 @@ function fmtDateTimeLocal(iso: string) {
 }
 
 export default function AppPage() {
-  const supabase = createClientComponentClient();
+  const supabase = createClient();
 
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loadingSummary, setLoadingSummary] = useState(true);

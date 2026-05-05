@@ -3,7 +3,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { createClient } from "@/utils/supabase/client";
 import {
   ArrowLeft,
   Loader2,
@@ -115,7 +115,7 @@ function parseUtcBaseStart(value: string): Date | null {
 }
 
 export default function AutoSchedulePage() {
-  const supabase = createClientComponentClient();
+  const supabase = createClient();
 
   const [channelId, setChannelId] = useState<string>("");
   const [bucketName, setBucketName] = useState<string>("channel1");

@@ -3,7 +3,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { createClient } from "@/utils/supabase/client";
 import {
   ArrowLeft,
   Calendar,
@@ -25,7 +25,7 @@ type ProgramRow = {
 };
 
 export default function RefreshProgramsPage() {
-  const supabase = createClientComponentClient();
+  const supabase = createClient();
 
   // 🔹 Existing single-channel rebuild state
   const [channelId, setChannelId] = useState<string>("");

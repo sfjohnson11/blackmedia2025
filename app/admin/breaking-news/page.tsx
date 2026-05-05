@@ -3,7 +3,7 @@
 
 import { useEffect, useState, FormEvent } from "react";
 import Link from "next/link";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { createClient } from "@/utils/supabase/client";
 import { Loader2, Save, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -17,7 +17,7 @@ type BreakingNewsRow = {
 };
 
 export default function AdminBreakingNewsPage() {
-  const supabase = createClientComponentClient();
+  const supabase = createClient();
 
   const [rows, setRows] = useState<BreakingNewsRow[]>([]);
   const [originalRows, setOriginalRows] = useState<BreakingNewsRow[]>([]);

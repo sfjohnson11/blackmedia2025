@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { createClient } from "@/utils/supabase/client";
 
 type SignupRequest = {
   id: string;
@@ -18,7 +18,7 @@ type SignupRequest = {
 };
 
 export default function MembershipRequestsPage() {
-  const supabase = createClientComponentClient();
+  const supabase = createClient();
 
   const [requests, setRequests] = useState<SignupRequest[]>([]);
   const [loading, setLoading] = useState(true);

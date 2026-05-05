@@ -8,7 +8,7 @@ import {
   type ReactNode,
   type FormEvent,
 } from "react";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { createClient } from "@/utils/supabase/client";
 import VideoPlayer from "@/components/video-player";
 import {
   getCandidateUrlsForProgram,
@@ -262,7 +262,7 @@ async function getSignedUrlFromPublicUrl(publicUrl: string): Promise<string | nu
 
 export default function WatchPage() {
   // ✅ Use the logged-in session client (fixes chat + any RLS-protected reads)
-  const supabase = createClientComponentClient();
+  const supabase = createClient();
 
   const params = useParams();
   const router = useRouter();

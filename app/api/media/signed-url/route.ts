@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
+import { createClient } from "@/utils/supabase/server";
 import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
@@ -47,7 +47,7 @@ export async function POST(req: Request) {
     }
 
     // ✅ Must be logged in
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = await createClient();
     const { data: userData, error: userErr } = await supabase.auth.getUser();
 
     if (userErr || !userData?.user) {

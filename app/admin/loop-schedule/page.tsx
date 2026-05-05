@@ -3,7 +3,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { createClient } from "@/utils/supabase/client";
 import {
   Loader2,
   AlertCircle,
@@ -23,7 +23,7 @@ type ProgramRow = {
 };
 
 export default function LoopSchedulePage() {
-  const supabase = createClientComponentClient();
+  const supabase = createClient();
 
   const [channelId, setChannelId] = useState<string>("");
   const [blocksToExtend, setBlocksToExtend] = useState<string>("3"); // how many times to repeat the existing pattern

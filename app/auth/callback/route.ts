@@ -1,14 +1,14 @@
 // app/auth/callback/route.ts
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
+import { createClient } from "@/utils/supabase/server";
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const code = url.searchParams.get("code");
   const redirectTo = url.searchParams.get("redirect_to") || "/watch/21";
 
-  const supabase = createRouteHandlerClient({ cookies });
+  const supabase = await createClient();
   if (code) {
     await supabase.auth.exchangeCodeForSession(code); // sets server auth cookie
   }
@@ -17,7 +17,7 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   const { event, session } = await req.json().catch(() => ({} as any));
-  const supabase = createRouteHandlerClient({ cookies });
+  const supabase = await createClient();
 
   if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
     if (session?.access_token && session?.refresh_token) {
