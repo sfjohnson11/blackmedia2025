@@ -20,7 +20,7 @@ function hasPaidAccess(profile: any) {
     .trim();
 
   // paid members allowed
-  if (status === "paid") return true;
+  if (status === "active") return true;
 
   // ✅ grace allowed if set and still in future
   if (profile?.grace_until) {

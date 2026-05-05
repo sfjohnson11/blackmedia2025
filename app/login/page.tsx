@@ -27,7 +27,7 @@ export default function LoginPage() {
   function hasAccess(profile: Profile | null) {
     // Paid users always allowed
     const status = String(profile?.membership_status || "free").toLowerCase();
-    if (status === "paid") return true;
+    if (status === "active") return true;
 
     // Grace period allowed
     if (profile?.grace_until) {
