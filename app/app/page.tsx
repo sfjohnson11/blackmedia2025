@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/utils/supabase/client";
+import NewsTicker from "@/components/NewsTicker";
 
 type Summary = { channels: number };
 
@@ -177,6 +178,9 @@ export default function AppPage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-black via-slate-950 to-black text-white">
       <main className="max-w-6xl mx-auto px-4 pt-20 pb-16 space-y-10">
+        {/* NEWS TICKER */}
+        <NewsTicker />
+
         {/* HEADER */}
         <section className="space-y-3">
           <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight">
