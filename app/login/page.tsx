@@ -124,11 +124,6 @@ export default function LoginPage() {
     }
 
     // Member route with paywall
-    if (!hasAccess(profile)) {
-      router.push("/subscribe");
-      setLoading(false);
-      return;
-    }
 
     router.push("/app");
     setLoading(false);
