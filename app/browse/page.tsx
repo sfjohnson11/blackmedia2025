@@ -7,7 +7,7 @@ import { supabase } from "@/lib/supabase"
 import type { Channel } from "@/types"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
-import { Search, Filter, Loader2 } from "lucide-react"
+import { Search, Filter, Loader2, ArrowLeft } from "lucide-react"
 import { ChannelGrid } from "@/components/channel-grid"
 
 export default function BrowsePage() {
@@ -114,6 +114,19 @@ export default function BrowsePage() {
 
   return (
     <div className="pt-24 px-4 md:px-10 pb-10">
+      {/* BACK TO HUB */}
+      <div className="mb-4">
+        <Link href="/app">
+          <Button
+            variant="outline"
+            className="flex items-center gap-2 border-amber-500/50 text-amber-300 hover:bg-amber-500/10 hover:text-amber-200"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Back to Member Hub
+          </Button>
+        </Link>
+      </div>
+
       <div className="flex flex-col md:flex-row md:items-center justify-between mb-8">
         <h1 className="text-3xl font-bold mb-4 md:mb-0">Browse All Channels</h1>
 
