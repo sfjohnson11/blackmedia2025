@@ -2,10 +2,14 @@
 
 import type { Channel } from "@/types";
 import { ChannelCard } from "@/components/channel-card";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { getFavorites } from "@/lib/favorites";
 
 interface ChannelGridProps {
   channels: Channel[];
+  // Optional - kept for compatibility with old call sites
+  onFavoriteToggle?: (channelId: string | number) => void;
+  favorites?: string[];
 }
 
 function parseIdToNumber(id: string | number): number | null {
@@ -14,25 +18,34 @@ function parseIdToNumber(id: string | number): number | null {
   return Number.isNaN(n) ? null : n;
 }
 
-export function ChannelGrid({ channels }: ChannelGridProps) {
+export function ChannelGrid({ channels, favorites: favoritesProp }: ChannelGridProps) {
+  const [favIds, setFavIds] = useState<string[]>(favoritesProp ?? []);
+
+  useEffect(() => {
+    if (favoritesProp !== undefined) {
+      setFavIds(favoritesProp);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const ids = await getFavorites();
+      if (!cancelled) setFavIds(ids);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [favoritesProp]);
+
   const sortedChannels = useMemo(() => {
     const copy = [...channels];
-
     copy.sort((a, b) => {
       const aNum = parseIdToNumber(a.id as any);
       const bNum = parseIdToNumber(b.id as any);
-
-      // If both numeric, sort numerically
       if (aNum !== null && bNum !== null) return aNum - bNum;
-
-      // If only one is numeric, put numeric first
       if (aNum !== null && bNum === null) return -1;
       if (aNum === null && bNum !== null) return 1;
-
-      // Fallback: lexicographic by string id
       return String(a.id).localeCompare(String(b.id), undefined, { numeric: true });
     });
-
     return copy;
   }, [channels]);
 
@@ -52,7 +65,10 @@ export function ChannelGrid({ channels }: ChannelGridProps) {
     >
       {sortedChannels.map((channel) => (
         <div key={String(channel.id)} role="listitem">
-          <ChannelCard channel={channel} />
+          <ChannelCard
+            channel={channel}
+            initialFavorited={favIds.includes(String(channel.id))}
+          />
         </div>
       ))}
     </div>
