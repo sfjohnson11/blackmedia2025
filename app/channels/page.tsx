@@ -1,5 +1,5 @@
 // app/channels/page.tsx
-import { supabase } from "@/lib/supabase"
+import { createClient } from "@/utils/supabase/server"
 import type { Channel } from "@/types"
 import { ChannelGrid } from "@/components/channel-grid"
 import Link from "next/link"
@@ -10,6 +10,7 @@ export const revalidate = 0
 
 async function getChannels() {
   try {
+    const supabase = await createClient();
     const { data, error } = await supabase.from("channels").select("*")
 
     if (error) {
