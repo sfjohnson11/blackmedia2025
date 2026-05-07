@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/utils/supabase/client";
 import NewsTicker from "@/components/NewsTicker";
+import NotificationBell from "@/components/notification-bell";
 
 type Summary = { channels: number };
 
@@ -183,8 +184,8 @@ export default function AppPage() {
           </p>
         </section>
 
-        {/* QUICK LINKS — Profile / Favorites / Browse */}
-        <section className="flex flex-wrap gap-2">
+        {/* QUICK LINKS — Profile / Favorites / Browse / Notifications */}
+        <section className="flex flex-wrap items-center gap-2">
           <Link href="/favorites">
             <button className="rounded-full border border-pink-500/60 bg-pink-600/20 px-4 py-1.5 text-xs font-semibold text-pink-100 hover:bg-pink-600/40 transition">
               ❤️ My Favorites
@@ -200,6 +201,7 @@ export default function AppPage() {
               🔍 Browse All
             </button>
           </Link>
+          <NotificationBell className="text-slate-100 hover:text-white" />
         </section>
 
         {/* ✅ ALWAYS-SHOW UPGRADE BANNER (for unpaid users, even during grace) */}
