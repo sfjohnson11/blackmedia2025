@@ -138,11 +138,9 @@ export default function AppPage() {
   // - Active = access
   // - Otherwise, access allowed ONLY until grace_until
   const hasAccess = useMemo(() => {
-    if (isAdmin) return true;
-    if (status === "active") return true;
-    if (Number.isFinite(graceUntilMs) && Date.now() < graceUntilMs) return true;
-    return false;
-  }, [isAdmin, status, graceUntilMs]);
+    if (!profile) return false;
+    return true;
+  }, [profile]);
 
   // ✅ Banner rule:
   // Show upgrade banner for anyone who is NOT active (but still approved/inside),
