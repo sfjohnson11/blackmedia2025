@@ -1,76 +1,74 @@
-"use client"
+"use client";
 
-import { useState, useEffect } from "react"
-import { createClient } from "@supabase/supabase-js"
-import { ChannelGrid } from "@/components/channel-grid"
-import { Heart, Loader2 } from "lucide-react"
+import { useState, useEffect } from "react";
+import Link from "next/link";
+import { createClient } from "@/utils/supabase/client";
+import { ChannelGrid } from "@/components/channel-grid";
+import { Button } from "@/components/ui/button";
+import { Heart, Loader2, ArrowLeft } from "lucide-react";
+import { getFavorites, toggleFavorite as toggleFavoriteRemote } from "@/lib/favorites";
 
 export default function FavoritesPage() {
-  const [favorites, setFavorites] = useState<number[]>([])
-  const [channels, setChannels] = useState<any[]>([])
-  const [loading, setLoading] = useState(true)
-
-  const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!)
+  const [favorites, setFavorites] = useState<string[]>([]);
+  const [channels, setChannels] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Load favorites from localStorage
-    const loadFavorites = () => {
+    let cancelled = false;
+    (async () => {
       try {
-        const storedFavorites = localStorage.getItem("favorites")
-        if (storedFavorites) {
-          return JSON.parse(storedFavorites)
+        const favIds = await getFavorites();
+        if (cancelled) return;
+        setFavorites(favIds);
+
+        if (favIds.length === 0) {
+          setChannels([]);
+          return;
         }
-      } catch (error) {
-        console.error("Error loading favorites:", error)
-      }
-      return []
-    }
 
-    const favoritesList = loadFavorites()
-    setFavorites(favoritesList)
-
-    // Fetch channel data for favorites
-    const fetchFavoriteChannels = async () => {
-      if (favoritesList.length === 0) {
-        setLoading(false)
-        return
-      }
-
-      try {
-        const { data, error } = await supabase.from("channels").select("*").in("id", favoritesList)
+        const supabase = createClient();
+        const { data, error } = await supabase
+          .from("channels")
+          .select("*")
+          .in("id", favIds);
 
         if (error) {
-          throw error
+          console.error("Error fetching favorite channels:", error);
+          setChannels([]);
+        } else if (!cancelled) {
+          setChannels(data ?? []);
         }
-
-        setChannels(data || [])
-      } catch (error) {
-        console.error("Error fetching favorite channels:", error)
       } finally {
-        setLoading(false)
+        if (!cancelled) setLoading(false);
       }
-    }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
-    fetchFavoriteChannels()
-  }, [])
-
-  const toggleFavorite = (channelId: number) => {
-    try {
-      // Remove from favorites
-      const updatedFavorites = favorites.filter((id) => id !== channelId)
-      setFavorites(updatedFavorites)
-      localStorage.setItem("favorites", JSON.stringify(updatedFavorites))
-
-      // Update channels list
-      setChannels(channels.filter((channel) => channel.id !== channelId))
-    } catch (error) {
-      console.error("Error updating favorites:", error)
+  async function handleToggle(channelId: string | number) {
+    const idStr = String(channelId);
+    const stillFavorited = await toggleFavoriteRemote(idStr);
+    if (!stillFavorited) {
+      setFavorites((prev) => prev.filter((id) => id !== idStr));
+      setChannels((prev) => prev.filter((c) => String(c.id) !== idStr));
     }
   }
 
   return (
     <div className="min-h-screen bg-black text-white pt-24 pb-16 px-4 md:px-8">
       <div className="max-w-7xl mx-auto">
+        <div className="mb-4">
+          <Link href="/app">
+            <Button
+              variant="outline"
+              className="flex items-center gap-2 border-amber-500/50 text-amber-300 hover:bg-amber-500/10 hover:text-amber-200"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Back to Member Hub
+            </Button>
+          </Link>
+        </div>
+
         <div className="flex items-center mb-8">
           <Heart className="h-6 w-6 text-red-500 mr-3" />
           <h1 className="text-3xl font-bold">My Favorites</h1>
@@ -85,13 +83,13 @@ export default function FavoritesPage() {
             <Heart className="h-16 w-16 text-gray-700 mx-auto mb-4" />
             <h2 className="text-2xl font-medium text-gray-300 mb-2">No favorites yet</h2>
             <p className="text-gray-400 max-w-md mx-auto">
-              Add channels to your favorites by clicking the heart icon while watching
+              Add channels to your favorites by clicking the heart icon while watching.
             </p>
           </div>
         ) : (
-          <ChannelGrid channels={channels} onFavoriteToggle={toggleFavorite} favorites={favorites} />
+          <ChannelGrid channels={channels} onFavoriteToggle={handleToggle} favorites={favorites} />
         )}
       </div>
     </div>
-  )
+  );
 }
