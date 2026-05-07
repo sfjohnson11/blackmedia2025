@@ -7,21 +7,25 @@ import { Button } from "@/components/ui/button"
 import { ArrowLeft, User, Settings, Heart, Clock, LogOut } from "lucide-react"
 import { getFavorites } from "@/lib/favorites"
 import { getContinueWatching } from "@/lib/continue"
-import type { Program } from "@/types"
+import type { Channel, Program } from "@/types"
 
 export default function ProfilePage() {
-  const [favorites, setFavorites] = useState<Program[]>([])
+  const [favoriteChannels, setFavoriteChannels] = useState<Channel[]>([])
   const [history, setHistory] = useState<Program[]>([])
   const [user, setUser] = useState<any>(null)
 
   useEffect(() => {
     async function loadData() {
-      const favIds = getFavorites()
+      // ✅ Favorites are now async (database) and store CHANNEL ids
+      const favIds = await getFavorites()
       const watchIds = getContinueWatching()
 
       if (favIds.length > 0) {
-        const { data } = await supabase.from("programs").select("*").in("id", favIds)
-        setFavorites(data || [])
+        const { data } = await supabase
+          .from("channels")
+          .select("*")
+          .in("id", favIds)
+        setFavoriteChannels((data as Channel[]) || [])
       }
 
       if (watchIds.length > 0) {
@@ -44,10 +48,10 @@ export default function ProfilePage() {
     <div className="pt-24 px-4 md:px-10 min-h-screen">
       <div className="max-w-4xl mx-auto">
         <div className="flex items-center mb-8">
-          <Link href="/" className="mr-4">
+          <Link href="/app" className="mr-4">
             <Button variant="ghost" size="sm">
               <ArrowLeft className="h-4 w-4 mr-2" />
-              Back to Home
+              Back to Member Hub
             </Button>
           </Link>
           <h1 className="text-3xl font-bold">Your Profile</h1>
@@ -101,16 +105,18 @@ export default function ProfilePage() {
           <div className="bg-gray-800 rounded-lg p-6">
             <h3 className="text-xl font-bold mb-4 flex items-center">
               <Heart className="h-5 w-5 mr-2 text-red-400" />
-              Favorite Programs
+              Favorite Channels
             </h3>
-            {favorites.length === 0 ? (
-              <p className="text-gray-400 text-center py-8">Your favorite programs will appear here</p>
+            {favoriteChannels.length === 0 ? (
+              <p className="text-gray-400 text-center py-8">
+                Your favorite channels will appear here. Tap the heart on any channel to save it.
+              </p>
             ) : (
               <ul className="space-y-2">
-                {favorites.map((p) => (
-                  <li key={p.id} className="text-white text-sm">
-                    <Link href={`/watch/${p.channel_id}`} className="hover:underline">
-                      {p.title} (Channel {p.channel_id})
+                {favoriteChannels.map((c) => (
+                  <li key={c.id} className="text-white text-sm">
+                    <Link href={`/watch/${c.id}`} className="hover:underline">
+                      {c.name} (Channel {c.id})
                     </Link>
                   </li>
                 ))}
