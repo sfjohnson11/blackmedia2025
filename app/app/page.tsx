@@ -133,18 +133,11 @@ export default function AppPage() {
 
   const graceUntilMs = useMemo(() => parseMs(profile?.grace_until), [profile]);
 
-  // ✅ Access rule (what you confirmed):
-  // - Admin always has access
-  // - Active = access
-  // - Otherwise, access allowed ONLY until grace_until
   const hasAccess = useMemo(() => {
     if (!profile) return false;
     return true;
   }, [profile]);
 
-  // ✅ Banner rule:
-  // Show upgrade banner for anyone who is NOT active (but still approved/inside),
-  // EVEN IF they still have access during grace.
   const showUpgradeBanner = useMemo(() => {
     if (profileLoading) return false;
     if (!profile) return false;
@@ -188,6 +181,25 @@ export default function AppPage() {
             Welcome inside the network. From here you can jump to live channels,
             Freedom School lessons, and on-demand specials.
           </p>
+        </section>
+
+        {/* QUICK LINKS — Profile / Favorites / Browse */}
+        <section className="flex flex-wrap gap-2">
+          <Link href="/favorites">
+            <button className="rounded-full border border-pink-500/60 bg-pink-600/20 px-4 py-1.5 text-xs font-semibold text-pink-100 hover:bg-pink-600/40 transition">
+              ❤️ My Favorites
+            </button>
+          </Link>
+          <Link href="/profile">
+            <button className="rounded-full border border-blue-500/60 bg-blue-600/20 px-4 py-1.5 text-xs font-semibold text-blue-100 hover:bg-blue-600/40 transition">
+              👤 My Profile
+            </button>
+          </Link>
+          <Link href="/browse">
+            <button className="rounded-full border border-slate-500/60 bg-slate-800/60 px-4 py-1.5 text-xs font-semibold text-slate-100 hover:bg-slate-700 transition">
+              🔍 Browse All
+            </button>
+          </Link>
         </section>
 
         {/* ✅ ALWAYS-SHOW UPGRADE BANNER (for unpaid users, even during grace) */}
@@ -335,6 +347,27 @@ export default function AppPage() {
                 {hasAccess
                   ? "Click to open the full channel grid and choose where to watch."
                   : "Grace ended — upgrade required."}
+              </p>
+            </div>
+          </Link>
+
+          <Link href="/favorites" className="group">
+            <div className="h-full rounded-2xl border border-slate-800 bg-gradient-to-br from-pink-800/30 via-slate-950 to-black p-5 shadow-lg transition group-hover:border-pink-400/80 group-hover:shadow-pink-900/40">
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <h2 className="text-xl font-bold flex items-center gap-2">
+                  <span className="text-lg">❤️</span>
+                  My Favorites
+                </h2>
+                <span className="text-[11px] uppercase tracking-wide text-slate-300">
+                  Saved Channels
+                </span>
+              </div>
+              <p className="text-sm text-slate-200 mb-3">
+                Jump straight to the channels you've saved. Tap the heart on any
+                channel to add it here.
+              </p>
+              <p className="text-xs text-slate-400">
+                Your favorites follow you across devices.
               </p>
             </div>
           </Link>
