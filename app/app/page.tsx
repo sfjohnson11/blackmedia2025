@@ -1,4 +1,4 @@
-"use client";
+undefined"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -449,13 +449,6 @@ export default function AppPage() {
             </div>
           </Link>
         </section>
-
-        {!profileLoading && profile && !isPaidActive && (
-          <div className="text-xs text-slate-500">
-            Tip: you can still watch during grace, but upgrade now to avoid interruption on{" "}
-            <span className="text-slate-200 font-semibold">{graceCutoffLabel}</span>.
-          </div>
-        )}
       </main>
     </div>
   );
