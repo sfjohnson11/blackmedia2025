@@ -20,30 +20,6 @@ type Profile = {
 
 const STRIPE_UPGRADE_URL = "https://buy.stripe.com/7sY8wPekWcUp6IM6Rq6J314";
 
-// Feb 1, 2026 @ 12:00am PT = 08:00:00Z
-const GRACE_CUTOFF_ISO = "2026-02-01T08:00:00Z";
-
-function parseMs(iso: string | null | undefined): number {
-  if (!iso) return NaN;
-  const t = Date.parse(iso);
-  return Number.isNaN(t) ? NaN : t;
-}
-
-function fmtDateTimeLocal(iso: string) {
-  try {
-    return new Date(iso).toLocaleString("en-US", {
-      month: "long",
-      day: "numeric",
-      year: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-      timeZoneName: "short",
-    });
-  } catch {
-    return iso;
-  }
-}
-
 export default function AppPage() {
   const supabase = createClient();
 
@@ -132,8 +108,6 @@ export default function AppPage() {
     return status === "active";
   }, [isAdmin, status]);
 
-  const graceUntilMs = useMemo(() => parseMs(profile?.grace_until), [profile]);
-
   const hasAccess = useMemo(() => {
     if (!profile) return false;
     return true;
@@ -145,27 +119,6 @@ export default function AppPage() {
     if (isAdmin) return false;
     return status !== "active";
   }, [profileLoading, profile, isAdmin, status]);
-
-  const graceCutoffLabel = useMemo(
-    () => fmtDateTimeLocal(GRACE_CUTOFF_ISO),
-    []
-  );
-
-  const graceLabel = useMemo(() => {
-    if (!Number.isFinite(graceUntilMs)) return null;
-    try {
-      return new Date(graceUntilMs).toLocaleString("en-US", {
-        month: "long",
-        day: "numeric",
-        year: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-        timeZoneName: "short",
-      });
-    } catch {
-      return null;
-    }
-  }, [graceUntilMs]);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-black via-slate-950 to-black text-white">
@@ -209,41 +162,24 @@ export default function AppPage() {
           <NotificationBell className="text-slate-100 hover:text-white" />
         </section>
 
-        {/* ✅ ALWAYS-SHOW UPGRADE BANNER (for unpaid users, even during grace) */}
+        {/* ✅ UPGRADE BANNER for free-tier users */}
         {showUpgradeBanner && (
           <section className="rounded-2xl border border-amber-500/30 bg-gradient-to-br from-amber-500/10 via-slate-950 to-black px-5 py-5 md:px-6 md:py-6 shadow-lg">
             <p className="text-xs font-semibold uppercase tracking-wide text-amber-300/90">
-              Paid membership required (grace period currently on)
+              You&apos;re on the Free tier
             </p>
 
             <h2 className="text-2xl font-extrabold tracking-tight mt-1">
-              Upgrade to keep the network alive — and your access with it.
+              Unlock all 30+ channels — $9.99/month
             </h2>
 
             <p className="text-sm text-slate-200 mt-2 max-w-3xl">
-              You&apos;re approved and inside, but your account isn&apos;t on a paid
-              plan yet. The archive, Freedom School, and 30+ channels are
-              member-supported — that&apos;s how we stay independent and how this
-              content stays online.{" "}
-              <span className="font-semibold text-amber-300">
-                Starting {graceCutoffLabel}
-              </span>
-              , full access requires an active subscription.
+              You&apos;re inside the network with free access to 10 channels.
+              Upgrade to Member for the full lineup — Freedom School, Construction
+              Education, Black Truth Music Experience, Politics Then &amp; Now,
+              Teaching Truth TV, and the complete archive. Member subscriptions
+              fund the platform and keep it independent.
             </p>
-
-            <div className="mt-3 text-xs text-slate-300">
-              <div className="flex flex-wrap gap-2">
-                <span className="rounded-full border border-slate-700 bg-slate-900/70 px-3 py-1">
-                  Status: <span className="text-amber-300 font-semibold">{status || "unpaid"}</span>
-                </span>
-
-                {graceLabel && (
-                  <span className="rounded-full border border-slate-700 bg-slate-900/70 px-3 py-1">
-                    Grace ends: <span className="text-slate-100 font-semibold">{graceLabel}</span>
-                  </span>
-                )}
-              </div>
-            </div>
 
             <div className="mt-4 flex flex-wrap gap-2">
               <a href={STRIPE_UPGRADE_URL}>
@@ -252,16 +188,15 @@ export default function AppPage() {
                 </button>
               </a>
 
-              <Link href="/request-access">
+              <Link href="/membership">
                 <button className="rounded-full border border-slate-500/70 bg-slate-800/90 px-4 py-2 text-xs font-semibold text-slate-100 shadow hover:bg-slate-700 transition">
-                  Need help? Contact / Request
+                  See what&apos;s included
                 </button>
               </Link>
             </div>
 
             <p className="text-xs text-slate-500 mt-3">
-              Cancel anytime. After upgrading, log out and log back in so your
-              membership status updates.
+              Cancel anytime · Secure checkout via Stripe
             </p>
           </section>
         )}
