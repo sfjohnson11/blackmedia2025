@@ -2,6 +2,7 @@
 
 import { useState, FormEvent } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
 
 const LOGO_URL =
@@ -9,6 +10,7 @@ const LOGO_URL =
 
 export default function RequestAccessPage() {
   const supabase = createClient();
+  const router = useRouter();
 
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -75,9 +77,9 @@ export default function RequestAccessPage() {
       return;
     }
 
-    // Belt-and-suspenders profile creation. The database trigger should
-    // handle this automatically, but this is a fallback in case the user
-    // gets an immediate session (email confirmation disabled).
+    // If we got a session back, email confirmation is OFF — the user is
+    // already signed in. Create the profile (in case the DB trigger didn't
+    // fire for any reason) and send them straight into the app.
     if (data.user && data.session) {
       try {
         await supabase.from("user_profiles").upsert(
@@ -92,11 +94,16 @@ export default function RequestAccessPage() {
           { onConflict: "id" }
         );
       } catch (err) {
-        // Trigger will handle it — don't block signup on this
+        // Trigger handles this — don't block signup on this
         console.error("Profile upsert (non-blocking):", err);
       }
+
+      // Straight into the member hub
+      router.push("/app");
+      return;
     }
 
+    // No session means email confirmation is ON — show the check-email screen
     setSuccess(true);
     setLoading(false);
   }
