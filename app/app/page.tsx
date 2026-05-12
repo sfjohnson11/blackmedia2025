@@ -175,12 +175,17 @@ export default function AppPage() {
 
         {/* HEADER */}
         <section className="space-y-3">
+          <div className="inline-flex items-center gap-2 rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-amber-200">
+            <span className="inline-flex h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
+            Private Members&apos; Network
+          </div>
           <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight">
             Black Truth TV — Member Hub
           </h1>
           <p className="text-sm md:text-base text-slate-300 max-w-2xl">
-            Welcome inside the network. From here you can jump to live channels,
-            Freedom School lessons, and on-demand specials.
+            You&apos;re inside the network. Unfiltered, unbought, uninterrupted —
+            jump to live channels, Freedom School lessons, and on-demand specials.
+            All here. All yours. 24/7.
           </p>
         </section>
 
@@ -212,16 +217,18 @@ export default function AppPage() {
             </p>
 
             <h2 className="text-2xl font-extrabold tracking-tight mt-1">
-              Upgrade to keep access
+              Upgrade to keep the network alive — and your access with it.
             </h2>
 
             <p className="text-sm text-slate-200 mt-2 max-w-3xl">
-              You&apos;re approved to use Black Truth TV, but your account is not
-              on a paid plan yet.{" "}
+              You&apos;re approved and inside, but your account isn&apos;t on a paid
+              plan yet. The archive, Freedom School, and 30+ channels are
+              member-supported — that&apos;s how we stay independent and how this
+              content stays online.{" "}
               <span className="font-semibold text-amber-300">
                 Starting {graceCutoffLabel}
               </span>
-              , access will require an active subscription.
+              , full access requires an active subscription.
             </p>
 
             <div className="mt-3 text-xs text-slate-300">
@@ -253,7 +260,8 @@ export default function AppPage() {
             </div>
 
             <p className="text-xs text-slate-500 mt-3">
-              After upgrading, log out and log back in so your membership status updates.
+              Cancel anytime. After upgrading, log out and log back in so your
+              membership status updates.
             </p>
           </section>
         )}
@@ -342,8 +350,9 @@ export default function AppPage() {
                 </span>
               </div>
               <p className="text-sm text-slate-200 mb-3">
-                Flip through all Black Truth TV channels, including Resistance TV,
-                Construction Queen TV, Freedom School, and more.
+                30+ live channels — Resistance TV, Black History Uncut, Construction
+                Queen TV, Freedom School, and more. The lineup the algorithm won&apos;t
+                show you, running around the clock.
               </p>
               <p className="text-xs text-slate-400">
                 {hasAccess
@@ -365,7 +374,7 @@ export default function AppPage() {
                 </span>
               </div>
               <p className="text-sm text-slate-200 mb-3">
-                Jump straight to the channels you've saved. Tap the heart on any
+                Jump straight to the channels you&apos;ve saved. Tap the heart on any
                 channel to add it here.
               </p>
               <p className="text-xs text-slate-400">
@@ -392,8 +401,8 @@ export default function AppPage() {
                 </span>
               </div>
               <p className="text-sm text-slate-200 mb-3">
-                Watch lessons, listen to lectures, and download study packets from the
-                Freedom School library.
+                Lessons, lectures, and study packets — the curriculum your school
+                never offered. Watch, listen, download, keep.
               </p>
               <p className="text-xs text-slate-400">
                 {hasAccess
@@ -421,8 +430,8 @@ export default function AppPage() {
                 </span>
               </div>
               <p className="text-sm text-slate-200 mb-3">
-                Binge full series, documentaries, and special features without waiting
-                for the live schedule.
+                Full series, documentaries, and specials — on your time. Binge the
+                archive without waiting for the live schedule.
               </p>
               <p className="text-xs text-slate-400">
                 {hasAccess ? "Perfect when you want to go deep on one topic." : "Grace ended — upgrade required."}
@@ -448,11 +457,11 @@ export default function AppPage() {
                 </span>
               </div>
               <p className="text-sm text-slate-200 mb-3">
-                Go to the Breaking News Hub for Channel 21 — watch the live stream and
-                see today&apos;s top stories in one place.
+                Channel 21 — the news the mainstream won&apos;t cover. Live stream
+                plus today&apos;s top stories, all in one hub.
               </p>
               <p className="text-xs text-slate-400">
-                {hasAccess ? "Channel 21 is your live news window. Click here to enter the news hub." : "Grace ended — upgrade required."}
+                {hasAccess ? "Click here to enter the news hub." : "Grace ended — upgrade required."}
               </p>
             </div>
           </Link>
@@ -475,14 +484,51 @@ export default function AppPage() {
                 </span>
               </div>
               <p className="text-sm text-slate-200 mb-3">
-                Join private conversations about Black Truth TV channels, Freedom
-                School lessons, and upcoming specials with other approved members.
+                Private, moderated conversations with other approved members. Talk
+                channels, lessons, and specials — no trolls, no algorithm, no public
+                scrolling.
               </p>
               <p className="text-xs text-slate-400">
-                {hasAccess ? "Chat is moderated and available only to authorized community members." : "Grace ended — upgrade required."}
+                {hasAccess ? "Available only to authorized community members." : "Grace ended — upgrade required."}
               </p>
             </div>
           </Link>
+        </section>
+
+        {/* ===== WHY THIS NETWORK EXISTS ===== */}
+        <section className="rounded-2xl border border-amber-500/20 bg-gradient-to-br from-amber-950/40 via-slate-950 to-black px-5 py-6 md:px-8 md:py-8 shadow-lg">
+          <p className="text-xs font-semibold uppercase tracking-wide text-amber-300/90">
+            Why this is a private network
+          </p>
+          <h2 className="text-2xl md:text-3xl font-extrabold tracking-tight mt-2">
+            Built so it can&apos;t be taken down.
+          </h2>
+          <p className="mt-3 text-sm md:text-base text-slate-200 max-w-3xl leading-relaxed">
+            Every major platform — YouTube, TikTok, Facebook — has demonetized,
+            flagged, or removed Black truth-tellers. Black Truth TV is the answer:
+            a members-only network where the history we tell can&apos;t be silenced
+            by an algorithm or a coordinated flag. Members fund the archive. The
+            archive belongs to the community. As long as we&apos;re here, this
+            content stays here.
+          </p>
+          <p className="mt-3 text-sm md:text-base text-slate-300 max-w-3xl leading-relaxed">
+            Every new member makes the network harder to silence. If Black Truth TV
+            has changed how you see your history, share it with one person who
+            needs it too.
+          </p>
+
+          <div className="mt-5 flex flex-wrap gap-2">
+            <Link href="/about">
+              <button className="rounded-full border border-amber-500/50 bg-amber-500/10 px-4 py-2 text-xs font-semibold text-amber-100 hover:bg-amber-500/20 transition">
+                Read our mission
+              </button>
+            </Link>
+            <Link href="/contact">
+              <button className="rounded-full border border-slate-500/70 bg-slate-800/80 px-4 py-2 text-xs font-semibold text-slate-100 hover:bg-slate-700 transition">
+                Submit content or partner with us
+              </button>
+            </Link>
+          </div>
         </section>
       </main>
     </div>
