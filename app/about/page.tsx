@@ -5,7 +5,7 @@ import type { Metadata } from "next";
 export const metadata: Metadata = {
   title: "About | Black Truth TV",
   description:
-    "Why Black Truth TV exists: a 24/7 home for truth, history, culture, independent voices, and community uplift.",
+    "Why Black Truth TV exists: a private members' network for truth, history, culture, independent voices, and community uplift — built to outlast the takedowns.",
 };
 
 const LOGO_URL =
@@ -35,6 +35,12 @@ export default function AboutPage() {
 
             {/* Title + intro */}
             <div>
+              {/* Private network pill */}
+              <div className="inline-flex items-center gap-2 rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-amber-200 mb-4">
+                <span className="inline-flex h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
+                Private Members&apos; Network
+              </div>
+
               <h1 className="text-3xl md:text-5xl font-extrabold leading-tight tracking-tight">
                 <span className="bg-clip-text text-transparent bg-gradient-to-r from-[#facc15] via-[#fde68a] to-white">
                   Black Truth TV
@@ -42,21 +48,22 @@ export default function AboutPage() {
               </h1>
               <p className="mt-4 text-white/85 max-w-3xl text-base md:text-lg">
                 Unfiltered, unbought, uninterrupted. 24/7 programming dedicated to
-                truth, culture, history, and community uplift.
+                truth, culture, history, and community uplift — protected by a
+                private network so the content can&apos;t be taken down.
               </p>
 
               <div className="mt-7 flex flex-wrap gap-3">
                 <Link
-                  href="/guide"
+                  href="/request-access"
                   className="inline-flex items-center rounded-lg bg-[#facc15] text-black px-4 py-2 text-sm font-semibold hover:bg-[#f5c20a]"
                 >
-                  See What’s On
+                  Join the Network — Free
                 </Link>
                 <Link
-                  href="/"
+                  href="/guide"
                   className="inline-flex items-center rounded-lg border border-white/25 px-4 py-2 text-sm font-semibold hover:bg-white/10"
                 >
-                  ← Back Home
+                  See What&rsquo;s On
                 </Link>
               </div>
             </div>
@@ -102,7 +109,7 @@ export default function AboutPage() {
         </div>
       </section>
 
-      {/* ===== Why We Exist / What you’ll find ===== */}
+      {/* ===== Why We Exist / What you'll find ===== */}
       <section className="px-6 md:px-10 py-12 border-b border-white/10">
         <div className="max-w-6xl mx-auto grid md:grid-cols-2 gap-8">
           <div>
@@ -128,15 +135,80 @@ export default function AboutPage() {
           </div>
 
           <div className="rounded-xl border border-white/10 bg-white/5 p-5">
-            <h4 className="text-lg font-semibold">What you’ll find here</h4>
+            <h4 className="text-lg font-semibold">What you&rsquo;ll find here</h4>
             <ul className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 text-white/80 text-sm">
-              <li>• Documentaries & archival series</li>
+              <li>• Documentaries &amp; archival series</li>
               <li>• Freedom School content</li>
-              <li>• Music blocks & culture shows</li>
+              <li>• Music blocks &amp; culture shows</li>
               <li>• Community conversations</li>
               <li>• History, politics, and analysis</li>
-              <li>• Live broadcasts & specials</li>
+              <li>• Live broadcasts &amp; specials</li>
             </ul>
+          </div>
+        </div>
+      </section>
+
+      {/* ===== Why We're a Private Network ===== */}
+      <section className="px-6 md:px-10 py-14 border-b border-white/10 bg-gradient-to-b from-black via-[#0a0410] to-black">
+        <div className="max-w-6xl mx-auto">
+          <p className="text-xs font-semibold uppercase tracking-wide text-amber-300/90">
+            Why we&rsquo;re a private network
+          </p>
+          <h2 className="mt-2 text-2xl md:text-4xl font-extrabold tracking-tight">
+            Built so it can&rsquo;t be taken down.
+          </h2>
+
+          <div className="mt-6 grid md:grid-cols-[1.4fr_1fr] gap-8 items-start">
+            <div className="space-y-4 text-white/85 leading-relaxed">
+              <p>
+                Every major platform — YouTube, TikTok, Facebook — has demonetized,
+                flagged, or removed Black truth-tellers. Algorithms suppress what
+                should reach us. Coordinated flag campaigns disappear content
+                overnight. The history we tell does not survive on platforms that
+                profit from burying it.
+              </p>
+              <p>
+                Black Truth TV was built differently. As a members&rsquo; network on
+                independent infrastructure, the archive cannot be silenced by a
+                flag, an advertiser, or a policy change. Members fund the platform.
+                The platform serves the community. The content stays where it
+                belongs — accessible, protected, and free of algorithmic
+                gatekeeping.
+              </p>
+              <p className="text-white/70">
+                This is what &ldquo;independent&rdquo; actually means: not owned, not
+                pressured, not removable.
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                <div className="text-[#facc15] text-xs font-bold uppercase tracking-wide mb-1">
+                  Independent
+                </div>
+                <p className="text-sm text-white/75 leading-relaxed">
+                  No corporate parent. No outside advertisers shaping the lineup.
+                </p>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                <div className="text-[#facc15] text-xs font-bold uppercase tracking-wide mb-1">
+                  Member-funded
+                </div>
+                <p className="text-sm text-white/75 leading-relaxed">
+                  Subscriptions pay for the streams, servers, and archive. The
+                  community owns the experience.
+                </p>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                <div className="text-[#facc15] text-xs font-bold uppercase tracking-wide mb-1">
+                  Protected
+                </div>
+                <p className="text-sm text-white/75 leading-relaxed">
+                  Moderated, members-only, with a documented takedown response
+                  process for legitimate copyright claims.
+                </p>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -167,7 +239,7 @@ export default function AboutPage() {
         <div className="max-w-6xl mx-auto">
           <h2 className="text-2xl md:text-3xl font-bold">Our Promise</h2>
           <ul className="mt-4 space-y-3 text-white/80">
-            <li>• Tell the truth, even when it’s uncomfortable.</li>
+            <li>• Tell the truth, even when it&rsquo;s uncomfortable.</li>
             <li>• Honor our elders, protect our youth, and grow our collective knowledge.</li>
             <li>• Keep the stream consistent—day and night.</li>
             <li>• Listen to the community and evolve with intention.</li>
@@ -175,53 +247,81 @@ export default function AboutPage() {
         </div>
       </section>
 
-      {/* ===== How to Watch (removed Channel 4) ===== */}
+      {/* ===== How to Watch ===== */}
       <section className="px-6 md:px-10 py-12 border-b border-white/10">
         <div className="max-w-6xl mx-auto">
           <h2 className="text-2xl md:text-3xl font-bold">How to Watch</h2>
-          <p className="mt-4 text-white/80">
-            Head to the guide to see what’s live right now, or jump straight into our live channel.
+          <p className="mt-4 text-white/80 max-w-3xl">
+            Start with the free tier — 10 channels, no card required. Upgrade to
+            Member for the full archive whenever you&rsquo;re ready. Cancel anytime.
           </p>
           <div className="mt-6 flex flex-wrap gap-3">
             <Link
-              href="/guide"
+              href="/request-access"
               className="inline-flex items-center rounded-lg bg-[#facc15] text-black px-4 py-2 text-sm font-semibold hover:bg-[#f5c20a]"
             >
-              Open the Guide
+              Request Free Access
             </Link>
             <Link
-              href="/watch/21"
+              href="/membership"
+              className="inline-flex items-center rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm font-semibold text-amber-100 hover:bg-amber-500/20"
+            >
+              See Membership Plans
+            </Link>
+            <Link
+              href="/guide"
               className="inline-flex items-center rounded-lg border border-white/25 px-4 py-2 text-sm font-semibold hover:bg-white/10"
             >
-              Watch Channel 21 (Live)
+              Open the Guide
             </Link>
           </div>
         </div>
       </section>
 
       {/* ===== Contact ===== */}
-      <section className="px-6 md:px-10 py-12">
+      <section className="px-6 md:px-10 py-12 border-b border-white/10">
         <div className="max-w-6xl mx-auto">
           <h2 className="text-2xl md:text-3xl font-bold">Get Involved</h2>
           <p className="mt-4 text-white/80">
-            Questions, licensing, or content submissions? We’d love to hear from you.
+            Questions, licensing, content submissions, partnerships, or press
+            inquiries? We&rsquo;d love to hear from you.
           </p>
           <div className="mt-4 text-white/80">
-            <a href="mailto:director@sfjfamilyservices.org" className="underline">
+            <a href="mailto:director@sfjfamilyservices.org" className="underline hover:text-amber-300">
               director@sfjfamilyservices.org
             </a>
           </div>
 
+          <p className="mt-6 text-xs text-white/50 leading-relaxed max-w-2xl">
+            Black Truth TV is operated independently by SF Johnson Consulting &amp;
+            Construction Services. We maintain a documented DMCA-compliant
+            takedown response process for legitimate copyright claims.
+          </p>
+
           <div className="mt-8">
             <Link
-              href="/"
+              href="/login"
               className="inline-flex items-center rounded-lg border border-white/25 px-4 py-2 text-sm font-semibold hover:bg-white/10"
             >
-              ← Back Home
+              ← Back to Sign In
             </Link>
           </div>
         </div>
       </section>
+
+      {/* ===== Footer ===== */}
+      <footer className="px-6 md:px-10 py-8">
+        <div className="max-w-6xl mx-auto flex flex-col md:flex-row md:items-center md:justify-between gap-4 text-xs text-white/60">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <Link href="/contact" className="hover:text-amber-300">Contact</Link>
+            <Link href="/privacy" className="hover:text-amber-300">Privacy</Link>
+            <Link href="/copyright" className="hover:text-amber-300">Copyright / Takedown</Link>
+          </div>
+          <div className="text-white/40">
+            © Black Truth TV. A private members&apos; network.
+          </div>
+        </div>
+      </footer>
     </main>
   );
 }
