@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { requireAdmin } from "@/lib/require-admin";
 
 export const runtime = "nodejs";
 
@@ -10,6 +11,13 @@ const supabaseAdmin = createClient(
 );
 
 export async function POST(req: Request) {
+  // 🔒 Admin only. This endpoint mints signed URLs with the service-role key,
+  // so it must never be reachable by anonymous callers.
+  const gate = await requireAdmin();
+  if (!gate.ok) {
+    return NextResponse.json({ error: gate.error }, { status: gate.status });
+  }
+
   try {
     const body = await req.json().catch(() => ({}));
     const bucket = String(body?.bucket || "").trim();
