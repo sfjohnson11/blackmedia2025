@@ -2,37 +2,72 @@ import { type NextRequest, NextResponse } from "next/server"
 
 export const dynamic = "force-dynamic"
 
+/**
+ * Allowlist of hostnames this proxy is permitted to fetch from.
+ * This prevents the route from being used as an open proxy / SSRF relay
+ * (e.g. pointing it at cloud metadata endpoints or internal services).
+ *
+ * The Supabase project host is derived from NEXT_PUBLIC_SUPABASE_URL.
+ * Add any CDN / storage domains you legitimately serve video from.
+ */
+function buildAllowlist(): Set<string> {
+  const hosts = new Set<string>()
+  try {
+    const supaUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+    if (supaUrl) hosts.add(new URL(supaUrl).hostname)
+  } catch {
+    // ignore malformed env
+  }
+  // Add additional trusted media hosts here if needed, e.g.:
+  // hosts.add("cdn.blacktruthtv.org")
+  return hosts
+}
+
+const ALLOWED_HOSTS = buildAllowlist()
+
+function isAllowed(rawUrl: string): boolean {
+  let parsed: URL
+  try {
+    parsed = new URL(rawUrl)
+  } catch {
+    return false
+  }
+  // Only allow secure http(s) and only allowlisted hosts.
+  if (parsed.protocol !== "https:") return false
+  return ALLOWED_HOSTS.has(parsed.hostname)
+}
+
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams
   const videoUrl = searchParams.get("url")
 
   if (!videoUrl) {
-    console.error("CORS Proxy V5: URL parameter is missing.")
     return NextResponse.json({ error: "URL parameter is required" }, { status: 400 })
   }
-  console.log(`CORS Proxy V5: Attempting to fetch: ${videoUrl}`)
+
+  if (!isAllowed(videoUrl)) {
+    return NextResponse.json(
+      { error: "URL host not allowed" },
+      { status: 403 }
+    )
+  }
 
   try {
-    // Pass through Range header if client sends it
     const rangeHeader = request.headers.get("range")
     const upstreamHeaders = new Headers({
-      "User-Agent": "v0-proxy-fetcher/1.0.1", // Slightly updated UA
+      "User-Agent": "btv-proxy/1.0",
     })
     if (rangeHeader) {
-      console.log(`CORS Proxy V5: Forwarding Range header: ${rangeHeader}`)
       upstreamHeaders.set("Range", rangeHeader)
     }
 
     const upstreamResponse = await fetch(videoUrl, {
       method: "GET",
       headers: upstreamHeaders,
+      redirect: "error", // don't follow redirects off the allowlist
     })
 
     if (!upstreamResponse.ok) {
-      const errorText = await upstreamResponse.text().catch(() => "Upstream error body unreadable")
-      console.error(
-        `CORS Proxy V5: Upstream fetch failed. URL: ${videoUrl}, Status: ${upstreamResponse.status}, Body: ${errorText}`,
-      )
       return NextResponse.json(
         { error: `Upstream fetch failed: ${upstreamResponse.statusText}` },
         { status: upstreamResponse.status },
@@ -44,51 +79,31 @@ export async function GET(request: NextRequest) {
     const acceptRanges = upstreamResponse.headers.get("accept-ranges") || "bytes"
     const transferEncoding = upstreamResponse.headers.get("transfer-encoding")
 
-    console.log(
-      `CORS Proxy V5: Upstream response. Status: ${upstreamResponse.status}, Content-Type: ${contentType}, Content-Length: ${contentLength || "N/A"}, Accept-Ranges: ${acceptRanges}, Transfer-Encoding: ${transferEncoding || "N/A"}`,
-    )
-
     const readableStream = upstreamResponse.body
     if (!readableStream) {
-      console.error("CORS Proxy V5: No readable stream in upstream response body for URL:", videoUrl)
       return NextResponse.json({ error: "Failed to get readable stream from video source." }, { status: 500 })
     }
 
-    // Prepare headers for the client response
     const clientResponseHeaders = new Headers()
     clientResponseHeaders.set("Content-Type", contentType)
     clientResponseHeaders.set("Access-Control-Allow-Origin", "*")
-    clientResponseHeaders.set("Accept-Ranges", acceptRanges) // Pass this along
+    clientResponseHeaders.set("Accept-Ranges", acceptRanges)
 
-    // Handle Content-Length carefully:
-    // - If upstream sent Content-Length AND it's not a partial content response (206), pass it.
-    // - If it's a 206 (Partial Content), Content-Length will be for the partial content.
-    // - If upstream is using chunked encoding, Content-Length should NOT be set.
     if (contentLength && upstreamResponse.status !== 206 && !transferEncoding) {
       clientResponseHeaders.set("Content-Length", contentLength)
     } else if (contentLength && upstreamResponse.status === 206) {
-      // For 206, Content-Length is for the chunk, so it's fine
       clientResponseHeaders.set("Content-Length", contentLength)
     }
 
-    // If upstream uses chunked encoding, reflect that if possible (though Next.js might handle this)
-    if (transferEncoding === "chunked") {
-      // Note: Next.js server might automatically handle chunked encoding based on the stream
-      // and might strip this header. This is more of an informational passthrough.
-      // clientResponseHeaders.set("Transfer-Encoding", "chunked");
-    }
-
-    // Pass through Content-Range if it's a partial content response
     if (upstreamResponse.status === 206 && upstreamResponse.headers.get("content-range")) {
       clientResponseHeaders.set("Content-Range", upstreamResponse.headers.get("content-range")!)
     }
 
     return new NextResponse(readableStream, {
-      status: upstreamResponse.status, // Pass through the original status (e.g., 200 or 206)
+      status: upstreamResponse.status,
       headers: clientResponseHeaders,
     })
   } catch (error: any) {
-    console.error(`CORS Proxy V5: Exception for ${videoUrl}:`, error.message, error.stack)
     return NextResponse.json({ error: "Proxy server error." }, { status: 500 })
   }
 }
