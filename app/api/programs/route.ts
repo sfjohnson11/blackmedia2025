@@ -10,6 +10,8 @@ function isAdmin(req: Request) {
 
 // GET /api/programs?channel_id=4&from=2025-09-01&to=2025-09-30
 export async function GET(req: Request) {
+  if (!isAdmin(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const { searchParams } = new URL(req.url);
   const channel_id = searchParams.get("channel_id");
   const from = searchParams.get("from");
