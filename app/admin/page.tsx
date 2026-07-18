@@ -84,6 +84,12 @@ const programmingTools: Tool[] = [
     description: "View cron auto-extend run history and any errors.",
   },
   {
+    name: "Fix Schedule Now",
+    path: "/api/admin/fix-schedule",
+    description:
+      "One click: refill 3 days of programming on every channel and see the results.",
+  },
+  {
     name: "News Ticker",
     path: "/admin/news-ticker",
     description: "Add or remove items in the scrolling banner on the member hub.",
@@ -574,6 +580,11 @@ export default function AdminDashboard() {
                   label="Schedule Health"
                   path="/admin/schedule-health"
                   detail="Check cron auto-extend runs and errors."
+                />
+                <QuickLink
+                  label="Fix Schedule Now"
+                  path="/api/admin/fix-schedule"
+                  detail="Refill every channel's schedule instantly."
                 />
                 <QuickLink
                   label="Freedom School Library"
