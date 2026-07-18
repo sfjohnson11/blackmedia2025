@@ -297,6 +297,29 @@ export default function LoginPage() {
         </div>
       </section>
 
+      {/* ===== FREE ANCESTRY TOOL (public, no account needed) ===== */}
+      <section className="px-5 md:px-10 py-10 border-b border-white/10">
+        <div className="max-w-5xl mx-auto rounded-2xl border border-amber-400/40 bg-gradient-to-br from-amber-500/10 via-black to-black p-6 md:p-8 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-amber-300">
+              Free for the People · No account needed
+            </p>
+            <h2 className="text-xl md:text-2xl font-extrabold text-white mt-1">
+              Free Ancestry Search — every record has a name. Find yours.
+            </h2>
+            <p className="text-sm text-white/70 mt-1.5 max-w-xl">
+              Search census rolls, Freedmen&apos;s Bureau papers, newspapers, and cemetery records on real, free archives - no account needed to search. Our gift to the community.
+            </p>
+          </div>
+          <Link
+            href="/ancestry"
+            className="inline-flex w-max items-center justify-center rounded-xl bg-amber-400 text-black px-5 py-2.5 text-sm font-bold hover:bg-amber-300 transition shrink-0"
+          >
+            🌳 Start Searching Free
+          </Link>
+        </div>
+      </section>
+
       {/* ===== WHY PRIVATE NETWORK ===== */}
       <section className="px-5 md:px-10 py-12 md:py-16 border-b border-white/10">
         <div className="max-w-5xl mx-auto">
@@ -427,30 +450,6 @@ export default function LoginPage() {
               </Link>
             </div>
           </div>
-        </div>
-      </section>
-
-      {/* ===== FREE ANCESTRY TOOL (public, no account needed) ===== */}
-      <section className="px-5 md:px-10 pb-10">
-        <div className="max-w-5xl mx-auto rounded-2xl border border-amber-400/40 bg-gradient-to-br from-amber-500/10 via-black to-black p-6 md:p-8 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-widest text-amber-300">
-              Free for the People · No account needed
-            </p>
-            <h2 className="text-xl md:text-2xl font-extrabold text-white mt-1">
-              Free Ancestry Search — every record has a name. Find yours.
-            </h2>
-            <p className="text-sm text-white/70 mt-1.5 max-w-xl">
-              Search census rolls, Freedmen&apos;s Bureau papers, newspapers, and
-              cemetery records on real, free archives. Our gift to the community.
-            </p>
-          </div>
-          <Link
-            href="/ancestry"
-            className="inline-flex w-max items-center justify-center rounded-xl bg-amber-400 text-black px-5 py-2.5 text-sm font-bold hover:bg-amber-300 transition shrink-0"
-          >
-            🌳 Start Searching Free
-          </Link>
         </div>
       </section>
 
