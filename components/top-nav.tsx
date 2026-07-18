@@ -94,13 +94,20 @@ export default function TopNav({
             </Link>
 
             {/* Freedom School — hardened same-origin nav */}
-            <a
+            
               href="/freedom-school"
               onClick={goFreedomSameOrigin}
               className={isActive("/freedom-school") ? freedomActive : freedom}
             >
               Freedom School
             </a>
+
+            <Link
+              href="/ancestry"
+              className={isActive("/ancestry") ? active : dim}
+            >
+              Ancestry
+            </Link>
 
             <Link href="/about" className={isActive("/about") ? active : dim}>
               About
@@ -161,7 +168,7 @@ export default function TopNav({
               </Link>
 
               {/* Freedom School — same-origin */}
-              <a
+              
                 href="/freedom-school"
                 onClick={(e) => {
                   goFreedomSameOrigin(e);
@@ -173,6 +180,16 @@ export default function TopNav({
               >
                 Freedom School
               </a>
+
+              <Link
+                onClick={() => setOpen(false)}
+                href="/ancestry"
+                className={`px-1 py-1.5 ${
+                  isActive("/ancestry") ? active : "text-white/80 hover:text-white"
+                }`}
+              >
+                Ancestry
+              </Link>
 
               <Link
                 onClick={() => setOpen(false)}
