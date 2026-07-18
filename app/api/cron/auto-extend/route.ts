@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { requireAdmin } from '@/lib/require-admin'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -51,9 +52,14 @@ export async function GET(req: Request) {
   const authHeader = req.headers.get('authorization')
   const cronSecret = process.env.CRON_SECRET
 
-  // Fail closed: if no secret is configured, or it doesn't match, reject.
-  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  // Allowed callers: Vercel's nightly cron (bearer secret) OR a logged-in
+  // admin clicking from the dashboard. Everyone else is rejected.
+  const secretOk = Boolean(cronSecret) && authHeader === `Bearer ${cronSecret}`
+  if (!secretOk) {
+    const gate = await requireAdmin()
+    if (!gate.ok) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
   }
 
   const results: ChannelResult[] = []
