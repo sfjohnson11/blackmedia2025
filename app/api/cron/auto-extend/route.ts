@@ -17,6 +17,14 @@ const MAX_INSERTS_PER_CHANNEL = 2000
 const TAIL_ROWS = 400             // recent rows fetched (a day is well under this)
 const MIN_TEMPLATE_MINUTES = 30   // skip channels whose valid daily content is shorter
 
+// A "real" program has a video URL that is NOT the standby clip and a positive
+// duration. Standby clips must never be scheduled forward - counting them as
+// valid content is what let channels fall into a standby-only rotation.
+function isRealProgram(p: { mp4_url: string | null; duration: number | null }): boolean {
+  const u = String(p.mp4_url || '')
+  return u.length > 0 && !/standby/i.test(u) && Number(p.duration ?? 0) > 0
+}
+
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -120,38 +128,78 @@ export async function GET(req: Request) {
           return (
             startMs >= templateStartMs &&
             startMs < scheduleEndMs &&
-            Boolean(p.mp4_url) &&
-            Number.isFinite(dur) &&
-            dur > 0
+            isRealProgram(p) &&
+            Number.isFinite(dur)
           )
         })
 
-        if (template.length === 0) {
-          results.push({ channelId, channelName, status: 'no_valid_programs', message: 'No valid programs in the final day — skipped' })
-          continue
-        }
-
+        let workingTemplate = template
         let templateDurationMs = 0
-        for (const p of template) {
+        for (const p of workingTemplate) {
           templateDurationMs += Number(p.duration!) * 1000
         }
 
-        // Channels whose valid daily content is only seconds long (e.g. just a
-        // standby clip) can't be scheduled — surface it clearly instead of
-        // producing an absurd insert count.
+        let recovered = false
+
+        // SELF-HEAL: if the recent rotation has no real content (e.g. a
+        // standby-only day got photocopied forward), dig back through this
+        // channel's own history for its most recent real day of programming
+        // and use THAT as the template instead of giving up.
         if (templateDurationMs < MIN_TEMPLATE_MINUTES * 60 * 1000) {
-          results.push({
-            channelId,
-            channelName,
-            status: 'template_too_short',
-            message: `Valid content in final day totals ${(templateDurationMs / 60000).toFixed(1)} min — channel needs real programs with mp4_url + duration`,
-          })
-          continue
+          let foundDay: ProgramRow[] = []
+          let cursor: string | null = null
+          for (let page = 0; page < 12 && foundDay.length === 0; page++) {
+            let q = supabase
+              .from('programs')
+              .select('channel_id, title, mp4_url, start_time, duration')
+              .eq('channel_id', channelId)
+              .order('start_time', { ascending: false })
+              .limit(500)
+            if (cursor) q = q.lt('start_time', cursor)
+            const { data: hist } = await q
+            if (!hist || hist.length === 0) break
+            cursor = hist[hist.length - 1].start_time
+            const real = (hist as ProgramRow[]).filter(isRealProgram)
+            if (real.length > 0) {
+              const newestEnd =
+                new Date(real[0].start_time).getTime() + Number(real[0].duration!) * 1000
+              foundDay = real
+                .filter(p => new Date(p.start_time).getTime() >= newestEnd - DAY_MS)
+                .reverse()
+            }
+          }
+
+          let foundMs = 0
+          for (const p of foundDay) foundMs += Number(p.duration!) * 1000
+
+          if (foundMs >= MIN_TEMPLATE_MINUTES * 60 * 1000) {
+            workingTemplate = foundDay
+            templateDurationMs = foundMs
+            recovered = true
+            // Clear future junk rows (standby clips, missing urls, zero
+            // durations) so the restored lineup plays clean.
+            const hourStart = Math.floor(now / 3600000) * 3600000
+            await supabase
+              .from('programs')
+              .delete()
+              .eq('channel_id', channelId)
+              .gte('start_time', new Date(hourStart).toISOString())
+              .or('mp4_url.is.null,mp4_url.ilike.%standby%,duration.is.null,duration.lte.0')
+          } else {
+            results.push({
+              channelId,
+              channelName,
+              status: 'no_valid_programs',
+              message: 'No real programs found anywhere in history - channel needs content uploaded',
+            })
+            continue
+          }
         }
 
         // If the channel has been dark, resume from the top of the current
         // hour — never backfill dead air in the past.
         let cursorMs = scheduleEndMs
+        if (recovered) cursorMs = 0 // junk rotation cleared - restart from the current hour
         if (cursorMs < now) {
           const hourMs = 60 * 60 * 1000
           cursorMs = Math.floor(now / hourMs) * hourMs
@@ -159,7 +207,7 @@ export async function GET(req: Request) {
 
         // Repeat the day forward until covered ~3 days ahead.
         const daysNeeded = Math.max(1, Math.ceil((targetMs - cursorMs) / templateDurationMs))
-        const estimatedInserts = daysNeeded * template.length
+        const estimatedInserts = daysNeeded * workingTemplate.length
 
         if (estimatedInserts > MAX_INSERTS_PER_CHANNEL) {
           results.push({
@@ -180,7 +228,7 @@ export async function GET(req: Request) {
         }[] = []
 
         for (let d = 0; d < daysNeeded; d++) {
-          for (const p of template) {
+          for (const p of workingTemplate) {
             inserts.push({
               channel_id: channelId,
               start_time: new Date(cursorMs).toISOString(),
@@ -214,7 +262,9 @@ export async function GET(req: Request) {
             channelId,
             channelName,
             status: 'extended',
-            message: `Repeated final day ${daysNeeded} time(s) — ${inserts.length} programs added`,
+            message: recovered
+              ? `RECOVERED real shows from history - ${inserts.length} programs back on air`
+              : `Repeated final day ${daysNeeded} time(s) — ${inserts.length} programs added`,
             programsAdded: inserts.length,
             newEndTime: new Date(cursorMs).toUTCString(),
           })
