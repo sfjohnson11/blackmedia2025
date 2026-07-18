@@ -318,6 +318,29 @@ export default function AppPage() {
             </div>
           </Link>
 
+          <Link href="/ancestry" className="group">
+            <div className="h-full rounded-2xl border border-slate-800 bg-gradient-to-br from-amber-800/30 via-slate-950 to-black p-5 shadow-lg transition group-hover:border-amber-400/80 group-hover:shadow-amber-900/40">
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <h2 className="text-xl font-bold flex items-center gap-2">
+                  <span className="text-lg">🌳</span>
+                  Free Ancestry Search
+                </h2>
+                <span className="text-[11px] uppercase tracking-wide text-slate-300">
+                  Family Records
+                </span>
+              </div>
+              <p className="text-sm text-slate-200 mb-3">
+                Every record has a name — find yours. Search census rolls,
+                Freedmen&apos;s Bureau papers, newspapers, and cemetery records
+                on real, free archives. No paywalls. No catch.
+              </p>
+              <p className="text-xs text-slate-400">
+                Free for every member — enter a name and start your family
+                search.
+              </p>
+            </div>
+          </Link>
+
           <Link href={hasAccess ? "/freedom-school" : "#"} className="group">
             <div
               className={`h-full rounded-2xl border border-slate-800 bg-gradient-to-br from-emerald-800/30 via-slate-950 to-black p-5 shadow-lg transition ${
