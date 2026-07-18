@@ -34,18 +34,15 @@ export default function TopNav({
   const freedom = "text-emerald-400 hover:text-emerald-300 font-semibold";
   const freedomActive = "text-emerald-300 font-semibold";
 
-  // --- Make sure Freedom School nav stays on the SAME ORIGIN ---
   function goFreedomSameOrigin(e?: React.MouseEvent) {
     if (e) e.preventDefault();
     const base =
       typeof window !== "undefined" ? window.location.origin : "";
     const target = `${base}/freedom-school`;
 
-    // Try SPA client navigation first…
     try {
       router.push("/freedom-school");
     } finally {
-      // …then hard-navigate as a fallback to guarantee same-origin
       window.location.href = target;
     }
   }
@@ -93,7 +90,6 @@ export default function TopNav({
               Channels
             </Link>
 
-            {/* Freedom School — hardened same-origin nav */}
             
               href="/freedom-school"
               onClick={goFreedomSameOrigin}
@@ -167,7 +163,6 @@ export default function TopNav({
                 Channels
               </Link>
 
-              {/* Freedom School — same-origin */}
               
                 href="/freedom-school"
                 onClick={(e) => {
