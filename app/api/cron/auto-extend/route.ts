@@ -4,9 +4,18 @@ import { createClient } from '@supabase/supabase-js'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
+// ORIGINAL DESIGN RESTORED: each night, repeat the schedule's final 24 hours
+// forward — day by day — until the channel is covered ~3 days ahead.
+// (The broken version repeated the channel's ENTIRE history 7 days forward,
+// which blew past Supabase's silent 1000-row query cap and caused the
+// duplicate-key failures.)
+
+const DAY_MS = 24 * 60 * 60 * 1000
+const HOURS_THRESHOLD = 48        // extend any channel ending within 48h
+const TARGET_AHEAD_HOURS = 72     // extend until covered ~3 days out
 const MAX_INSERTS_PER_CHANNEL = 2000
-const EXTEND_DAYS = 7
-const HOURS_THRESHOLD = 48
+const TAIL_ROWS = 400             // recent rows fetched (a day is well under this)
+const MIN_TEMPLATE_MINUTES = 30   // skip channels whose valid daily content is shorter
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -24,7 +33,7 @@ interface ProgramRow {
 interface ChannelResult {
   channelId: number
   channelName: string
-  status: 'extended' | 'ok' | 'error' | 'no_programs' | 'no_valid_programs'
+  status: 'extended' | 'ok' | 'error' | 'no_programs' | 'no_valid_programs' | 'template_too_short'
   message: string
   programsAdded?: number
   newEndTime?: string
@@ -42,6 +51,7 @@ export async function GET(req: Request) {
   const results: ChannelResult[] = []
   const now = Date.now()
   const thresholdMs = now + HOURS_THRESHOLD * 60 * 60 * 1000
+  const targetMs = now + TARGET_AHEAD_HOURS * 60 * 60 * 1000
 
   try {
     const { data: channels, error: channelsError } = await supabase
@@ -58,72 +68,105 @@ export async function GET(req: Request) {
       const channelName = channel.name || `Channel ${channelId}`
 
       try {
-        const { data: programs, error: programsError } = await supabase
+        // Fetch only the most recent rows, newest first. Never fetch the whole
+        // history: Supabase silently caps unpaginated selects at 1000 rows,
+        // which is exactly what broke the old version.
+        const { data: tailDesc, error: programsError } = await supabase
           .from('programs')
           .select('channel_id, title, mp4_url, start_time, duration')
           .eq('channel_id', channelId)
-          .order('start_time', { ascending: true })
+          .order('start_time', { ascending: false })
+          .limit(TAIL_ROWS)
 
         if (programsError) {
           results.push({ channelId, channelName, status: 'error', message: programsError.message })
           continue
         }
 
-        if (!programs || programs.length === 0) {
+        if (!tailDesc || tailDesc.length === 0) {
           results.push({ channelId, channelName, status: 'no_programs', message: 'No programs found — skipped' })
           continue
         }
 
-        const rows = programs as ProgramRow[]
+        // restore chronological order
+        const rows = (tailDesc as ProgramRow[]).slice().reverse()
 
-        let currentEndMs = 0
+        // True end of the schedule, from the recent tail
+        let scheduleEndMs = 0
         for (const p of rows) {
           const startMs = new Date(p.start_time).getTime()
           const durSec = Number(p.duration ?? 0)
           const endMs = startMs + durSec * 1000
-          if (endMs > currentEndMs) currentEndMs = endMs
+          if (endMs > scheduleEndMs) scheduleEndMs = endMs
         }
 
-        if (currentEndMs > thresholdMs) {
+        if (scheduleEndMs > thresholdMs) {
           results.push({
             channelId,
             channelName,
             status: 'ok',
-            message: `Schedule runs until ${new Date(currentEndMs).toUTCString()} — no action needed`,
+            message: `Schedule runs until ${new Date(scheduleEndMs).toUTCString()} — no action needed`,
           })
           continue
         }
 
-        const validRows = rows.filter(p => {
+        // TEMPLATE = the schedule's FINAL 24 HOURS (the most recent full day
+        // of programming), valid rows only. This is the "repeat yesterday"
+        // behavior the channel lineup was designed around.
+        const templateStartMs = scheduleEndMs - DAY_MS
+        const template = rows.filter(p => {
+          const startMs = new Date(p.start_time).getTime()
           const dur = Number(p.duration ?? 0)
-          return Boolean(p.mp4_url) && Number.isFinite(dur) && dur > 0
+          return (
+            startMs >= templateStartMs &&
+            startMs < scheduleEndMs &&
+            Boolean(p.mp4_url) &&
+            Number.isFinite(dur) &&
+            dur > 0
+          )
         })
 
-        if (validRows.length === 0) {
-          results.push({ channelId, channelName, status: 'no_valid_programs', message: 'No valid programs with duration + mp4 URL — skipped' })
+        if (template.length === 0) {
+          results.push({ channelId, channelName, status: 'no_valid_programs', message: 'No valid programs in the final day — skipped' })
           continue
         }
 
         let templateDurationMs = 0
-        for (const p of validRows) {
+        for (const p of template) {
           templateDurationMs += Number(p.duration!) * 1000
         }
 
-        if (templateDurationMs <= 0) {
-          results.push({ channelId, channelName, status: 'error', message: 'Template duration is 0 — skipped' })
+        // Channels whose valid daily content is only seconds long (e.g. just a
+        // standby clip) can't be scheduled — surface it clearly instead of
+        // producing an absurd insert count.
+        if (templateDurationMs < MIN_TEMPLATE_MINUTES * 60 * 1000) {
+          results.push({
+            channelId,
+            channelName,
+            status: 'template_too_short',
+            message: `Valid content in final day totals ${(templateDurationMs / 60000).toFixed(1)} min — channel needs real programs with mp4_url + duration`,
+          })
           continue
         }
 
-        const extendMs = EXTEND_DAYS * 24 * 60 * 60 * 1000
-        const blocksNeeded = Math.ceil(extendMs / templateDurationMs)
-        const estimatedInserts = blocksNeeded * validRows.length
+        // If the channel has been dark, resume from the top of the current
+        // hour — never backfill dead air in the past.
+        let cursorMs = scheduleEndMs
+        if (cursorMs < now) {
+          const hourMs = 60 * 60 * 1000
+          cursorMs = Math.floor(now / hourMs) * hourMs
+        }
+
+        // Repeat the day forward until covered ~3 days ahead.
+        const daysNeeded = Math.max(1, Math.ceil((targetMs - cursorMs) / templateDurationMs))
+        const estimatedInserts = daysNeeded * template.length
 
         if (estimatedInserts > MAX_INSERTS_PER_CHANNEL) {
           results.push({
             channelId,
             channelName,
             status: 'error',
-            message: `Would need ${estimatedInserts} inserts — over safety limit. Template may be too short.`,
+            message: `Would need ${estimatedInserts} inserts — over safety limit`,
           })
           continue
         }
@@ -136,10 +179,8 @@ export async function GET(req: Request) {
           duration: number
         }[] = []
 
-        let cursorMs = currentEndMs
-
-        for (let block = 0; block < blocksNeeded; block++) {
-          for (const p of validRows) {
+        for (let d = 0; d < daysNeeded; d++) {
+          for (const p of template) {
             inserts.push({
               channel_id: channelId,
               start_time: new Date(cursorMs).toISOString(),
@@ -151,25 +192,33 @@ export async function GET(req: Request) {
           }
         }
 
+        // Collision-proof: if a timestamp already exists, skip that row
+        // instead of failing the whole batch. Honest logging: 'extended'
+        // is only recorded when every batch actually succeeded.
+        let insertFailed = false
         const BATCH_SIZE = 500
         for (let i = 0; i < inserts.length; i += BATCH_SIZE) {
           const batch = inserts.slice(i, i + BATCH_SIZE)
-          const { error: insertError } = await supabase.from('programs').insert(batch)
+          const { error: insertError } = await supabase
+            .from('programs')
+            .upsert(batch, { onConflict: 'channel_id,start_time', ignoreDuplicates: true })
           if (insertError) {
+            insertFailed = true
             results.push({ channelId, channelName, status: 'error', message: `Insert failed: ${insertError.message}` })
             break
           }
         }
 
-        const newEndTime = new Date(cursorMs).toUTCString()
-        results.push({
-          channelId,
-          channelName,
-          status: 'extended',
-          message: `Extended by ${blocksNeeded} block(s) — ${inserts.length} programs added`,
-          programsAdded: inserts.length,
-          newEndTime,
-        })
+        if (!insertFailed) {
+          results.push({
+            channelId,
+            channelName,
+            status: 'extended',
+            message: `Repeated final day ${daysNeeded} time(s) — ${inserts.length} programs added`,
+            programsAdded: inserts.length,
+            newEndTime: new Date(cursorMs).toUTCString(),
+          })
+        }
 
       } catch (err: any) {
         results.push({ channelId, channelName, status: 'error', message: err.message || 'Unknown error' })
