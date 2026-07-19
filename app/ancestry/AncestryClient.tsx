@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 
 type Card = {
   site: string;
@@ -231,6 +232,22 @@ export default function AncestryClient() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-black via-slate-950 to-black text-white">
       <main className="max-w-5xl mx-auto px-4 pt-24 pb-16 space-y-10">
+        {/* BACK NAVIGATION */}
+        <nav className="flex flex-wrap items-center gap-2 -mt-12 mb-2">
+          <Link
+            href="/app"
+            className="inline-flex items-center gap-1.5 rounded-full border border-slate-600/70 bg-slate-800/70 px-4 py-1.5 text-xs font-semibold text-slate-100 hover:bg-slate-700 transition"
+          >
+            ← Back to Member Hub
+          </Link>
+          <Link
+            href="/"
+            className="inline-flex items-center gap-1.5 rounded-full border border-slate-700/70 bg-slate-900/70 px-4 py-1.5 text-xs font-semibold text-slate-300 hover:bg-slate-800 transition"
+          >
+            🏠 Home
+          </Link>
+        </nav>
+
         {/* HEADER */}
         <section className="space-y-3">
           <div className="inline-flex items-center gap-2 rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-amber-200">
