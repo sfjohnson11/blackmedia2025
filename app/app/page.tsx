@@ -28,6 +28,7 @@ export default function AppPage() {
 
   const [profile, setProfile] = useState<Profile | null>(null);
   const [profileLoading, setProfileLoading] = useState(true);
+  const [profileError, setProfileError] = useState(false);
 
   // Load channel summary
   useEffect(() => {
@@ -79,11 +80,41 @@ export default function AppPage() {
 
         if (error) {
           console.error("Profile load error:", error);
-          if (!cancelled) setProfile(null);
+          if (!cancelled) {
+            setProfileError(true);
+            setProfile(null);
+          }
           return;
         }
 
-        if (!cancelled) setProfile((data as Profile) ?? null);
+        if (data) {
+          if (!cancelled) setProfile(data as Profile);
+          return;
+        }
+
+        // Fallback: some accounts have a profile keyed by email instead of id
+        if (user.email) {
+          const byEmail = await supabase
+            .from("user_profiles")
+            .select(
+              "id,full_name,email,role,membership_status,grace_until,welcome_started_at"
+            )
+            .eq("email", user.email)
+            .maybeSingle();
+
+          if (!cancelled) {
+            if (byEmail.error) {
+              console.error("Profile email fallback error:", byEmail.error);
+              setProfileError(true);
+              setProfile(null);
+            } else {
+              setProfile((byEmail.data as Profile) ?? null);
+            }
+          }
+          return;
+        }
+
+        if (!cancelled) setProfile(null);
       } finally {
         if (!cancelled) setProfileLoading(false);
       }
@@ -112,6 +143,13 @@ export default function AppPage() {
     if (!profile) return false;
     return true;
   }, [profile]);
+
+  // Honest messaging: a failed profile READ is not the same as an expired
+  // membership. Never tell someone their grace ended when the page simply
+  // couldn't load their profile.
+  const lockedNote = profileError
+    ? "We couldn't verify your membership just now — refresh the page or sign out and back in."
+    : "Grace ended — upgrade required.";
 
   const showUpgradeBanner = useMemo(() => {
     if (profileLoading) return false;
@@ -224,9 +262,8 @@ export default function AppPage() {
           </div>
 
           <div className="flex flex-wrap gap-2">
-            <Link href={hasAccess ? "/channels" : "#"}>
+            <Link href={hasAccess ? "/channels" : "/membership"}>
               <button
-                disabled={!hasAccess}
                 className={`rounded-full border border-red-500/70 bg-red-600/80 px-4 py-1.5 text-xs font-semibold shadow transition ${
                   hasAccess
                     ? "hover:bg-red-700/90"
@@ -237,9 +274,8 @@ export default function AppPage() {
               </button>
             </Link>
 
-            <Link href={hasAccess ? "/freedom-school" : "#"}>
+            <Link href={hasAccess ? "/freedom-school" : "/membership"}>
               <button
-                disabled={!hasAccess}
                 className={`rounded-full border border-amber-500/70 bg-amber-500/90 px-4 py-1.5 text-xs font-semibold text-black shadow transition ${
                   hasAccess
                     ? "hover:bg-amber-400"
@@ -250,9 +286,8 @@ export default function AppPage() {
               </button>
             </Link>
 
-            <Link href={hasAccess ? "/guide" : "#"}>
+            <Link href={hasAccess ? "/guide" : "/membership"}>
               <button
-                disabled={!hasAccess}
                 className={`rounded-full border border-slate-500/70 bg-slate-800/90 px-4 py-1.5 text-xs font-semibold text-slate-100 shadow transition ${
                   hasAccess
                     ? "hover:bg-slate-700"
@@ -267,7 +302,7 @@ export default function AppPage() {
 
         {/* MAIN GRID */}
         <section className="grid gap-6 md:grid-cols-2">
-          <Link href={hasAccess ? "/channels" : "#"} className="group">
+          <Link href={hasAccess ? "/channels" : "/membership"} className="group">
             <div
               className={`h-full rounded-2xl border border-slate-800 bg-gradient-to-br from-red-800/40 via-slate-950 to-black p-5 shadow-lg transition ${
                 hasAccess
@@ -292,7 +327,7 @@ export default function AppPage() {
               <p className="text-xs text-slate-400">
                 {hasAccess
                   ? "Click to open the full channel grid and choose where to watch."
-                  : "Grace ended — upgrade required."}
+                  : lockedNote}
               </p>
             </div>
           </Link>
@@ -341,7 +376,7 @@ export default function AppPage() {
             </div>
           </Link>
 
-          <Link href={hasAccess ? "/freedom-school" : "#"} className="group">
+          <Link href={hasAccess ? "/freedom-school" : "/membership"} className="group">
             <div
               className={`h-full rounded-2xl border border-slate-800 bg-gradient-to-br from-emerald-800/30 via-slate-950 to-black p-5 shadow-lg transition ${
                 hasAccess
@@ -365,12 +400,12 @@ export default function AppPage() {
               <p className="text-xs text-slate-400">
                 {hasAccess
                   ? "Video, audio, and PDF content all in one virtual classroom."
-                  : "Grace ended — upgrade required."}
+                  : lockedNote}
               </p>
             </div>
           </Link>
 
-          <Link href={hasAccess ? "/on-demand" : "#"} className="group">
+          <Link href={hasAccess ? "/on-demand" : "/membership"} className="group">
             <div
               className={`h-full rounded-2xl border border-slate-800 bg-gradient-to-br from-indigo-700/30 via-slate-950 to-black p-5 shadow-lg transition ${
                 hasAccess
@@ -392,12 +427,12 @@ export default function AppPage() {
                 archive without waiting for the live schedule.
               </p>
               <p className="text-xs text-slate-400">
-                {hasAccess ? "Perfect when you want to go deep on one topic." : "Grace ended — upgrade required."}
+                {hasAccess ? "Perfect when you want to go deep on one topic." : lockedNote}
               </p>
             </div>
           </Link>
 
-          <Link href={hasAccess ? "/breaking-news" : "#"} className="group">
+          <Link href={hasAccess ? "/breaking-news" : "/membership"} className="group">
             <div
               className={`h-full rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-700/40 via-slate-950 to-black p-5 shadow-lg transition ${
                 hasAccess
@@ -419,12 +454,12 @@ export default function AppPage() {
                 plus today&apos;s top stories, all in one hub.
               </p>
               <p className="text-xs text-slate-400">
-                {hasAccess ? "Click here to enter the news hub." : "Grace ended — upgrade required."}
+                {hasAccess ? "Click here to enter the news hub." : lockedNote}
               </p>
             </div>
           </Link>
 
-          <Link href={hasAccess ? "/chat" : "#"} className="group">
+          <Link href={hasAccess ? "/chat" : "/membership"} className="group">
             <div
               className={`h-full rounded-2xl border border-slate-800 bg-gradient-to-br from-blue-700/40 via-slate-950 to-black p-5 shadow-lg transition ${
                 hasAccess
@@ -447,7 +482,7 @@ export default function AppPage() {
                 scrolling.
               </p>
               <p className="text-xs text-slate-400">
-                {hasAccess ? "Available only to authorized community members." : "Grace ended — upgrade required."}
+                {hasAccess ? "Available only to authorized community members." : lockedNote}
               </p>
             </div>
           </Link>
