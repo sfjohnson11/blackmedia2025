@@ -17,7 +17,8 @@ import {
   STANDBY_PLACEHOLDER_ID,
 } from "@/lib/supabase";
 import type { Channel, Program } from "@/types";
-import { ChevronLeft, Loader2 } from "lucide-react";
+import { ChevronLeft, Loader2, Heart } from "lucide-react";
+import { isFavorited, toggleFavorite } from "@/lib/favorites";
 
 type ProgramWithSrc = Program & { _resolved_src?: string };
 
@@ -285,6 +286,33 @@ export default function WatchPage() {
   const [chatError, setChatError] = useState<string | null>(null);
   const [newMessage, setNewMessage] = useState("");
   const [sending, setSending] = useState(false);
+
+  // ---- Favorites ----
+  const [favorited, setFavorited] = useState(false);
+  const [favBusy, setFavBusy] = useState(false);
+
+  useEffect(() => {
+    if (channelId == null) return;
+    let cancelled = false;
+    (async () => {
+      const fav = await isFavorited(channelId);
+      if (!cancelled) setFavorited(fav);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [channelId]);
+
+  async function handleFavoriteToggle() {
+    if (channelId == null || favBusy) return;
+    setFavBusy(true);
+    try {
+      const nowFav = await toggleFavorite(channelId);
+      setFavorited(nowFav);
+    } finally {
+      setFavBusy(false);
+    }
+  }
 
   const getNowMs = useCallback(() => Date.now(), []);
 
@@ -707,7 +735,21 @@ export default function WatchPage() {
         <h1 className="text-xl font-semibold truncate px-2">
           {channelDetails?.name || (channelId != null ? `Channel ${channelId}` : "Channel")}
         </h1>
-        <div className="w-10 h-10" />
+        <button
+          type="button"
+          onClick={handleFavoriteToggle}
+          disabled={favBusy || channelId == null}
+          aria-label={favorited ? "Remove from favorites" : "Add to favorites"}
+          className={`w-10 h-10 flex items-center justify-center rounded-full transition ${
+            favorited ? "bg-pink-600/80 hover:bg-pink-600" : "hover:bg-gray-700"
+          } ${favBusy ? "opacity-60 cursor-wait" : ""}`}
+        >
+          <Heart
+            className={`h-5 w-5 ${
+              favorited ? "fill-white text-white" : "text-white"
+            }`}
+          />
+        </button>
       </div>
 
       <div className="relative w-full aspect-video bg-black flex items-center justify-center">
@@ -720,6 +762,28 @@ export default function WatchPage() {
       </div>
 
       <div className="p-4 flex-grow space-y-6">
+        {channelId != null && (
+          <button
+            type="button"
+            onClick={handleFavoriteToggle}
+            disabled={favBusy}
+            className={`inline-flex items-center gap-2 rounded-full px-5 py-2 text-sm font-semibold transition border ${
+              favorited
+                ? "border-pink-500/70 bg-pink-600/30 text-pink-100 hover:bg-pink-600/50"
+                : "border-slate-600 bg-slate-800/70 text-slate-100 hover:border-pink-400 hover:text-pink-200"
+            } ${favBusy ? "opacity-60 cursor-wait" : ""}`}
+          >
+            <Heart
+              className={`h-4 w-4 ${
+                favorited ? "fill-pink-300 text-pink-300" : ""
+              }`}
+            />
+            {favorited
+              ? "In My Favorites"
+              : "Make this channel a favorite"}
+          </button>
+        )}
+
         {channelId !== CH21_ID_NUMERIC && currentProgram && !isLoading && (
           <>
             <div>
