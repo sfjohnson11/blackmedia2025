@@ -1,5 +1,6 @@
 import "./globals.css";
 import DisableContextMenu from "./components/DisableContextMenu";
+import InactivityLogout from "./components/InactivityLogout";
 
 export const metadata = {
   title: "Black Truth TV",
@@ -11,6 +12,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body>
         <DisableContextMenu />
+        <InactivityLogout />
         {children}
       </body>
     </html>
