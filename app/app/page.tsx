@@ -5,6 +5,7 @@ import Link from "next/link";
 import { createClient } from "@/utils/supabase/client";
 import NewsTicker from "@/components/NewsTicker";
 import NotificationBell from "@/components/notification-bell";
+import SignOutButton from "@/app/components/SignOutButton";
 
 type Summary = { channels: number };
 
@@ -198,6 +199,9 @@ export default function AppPage() {
             </button>
           </Link>
           <NotificationBell className="text-slate-100 hover:text-white" />
+          <div className="ml-auto">
+            <SignOutButton />
+          </div>
         </section>
 
         {/* ✅ UPGRADE BANNER for free-tier users */}
